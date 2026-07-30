@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Fixture: Product Search</title>
+</head>
+<body>
+  <header>
+    <nav aria-label="Main"><a href="/">Home</a><a href="/product-list/">Products</a></nav>
+  </header>
+
+  <main>
+    <h1>Product Search</h1>
+
+    <!-- Search form: explicit semantic markers, so section 7.4 rates this high confidence. -->
+    <form id="product-search" role="search" action="/product-list/" method="get">
+      <label for="keyword">Search products</label>
+      <input type="search" id="keyword" name="keyword" placeholder="wireless earbuds">
+
+      <label for="category">Category</label>
+      <select id="category" name="category">
+        <option value="">All categories</option>
+        <option value="audio">Audio</option>
+        <option value="wearables">Wearables</option>
+      </select>
+
+      <label for="in-stock">In stock only</label>
+      <input type="checkbox" id="in-stock" name="in_stock" value="1">
+
+      <button type="submit">Search</button>
+    </form>
+
+    <!-- Generic data-entry form: detected, reported in warnings, not compiled in v0.1. -->
+    <form id="newsletter" action="/subscribe" method="post">
+      <label for="email">Email address</label>
+      <input type="email" id="email" name="email">
+      <button type="submit">Subscribe</button>
+    </form>
+
+    <!-- Never captured: password, file, and hidden token values (section 7.2). -->
+    <form id="account" action="/login" method="post">
+      <label for="username">Username</label>
+      <input type="text" id="username" name="username">
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password">
+      <label for="avatar">Avatar</label>
+      <input type="file" id="avatar" name="avatar">
+      <input type="hidden" name="csrf_token" value="synthetic-token-value">
+      <button type="submit">Sign in</button>
+    </form>
+  </main>
+</body>
+</html>

@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Fixture: Product List</title>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "ItemList",
+    "itemListElement": [
+      {"@type": "ListItem", "position": 1, "name": "Wireless Earbuds", "url": "/products/1"},
+      {"@type": "ListItem", "position": 2, "name": "Noise Cancelling Headphones", "url": "/products/2"},
+      {"@type": "ListItem", "position": 3, "name": "Bluetooth Speaker", "url": "/products/3"}
+    ]
+  }
+  </script>
+</head>
+<body>
+  <header>
+    <nav aria-label="Main"><a href="/">Home</a><a href="/search-page/">Search</a></nav>
+  </header>
+
+  <main>
+    <h1>Audio products</h1>
+    <p class="result-count">3 results</p>
+
+    <!-- Repeated cards with a stable per-record identity for collection_hash. -->
+    <ul class="results">
+      <li class="product" data-product-id="1">
+        <a href="/products/1">Wireless Earbuds</a>
+        <span class="price">4,980 yen</span>
+        <span class="stock">In stock</span>
+      </li>
+      <li class="product" data-product-id="2">
+        <a href="/products/2">Noise Cancelling Headphones</a>
+        <span class="price">18,600 yen</span>
+        <span class="stock">In stock</span>
+      </li>
+      <li class="product" data-product-id="3">
+        <a href="/products/3">Bluetooth Speaker</a>
+        <span class="price">7,240 yen</span>
+        <span class="stock">Out of stock</span>
+      </li>
+    </ul>
+
+    <!-- Pagination: navigate capability category in v0.1. -->
+    <nav aria-label="Pagination">
+      <a href="/product-list/?page=1" aria-current="page">1</a>
+      <a href="/product-list/?page=2">2</a>
+      <a href="/product-list/?page=2" rel="next">Next</a>
+    </nav>
+  </main>
+</body>
+</html>

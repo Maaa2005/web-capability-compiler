@@ -1,0 +1,18 @@
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
+
+# Local WCC data: sessions, templates, and SQLite storage never belong in git.
+.wcc/
+*.sqlite
+*.sqlite3
+
+# Benchmark output is regenerated; committed results live under benchmarks/results/.
+benchmarks/results/*.tmp
+
+.DS_Store
