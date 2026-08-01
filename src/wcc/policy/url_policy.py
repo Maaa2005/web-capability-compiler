@@ -91,12 +91,18 @@ class UrlPolicy:
         if hostname.lower().rstrip(".") in _METADATA_HOSTNAMES:
             raise NavigationBlockedError(f"{hostname!r} is a cloud-metadata endpoint")
 
-        for raw in self.resolver(hostname):
+        addresses = list(self.resolver(hostname))
+        if not addresses:
+            raise NavigationBlockedError(
+                f"{hostname!r} resolved to no addresses; a destination that cannot be "
+                "checked is not a destination that may be navigated to"
+            )
+        for raw in addresses:
             self._check_address(hostname, raw, allow_private_network=allow_private_network)
 
     def _check_address(self, hostname: str, raw: str, *, allow_private_network: bool) -> None:
         try:
-            address = ipaddress.ip_address(raw.split("%")[0])
+            address = _normalize_address(raw)
         except ValueError as exc:
             raise NavigationBlockedError(
                 f"{hostname!r} resolved to {raw!r}, which is not an IP address"
@@ -117,11 +123,35 @@ class UrlPolicy:
         )
 
 
+def _normalize_address(raw: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
+    """Parse ``raw`` and unwrap an IPv4-mapped IPv6 address to its IPv4 form.
+
+    ``::ffff:169.254.169.254`` and ``169.254.169.254`` are the same destination, so
+    they must be classified the same way. Without unwrapping, a mapped metadata
+    address fails the identity comparison against the IPv4 members of
+    ``_METADATA_ADDRESSES`` and slips through under a laxer category.
+    """
+    address = ipaddress.ip_address(raw.split("%")[0])
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+        return address.ipv4_mapped
+    return address
+
+
+# Deprecated IPv6 site-local space. Still routable on some networks, and
+# ``ipaddress`` reports it as global, so it needs naming outright.
+_SITE_LOCAL_V6 = ipaddress.ip_network("fec0::/10")
+
+
 def _restricted_category(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> str | None:
     """Name the reason an address is out of bounds, or ``None`` if it is fine.
 
     Order matters: loopback and link-local are also reported as private by
     :mod:`ipaddress`, and the more specific name is the one worth showing.
+
+    The final rule is deny-unless-global rather than a list of known-bad ranges.
+    Enumerating bad ranges fails open on whatever the enumeration missed: shared
+    CGNAT space (``100.64.0.0/10``) is neither private nor reserved by
+    :mod:`ipaddress`, so a list-based check admits it silently.
     """
     if address.is_unspecified:
         return "unspecified"
@@ -135,4 +165,8 @@ def _restricted_category(address: ipaddress.IPv4Address | ipaddress.IPv6Address)
         return "private"
     if address.is_reserved:
         return "reserved"
+    if isinstance(address, ipaddress.IPv6Address) and address in _SITE_LOCAL_V6:
+        return "site-local"
+    if not address.is_global:
+        return "non-global"
     return None

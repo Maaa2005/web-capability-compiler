@@ -14,10 +14,12 @@ import asyncio
 from collections.abc import AsyncIterator
 
 import pytest
+from playwright.async_api import Error as PlaywrightError
 
 from wcc.driver.base import (
     DriverNotReadyError,
     DriverSettings,
+    DriverTimeoutError,
     NavigationBlockedError,
     SessionLimitExceededError,
     SessionNotFoundError,
@@ -205,8 +207,74 @@ async def test_a_download_is_refused(driver: PlaywrightDriver, fixture_server: s
     )
     await asyncio.sleep(0.5)
 
+    await driver.drain_cleanups()
     events = driver.drain_navigation_events(session_id)
     assert any(event.kind == "download" and event.blocked for event in events)
+
+
+async def test_a_refused_download_never_reaches_the_filesystem(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """Recording the refusal is not enough; the bytes must not be written.
+
+    ``accept_downloads`` defaults to true, which saves the file first and lets a
+    handler cancel afterwards — a race a small payload wins.
+    """
+    session_id = await _open(driver, f"{fixture_server}/search-page/")
+    page = driver._session(session_id).page  # noqa: SLF001 - stands in for task T5
+
+    async with page.expect_download() as info:
+        await page.evaluate(
+            """() => {
+                const a = document.createElement('a');
+                a.href = 'data:text/plain,hello';
+                a.download = 'hello.txt';
+                document.body.append(a);
+                a.click();
+            }"""
+        )
+    download = await info.value
+    await driver.drain_cleanups()
+
+    with pytest.raises(PlaywrightError):
+        await download.path()
+
+
+async def test_concurrent_opens_cannot_exceed_the_session_limit(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """Counting sessions before the awaits that create one lets two callers in."""
+    url = f"{fixture_server}/search-page/"
+    results = await asyncio.gather(
+        *(
+            driver.open_session(OpenSessionRequest(url=url, allow_private_network=True))
+            for _ in range(4)
+        ),
+        return_exceptions=True,
+    )
+
+    opened = [r for r in results if not isinstance(r, BaseException)]
+    refused = [r for r in results if isinstance(r, SessionLimitExceededError)]
+    assert len(opened) == 2
+    assert len(refused) == 2
+    assert len(driver._sessions) == 2  # noqa: SLF001
+
+
+async def test_a_failed_open_leaves_no_session_behind(fixture_server: str) -> None:
+    """A context whose ID never reached the caller can never be closed by them."""
+    impatient = PlaywrightDriver(UrlPolicy(), DriverSettings(page_load_timeout_ms=1))
+    try:
+        with pytest.raises(DriverTimeoutError):
+            await impatient.open_session(
+                OpenSessionRequest(
+                    url=f"{fixture_server}/search-page/",
+                    allow_private_network=True,
+                )
+            )
+        assert impatient._sessions == {}  # noqa: SLF001
+        assert impatient._reserved == set()  # noqa: SLF001
+    finally:
+        await impatient.shutdown()
 
 
 async def test_unimplemented_surface_names_the_task_that_will_deliver_it(

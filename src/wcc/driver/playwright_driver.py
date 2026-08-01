@@ -75,28 +75,6 @@ _DOCUMENT_TOKEN_SCRIPT = f"""
 """
 
 
-_BACKGROUND_TASKS: set[asyncio.Task[Any]] = set()
-
-
-def _schedule(work: Coroutine[Any, Any, Any]) -> None:
-    """Run cleanup that a synchronous Playwright event handler cannot await.
-
-    A strong reference is held until the task finishes; without it the event loop
-    is free to garbage-collect a pending close and the refusal silently does not
-    happen. Failures are swallowed because the page or download being cleaned up
-    may already be gone, and the refusal is recorded either way.
-    """
-
-    def _finish(task: asyncio.Task[Any]) -> None:
-        _BACKGROUND_TASKS.discard(task)
-        if not task.cancelled():
-            task.exception()
-
-    task = asyncio.ensure_future(work)
-    _BACKGROUND_TASKS.add(task)
-    task.add_done_callback(_finish)
-
-
 @dataclass
 class _Session:
     """Driver-side state for one browser context with one active page."""
@@ -131,48 +109,72 @@ class PlaywrightDriver:
         self._playwright: Playwright | None = None
         self._browsers: dict[bool, Browser] = {}
         self._sessions: dict[str, _Session] = {}
+        self._reserved: set[str] = set()
+        self._lock = asyncio.Lock()
+        self._cleanups: set[asyncio.Task[Any]] = set()
 
     # -- lifecycle ---------------------------------------------------------
 
     async def open_session(self, request: OpenSessionRequest) -> SessionInfo:
-        if len(self._sessions) >= self._settings.max_active_sessions:
-            raise SessionLimitExceededError(
-                f"{len(self._sessions)} sessions are already active; "
-                f"the configured maximum is {self._settings.max_active_sessions}"
-            )
         self._guard.check(request.url, allow_private_network=request.allow_private_network)
 
-        browser = await self._browser(headless=request.headless)
-        context = await browser.new_context(locale=request.locale)
-        page = await context.new_page()
-        session = _Session(
-            session_id=new_id("sess"),
-            context=context,
-            page=page,
-            initial_url=request.url,
-            created_at=datetime.now(UTC),
-            allow_private_network=request.allow_private_network,
-        )
-        await self._arm_observers(session)
+        session_id = new_id("sess")
+        async with self._lock:
+            # The slot is reserved under the lock and released on failure. Counting
+            # sessions before the awaits that create one would let two concurrent
+            # callers both see room that only one of them can have.
+            if len(self._sessions) + len(self._reserved) >= self._settings.max_active_sessions:
+                raise SessionLimitExceededError(
+                    f"{len(self._sessions) + len(self._reserved)} sessions are already "
+                    f"active or opening; the configured maximum is "
+                    f"{self._settings.max_active_sessions}"
+                )
+            self._reserved.add(session_id)
 
+        context: BrowserContext | None = None
         try:
-            await page.goto(request.url, timeout=self._settings.page_load_timeout_ms)
-        except PlaywrightTimeoutError as exc:
-            await context.close()
-            raise DriverTimeoutError(
-                f"loading {request.url} exceeded {self._settings.page_load_timeout_ms} ms"
-            ) from exc
-        except PlaywrightError as exc:
-            await context.close()
-            blocked = next((e for e in session.events if e.blocked), None)
-            if blocked is not None:
-                raise NavigationBlockedError(
-                    blocked.reason or f"navigation to {blocked.url} was refused"
-                ) from exc
-            raise
+            browser = await self._browser(headless=request.headless)
+            # ``accept_downloads`` defaults to true, which writes the file first and
+            # lets the handler cancel afterwards. Refusing at the context means a
+            # blocked download never reaches the filesystem at all.
+            context = await browser.new_context(locale=request.locale, accept_downloads=False)
+            page = await context.new_page()
+            session = _Session(
+                session_id=session_id,
+                context=context,
+                page=page,
+                initial_url=request.url,
+                created_at=datetime.now(UTC),
+                allow_private_network=request.allow_private_network,
+            )
+            await self._arm_observers(session)
 
-        self._sessions[session.session_id] = session
-        await self.identify(session.session_id)
+            try:
+                await page.goto(request.url, timeout=self._settings.page_load_timeout_ms)
+            except PlaywrightTimeoutError as exc:
+                raise DriverTimeoutError(
+                    f"loading {request.url} exceeded {self._settings.page_load_timeout_ms} ms"
+                ) from exc
+            except PlaywrightError as exc:
+                blocked = next((e for e in session.events if e.blocked), None)
+                if blocked is not None:
+                    raise NavigationBlockedError(
+                        blocked.reason or f"navigation to {blocked.url} was refused"
+                    ) from exc
+                raise
+
+            self._sessions[session_id] = session
+            await self.identify(session_id)
+        except BaseException:
+            # Includes cancellation: a context whose ID was never returned can never
+            # be closed by the caller, so it must not outlive this call.
+            self._sessions.pop(session_id, None)
+            if context is not None:
+                await context.close()
+            raise
+        finally:
+            self._reserved.discard(session_id)
+
         return SessionInfo(
             session_id=session.session_id,
             created_at=session.created_at,
@@ -188,8 +190,34 @@ class PlaywrightDriver:
             raise SessionNotFoundError(f"no active session {session_id}")
         await session.context.close()
 
+    def _spawn(self, work: Coroutine[Any, Any, Any]) -> None:
+        """Run cleanup that a synchronous Playwright event handler cannot await.
+
+        The task is held per driver, not in a module-level set, so
+        :meth:`shutdown` can wait for it. Without that wait, a popup close or a
+        download cancel scheduled moments earlier would still be pending when
+        Playwright stops, and the refusal would not actually have happened.
+        """
+
+        def _finish(task: asyncio.Task[Any]) -> None:
+            self._cleanups.discard(task)
+            if not task.cancelled():
+                # The page or download may already be gone; the refusal itself is
+                # recorded as a blocked navigation event either way.
+                task.exception()
+
+        task = asyncio.ensure_future(work)
+        self._cleanups.add(task)
+        task.add_done_callback(_finish)
+
+    async def drain_cleanups(self) -> None:
+        """Wait for every scheduled refusal to finish."""
+        while self._cleanups:
+            await asyncio.gather(*list(self._cleanups), return_exceptions=True)
+
     async def shutdown(self) -> None:
         """Close every session and release the browser processes."""
+        await self.drain_cleanups()
         for session_id in list(self._sessions):
             await self.close_session(session_id)
         for browser in self._browsers.values():
@@ -287,13 +315,20 @@ class PlaywrightDriver:
         return session
 
     async def _browser(self, *, headless: bool) -> Browser:
-        if self._playwright is None:
-            self._playwright = await async_playwright().start()
-        browser = self._browsers.get(headless)
-        if browser is None:
-            browser = await self._playwright.chromium.launch(headless=headless)
-            self._browsers[headless] = browser
-        return browser
+        """Return the shared browser, launching it at most once.
+
+        Serialized: two concurrent opens would otherwise each start Playwright and
+        launch a browser, and the loser's process would be dropped from the dict
+        while still running.
+        """
+        async with self._lock:
+            if self._playwright is None:
+                self._playwright = await async_playwright().start()
+            browser = self._browsers.get(headless)
+            if browser is None:
+                browser = await self._playwright.chromium.launch(headless=headless)
+                self._browsers[headless] = browser
+            return browser
 
     async def _arm_observers(self, session: _Session) -> None:
         """Stamp document identity, route requests through the guard, record effects."""
@@ -336,7 +371,7 @@ class PlaywrightDriver:
                     reason="popups, tabs, and windows are refused by default",
                 )
             )
-            _schedule(page.close())
+            self._spawn(page.close())
 
         def on_download(download: Download) -> None:
             """Refuse a download rather than let it reach the filesystem."""
@@ -348,7 +383,7 @@ class PlaywrightDriver:
                     reason="downloads are blocked",
                 )
             )
-            _schedule(download.cancel())
+            self._spawn(download.cancel())
 
         def on_file_chooser(chooser: FileChooser) -> None:
             """Record a refused file chooser; specification 10.2 rejects uploads.

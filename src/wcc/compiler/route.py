@@ -30,7 +30,13 @@ def origin_of(url: str) -> str:
     parts = urlsplit(url)
     if not parts.scheme or not parts.hostname:
         raise ValueError(f"{url!r} has no origin")
-    origin = f"{parts.scheme}://{parts.hostname}"
+    host = parts.hostname
+    if ":" in host:
+        # ``urlsplit`` strips the brackets an IPv6 literal needs. Emitting the bare
+        # address would produce an origin that cannot be parsed back, and a
+        # ``page_signature`` built on it would not survive a round trip.
+        host = f"[{host}]"
+    origin = f"{parts.scheme}://{host}"
     port = parts.port
     if port is not None and _DEFAULT_PORTS.get(parts.scheme) != port:
         origin = f"{origin}:{port}"

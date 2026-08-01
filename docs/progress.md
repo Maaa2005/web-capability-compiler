@@ -162,3 +162,50 @@ Decisions worth carrying forward:
   credential source, so it stays refused even with the flag on.
 - **Redirect hops are validated in the routing layer.** Each hop is its own document
   request, so the guard sees it before the browser commits to it.
+
+#### Codex counter-review of T1–T3 (2026-08-02)
+
+`~/.claude-sync/scripts/codex-review.sh` against commits `3a209f2..fbfb7d1`. Every
+claim below was checked against the code before it was accepted or rejected.
+
+Accepted and fixed in `f0f9b04`:
+
+| Finding | Verification | Fix |
+|---|---|---|
+| Shared CGNAT space `100.64.0.0/10` is admitted | `ipaddress` reports it `is_private=False`, `is_reserved=False` — confirmed | `_restricted_category` now ends in deny-unless-global; a list of known-bad ranges fails open on whatever the list missed |
+| Deprecated IPv6 site-local `fec0::/10` is admitted | `is_global=True` — confirmed | Named outright, since deny-unless-global does not catch it |
+| IPv4-mapped metadata addresses evade the metadata set | `::ffff:100.100.100.200` unwraps into CGNAT space and was admitted — confirmed | `_normalize_address` unwraps `ipv4_mapped` before every check |
+| An empty resolver answer is admitted | The per-address loop simply does not run — confirmed | An empty answer is refused |
+| `origin_of` drops IPv6 brackets | `https://[2606:4700::1]/x` produced `https://2606:4700::1` — confirmed | Literals are re-bracketed; a round-trip assertion covers it |
+| `accept_downloads` defaults to true, so a small download wins the race against `cancel()` | Confirmed from the Playwright default | Contexts are created with `accept_downloads=False`; the test now asserts `download.path()` raises |
+| The session limit races | `len(self._sessions)` was read before several awaits — confirmed | Slots are reserved under an `asyncio.Lock`; a four-way concurrent open test asserts exactly two succeed |
+| A failed open leaks its context | No `finally` covered `goto`/`identify` failure — confirmed | `except BaseException` closes the context and clears the reservation; a 1 ms-timeout test covers it |
+| Browser launch races | `_browser` had no lock — confirmed | Serialized under the same lock |
+| Background cleanups outlive `shutdown` | Tasks lived in a module-level set nothing awaited — confirmed | Per-driver `_cleanups` with `drain_cleanups()`, awaited by `shutdown()` |
+
+Rejected:
+
+- **"`::ffff:169.254.169.254` is allowed when `allow_private_network=True`."** It is
+  not. The address reports `is_link_local=True`, so it is categorized link-local, and
+  the allowance only opens loopback and private. The underlying concern was real
+  through a different address, so the mapped-address fix landed anyway.
+
+Deferred, with reasons:
+
+- **Check-to-connect DNS rebinding.** Validating at check time cannot bind the
+  address Chromium later connects to. Closing this needs connection-level pinning or
+  a trusted proxy, which is an architecture decision rather than a Phase 1 fix.
+- **Non-network scheme commits (`window.location = "about:blank"`, `data:`,
+  `blob:`, `srcdoc`) bypass the route handler.** Real. Needs a frame-commit check
+  that fails the session closed, and it belongs with the settle work of T8.
+- **Sensitive-value enforcement in the model layer, and a sentinel-based test.**
+  Correct, and it is exactly what T4 must deliver; recorded as a T4 requirement.
+- **Percent-encoding canonicalization in route normalization** (`/products/123` vs
+  `/products/%31%32%33`). Recorded for T7, where `page_signature` is assembled.
+- **Fixed `asyncio.sleep` in the popup test.** The download test now synchronizes on
+  `expect_download` and `drain_cleanups`; the popup test still sleeps.
+- **Multi-hop redirect integration tests.** The fixture server serves static files
+  only; adding redirect routes to it is worth doing alongside T7.
+
+`scripts/test.sh` after the fixes: ruff format, ruff lint, pyright 0 errors,
+121 tests passed.

@@ -129,3 +129,37 @@ def test_a_rebound_name_is_refused_on_the_second_navigation() -> None:
     policy.check("https://rebind.example/first")
     with pytest.raises(NavigationBlockedError, match="loopback"):
         policy.check("https://rebind.example/second")
+
+
+@pytest.mark.parametrize(
+    "address",
+    [
+        "100.64.0.1",  # shared CGNAT space: neither private nor reserved
+        "100.100.100.200",
+        "::ffff:100.100.100.200",  # the same, reached through an IPv4-mapped address
+        "fec0::1",  # deprecated IPv6 site-local, reported as global
+    ],
+)
+def test_non_global_space_is_refused_even_though_it_is_not_flagged_private(
+    address: str,
+) -> None:
+    """A list of known-bad ranges fails open on whatever the list missed."""
+    with pytest.raises(NavigationBlockedError):
+        _policy((address,)).check("https://internal.example/")
+
+
+@pytest.mark.parametrize(
+    "address",
+    ["::ffff:169.254.169.254", "::ffff:100.100.100.200"],
+)
+def test_ipv4_mapped_metadata_addresses_are_refused_with_the_allowance_on(
+    address: str,
+) -> None:
+    with pytest.raises(NavigationBlockedError):
+        _policy((address,)).check("https://metadata.example/", allow_private_network=True)
+
+
+def test_a_name_resolving_to_nothing_is_refused() -> None:
+    """An empty answer must not fall through the per-address loop as success."""
+    with pytest.raises(NavigationBlockedError, match="no addresses"):
+        UrlPolicy(resolver=lambda _: []).check("https://empty.example/")

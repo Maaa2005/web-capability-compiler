@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from urllib.parse import urlsplit
+
 import pytest
 
 from wcc.compiler.route import normalize_route_pattern, origin_of
@@ -74,3 +76,17 @@ def test_a_different_parameter_set_is_a_different_page_class() -> None:
 def test_normalization_is_deterministic_across_repeated_calls() -> None:
     url = "https://example.com/orders/3f0c8a1e-7b2d-4c5e-9a10-8d7e6f5c4b3a?b=2&a=1"
     assert len({normalize_route_pattern(url) for _ in range(5)}) == 1
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("https://[2606:4700::1]/x", "https://[2606:4700::1]"),
+        ("https://[2606:4700::1]:8443/x", "https://[2606:4700::1]:8443"),
+        ("http://[::1]:8931/", "http://[::1]:8931"),
+    ],
+)
+def test_an_ipv6_origin_keeps_the_brackets_it_needs(url: str, expected: str) -> None:
+    """A bare IPv6 origin cannot be parsed back, so a signature built on it breaks."""
+    assert origin_of(url) == expected
+    assert urlsplit(origin_of(url)).hostname == urlsplit(url).hostname
