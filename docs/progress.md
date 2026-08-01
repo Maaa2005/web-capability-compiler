@@ -397,3 +397,59 @@ route pattern, so `/search` and `/search?q=` are different page classes, while
 
 All nine pass. T8 (settle logic and resource limits, plus the two deferred security
 items) and T9 (`wcc install-browser`, `wcc doctor`) remain before Phase 1 is closed.
+
+---
+
+## Positioning decision (2026-08-02)
+
+Deliberated with GPT-5.6 Sol over two rounds. Full record:
+`Vault/Decisions/2026-08-02-wcc-positioning.md`.
+
+**Decided.** WCC is a compile / bind / verify layer for sites that have not declared
+agent capabilities:
+
+> Compile observable web controls into typed, evidence-backed capabilities that can
+> be safely rebound and verified across sessions.
+
+**Withdrawn.** Centring the pitch on exporting generated capabilities as WebMCP
+declarations. WebMCP's imperative API registers a site's own JavaScript functions as
+`execute` callbacks; DOM observation cannot recover the right internal function, its
+authorization conditions, or its transaction boundary. Export survives only as a
+future authoring scaffold — lint, audit, migration help, CI conformance.
+
+**Claims moved.** Token reduction drops from "our technique" to "a benefit we
+measure". The distinctive claim is the whole binding lifecycle — page-class lookup,
+unique re-resolution of every target, risk re-evaluation, postcondition
+verification, fail-closed on mismatch — not `page_signature` alone. "WebMCP
+compatible" weakens to "WebMCP inspired" until proven.
+
+**An implementation defect to fix before Phase 2.** `page_signature` excludes buttons
+and links unconditionally (`src/wcc/compiler/fingerprints.py`), while specification
+7.3 requires a normalized form/control fingerprint. The argument that unique
+re-resolution contains the risk is incomplete: a submit button *replaced* by a
+different-purpose button with the same id, accessible name, and in-form structure
+still re-resolves uniquely. Uniqueness is not semantic equivalence.
+
+Fix by separating structure from content rather than by including everything:
+form-associated submits enter as type, role, form association, method, and action
+kind; result links leave the signature and live in the collection hash; pagination
+contributes the presence and kind of a navigation control with its number label
+normalized away. Regression tests: a changed result link leaves the signature alone,
+while a removed submit or a GET-to-POST change moves it. Doing this before Phase 2
+persists any template avoids a data migration.
+
+**Decision gates, fixed before results are seen.** Phase 4: binding success and
+false-bind rates under real page variation. Phase 5: whether an external MCP agent
+finds it useful. Phase 7: same-conditions comparison including Stagehand. The Phase 7
+task set and evaluation conditions are frozen before the first run.
+
+**Project goal: learning and portfolio, with the intent that it actually runs and
+attracts users.** That reorders the roadmap. WCC only runs in someone else's
+environment once it is an MCP server, so Phase 5 is the priority milestone and
+Phases 2–4 are the shortest path to it. Phase 6 (optional semantic enrichment) waits.
+
+**Unverified.** Stagehand's reported 80–90% input-token and ~30% cost reductions come
+from a research summary, not from primary sources, and they measure a different
+quantity than WCC would claim: sending a semantic tree instead of raw HTML makes each
+call lighter, whereas warm binding aims to remove the call. Confirming what those
+numbers actually measure is a prerequisite for designing the Phase 7 benchmark.
