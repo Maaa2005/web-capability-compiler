@@ -209,3 +209,35 @@ Deferred, with reasons:
 
 `scripts/test.sh` after the fixes: ruff format, ruff lint, pyright 0 errors,
 121 tests passed.
+
+#### Codex counter-review, second pass (2026-08-02)
+
+The first review was captured through `tail -120`, which truncated its three
+highest-severity findings. It was re-run with the output written to a file. The
+re-run examined the pre-fix tree, so its finding 5 (the session-limit race) was
+already fixed by `70a03be`. Three findings were new, and all three were confirmed.
+
+Accepted and fixed in `2f8b3c1`:
+
+| Finding | Verification | Fix |
+|---|---|---|
+| **Critical.** The private-network allowance was agent-supplied. `OpenSessionRequest.allow_private_network` reached `UrlPolicy` unchanged | Specification 10.2 calls it a *developer-only* flag and 12.1 gives `open_session` a URL and nothing else — confirmed against the specification | The field is removed from `OpenSessionRequest` and lives in `DriverSettings`, which comes from trusted local configuration. A test asserts the field cannot be set on a request at all |
+| **Critical.** Only document requests passed the guard; `resource_type != "document"` returned early | Confirmed in the route handler | Every request is judged. A test drives `fetch('http://169.254.169.254/...')` from a loopback-allowed page and asserts it is refused and recorded as a blocked `subresource` |
+| **Critical.** Service-worker traffic can bypass the routing layer | Playwright routes service-worker requests separately — confirmed from the context option | Contexts are created with `service_workers="block"` |
+| **High.** `identify()` read token, URL, language, and title across separate awaits | Confirmed: a navigation landing between them yields document A's ID beside document B's URL | One `evaluate` gathers all four, the token is re-read to confirm the document did not move, and the read is retried up to three times |
+
+Still deferred, and now the most important open risk:
+
+- **Check-to-connect DNS rebinding.** `UrlPolicy` resolves with `socket.getaddrinfo`
+  while Chromium resolves independently, so the address checked is not provably the
+  address connected to. Repeating resolution does not close this; the existing
+  rebinding tests only prove the policy re-resolves, not that the browser connected
+  where the policy looked. Closing it needs the connected peer address — Playwright
+  exposes `response.server_addr()` — checked against the same rules, with the session
+  failed closed on a mismatch, or host-to-IP pinning at browser launch. Recorded as a
+  T8 requirement rather than improvised here.
+- **Non-network scheme commits** (`window.location = "about:blank"`, `data:`,
+  `blob:`, `srcdoc`) still bypass the route handler; the frame-commit check belongs
+  with the same T8 work.
+
+`scripts/test.sh`: ruff format, ruff lint, pyright 0 errors, 122 tests passed.

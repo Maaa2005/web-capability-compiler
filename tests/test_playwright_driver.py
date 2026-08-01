@@ -35,7 +35,10 @@ pytestmark = pytest.mark.asyncio
 
 @pytest.fixture
 async def driver() -> AsyncIterator[PlaywrightDriver]:
-    instance = PlaywrightDriver(UrlPolicy(), DriverSettings(max_active_sessions=2))
+    instance = PlaywrightDriver(
+        UrlPolicy(),
+        DriverSettings(max_active_sessions=2, allow_private_network=True),
+    )
     try:
         yield instance
     finally:
@@ -43,16 +46,14 @@ async def driver() -> AsyncIterator[PlaywrightDriver]:
 
 
 async def _open(driver: PlaywrightDriver, url: str) -> str:
-    info = await driver.open_session(OpenSessionRequest(url=url, allow_private_network=True))
+    info = await driver.open_session(OpenSessionRequest(url=url))
     return info.session_id
 
 
 async def test_open_session_reports_an_active_session(
     driver: PlaywrightDriver, fixture_server: str
 ) -> None:
-    info = await driver.open_session(
-        OpenSessionRequest(url=f"{fixture_server}/search-page/", allow_private_network=True)
-    )
+    info = await driver.open_session(OpenSessionRequest(url=f"{fixture_server}/search-page/"))
     assert info.session_id.startswith("sess_")
     assert info.status is SessionStatus.ACTIVE
     assert info.created_at.tzinfo is not None
@@ -76,10 +77,17 @@ async def test_a_disallowed_scheme_is_refused_before_a_browser_starts(
 
 
 async def test_loopback_needs_the_explicit_private_network_allowance(
-    driver: PlaywrightDriver, fixture_server: str
+    fixture_server: str,
 ) -> None:
-    with pytest.raises(NavigationBlockedError):
-        await driver.open_session(OpenSessionRequest(url=f"{fixture_server}/search-page/"))
+    """The allowance is configuration, not something a request may ask for."""
+    assert "allow_private_network" not in OpenSessionRequest.model_fields
+
+    strict = PlaywrightDriver(UrlPolicy(), DriverSettings())
+    try:
+        with pytest.raises(NavigationBlockedError):
+            await strict.open_session(OpenSessionRequest(url=f"{fixture_server}/search-page/"))
+    finally:
+        await strict.shutdown()
 
 
 async def test_the_active_session_limit_is_enforced(
@@ -89,7 +97,7 @@ async def test_the_active_session_limit_is_enforced(
     first = await _open(driver, url)
     second = await _open(driver, url)
     with pytest.raises(SessionLimitExceededError):
-        await driver.open_session(OpenSessionRequest(url=url, allow_private_network=True))
+        await driver.open_session(OpenSessionRequest(url=url))
     await driver.close_session(first)
     await driver.close_session(second)
 
@@ -105,9 +113,7 @@ async def test_settling_a_static_fixture_succeeds(
 async def test_open_session_reports_the_first_document_and_snapshot(
     driver: PlaywrightDriver, fixture_server: str
 ) -> None:
-    info = await driver.open_session(
-        OpenSessionRequest(url=f"{fixture_server}/search-page/", allow_private_network=True)
-    )
+    info = await driver.open_session(OpenSessionRequest(url=f"{fixture_server}/search-page/"))
     assert info.current_document_id is not None
     assert info.current_document_id.startswith("doc_")
     assert info.current_snapshot_id is not None
@@ -246,10 +252,7 @@ async def test_concurrent_opens_cannot_exceed_the_session_limit(
     """Counting sessions before the awaits that create one lets two callers in."""
     url = f"{fixture_server}/search-page/"
     results = await asyncio.gather(
-        *(
-            driver.open_session(OpenSessionRequest(url=url, allow_private_network=True))
-            for _ in range(4)
-        ),
+        *(driver.open_session(OpenSessionRequest(url=url)) for _ in range(4)),
         return_exceptions=True,
     )
 
@@ -262,15 +265,13 @@ async def test_concurrent_opens_cannot_exceed_the_session_limit(
 
 async def test_a_failed_open_leaves_no_session_behind(fixture_server: str) -> None:
     """A context whose ID never reached the caller can never be closed by them."""
-    impatient = PlaywrightDriver(UrlPolicy(), DriverSettings(page_load_timeout_ms=1))
+    impatient = PlaywrightDriver(
+        UrlPolicy(),
+        DriverSettings(page_load_timeout_ms=1, allow_private_network=True),
+    )
     try:
         with pytest.raises(DriverTimeoutError):
-            await impatient.open_session(
-                OpenSessionRequest(
-                    url=f"{fixture_server}/search-page/",
-                    allow_private_network=True,
-                )
-            )
+            await impatient.open_session(OpenSessionRequest(url=f"{fixture_server}/search-page/"))
         assert impatient._sessions == {}  # noqa: SLF001
         assert impatient._reserved == set()  # noqa: SLF001
     finally:
@@ -293,3 +294,31 @@ async def test_unimplemented_surface_names_the_task_that_will_deliver_it(
             PlannedAction(action=ActionType.FOCUS, element_id="el_unknown"),
         )
     assert "T5" in str(action_error.value)
+
+
+async def test_a_subresource_to_a_refused_destination_is_blocked(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """Guarding documents alone secures the address bar, not the browser context.
+
+    The driver is configured to allow loopback, so the fixture page loads; a
+    subresource aimed at a link-local address is still refused, because that
+    address is out of bounds under any allowance.
+    """
+    session_id = await _open(driver, f"{fixture_server}/search-page/")
+    page = driver._session(session_id).page  # noqa: SLF001 - stands in for task T5
+
+    reached = await page.evaluate(
+        """async () => {
+            try {
+                await fetch('http://169.254.169.254/latest/meta-data/', {mode: 'no-cors'});
+                return true;
+            } catch (e) {
+                return false;
+            }
+        }"""
+    )
+
+    assert reached is False
+    events = driver.drain_navigation_events(session_id)
+    assert any(event.kind == "subresource" and event.blocked for event in events)

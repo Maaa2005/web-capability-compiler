@@ -87,6 +87,13 @@ class DriverSettings:
     configuration only. Until then these defaults keep the driver bounded.
     """
 
+    allow_private_network: bool = False
+    """The developer-only allowance of specification 10.2.
+
+    Never derived from a request. It exists so the loopback fixture server is
+    reachable in development, and it is unsafe to enable for untrusted agents.
+    """
+
     max_active_sessions: int = 8
     page_load_timeout_ms: int = 20_000
     settle_timeout_ms: int = 5_000

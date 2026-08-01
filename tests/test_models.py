@@ -51,8 +51,15 @@ def test_models_reject_unknown_fields() -> None:
         OpenSessionRequest(url="https://example.com", selector="#search")  # type: ignore[call-arg]
 
 
-def test_private_network_is_off_by_default() -> None:
-    assert OpenSessionRequest(url="https://example.com").allow_private_network is False
+def test_a_request_cannot_ask_for_the_private_network_allowance() -> None:
+    """Specification 10.2 makes it a developer-only flag, and 12.1 takes only a URL.
+
+    An agent that could set it per request would be able to switch off the SSRF
+    boundary at will, so the field lives in trusted local configuration instead.
+    """
+    assert "allow_private_network" not in OpenSessionRequest.model_fields
+    with pytest.raises(ValidationError):
+        OpenSessionRequest(url="https://example.com", allow_private_network=True)  # type: ignore[call-arg]
 
 
 def test_locator_chain_resolves_in_priority_order() -> None:

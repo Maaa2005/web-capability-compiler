@@ -13,15 +13,15 @@ from wcc.models.element import CollectionSnapshot, NormalizedElement
 class OpenSessionRequest(WCCModel):
     """Input for opening a session.
 
-    ``allow_private_network`` is the explicit developer allowance that lets the
-    local fixture server be reached. It defaults to off: specification 10.2
-    requires private-network destinations to be rejected unless deliberately
-    permitted.
+    Deliberately narrow. Specification 12.1 gives the MCP caller a URL and nothing
+    else, and the private-network allowance of specification 10.2 is a
+    *developer-only* flag: an external agent that could set it per request would be
+    able to switch off the SSRF boundary at will. That allowance lives in
+    ``DriverSettings``, which comes from trusted local configuration.
     """
 
     url: str
     headless: bool = True
-    allow_private_network: bool = False
     locale: str | None = None
 
 

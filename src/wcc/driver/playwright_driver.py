@@ -27,6 +27,7 @@ from playwright.async_api import (
     FileChooser,
     Page,
     Playwright,
+    Request,
     Route,
     async_playwright,
 )
@@ -55,6 +56,7 @@ from wcc.models.common import SessionStatus
 from wcc.models.session import OpenSessionRequest, PageSnapshot, SessionInfo
 
 _DOCUMENT_TOKEN = "__wccDocumentToken"
+_IDENTITY_READ_ATTEMPTS = 3
 
 # Stamped into every new document before page scripts run. A same-document update
 # such as ``history.pushState`` leaves the token in place, which is exactly the
@@ -73,6 +75,13 @@ _DOCUMENT_TOKEN_SCRIPT = f"""
   }});
 }})();
 """
+
+
+def _event_kind(request: Request) -> str:
+    """Name a refused request so the runtime can tell a hop from a subresource."""
+    if request.resource_type != "document":
+        return "subresource"
+    return "redirect" if request.redirected_from else "navigation"
 
 
 @dataclass
@@ -116,7 +125,8 @@ class PlaywrightDriver:
     # -- lifecycle ---------------------------------------------------------
 
     async def open_session(self, request: OpenSessionRequest) -> SessionInfo:
-        self._guard.check(request.url, allow_private_network=request.allow_private_network)
+        allow_private = self._settings.allow_private_network
+        self._guard.check(request.url, allow_private_network=allow_private)
 
         session_id = new_id("sess")
         async with self._lock:
@@ -137,7 +147,11 @@ class PlaywrightDriver:
             # ``accept_downloads`` defaults to true, which writes the file first and
             # lets the handler cancel afterwards. Refusing at the context means a
             # blocked download never reaches the filesystem at all.
-            context = await browser.new_context(locale=request.locale, accept_downloads=False)
+            context = await browser.new_context(
+                locale=request.locale,
+                accept_downloads=False,
+                service_workers="block",
+            )
             page = await context.new_page()
             session = _Session(
                 session_id=session_id,
@@ -145,7 +159,7 @@ class PlaywrightDriver:
                 page=page,
                 initial_url=request.url,
                 created_at=datetime.now(UTC),
-                allow_private_network=request.allow_private_network,
+                allow_private_network=allow_private,
             )
             await self._arm_observers(session)
 
@@ -253,20 +267,13 @@ class PlaywrightDriver:
         ``pushState`` that never replaced the document.
         """
         session = self._session(session_id)
-        token = await session.page.evaluate(f"() => window.{_DOCUMENT_TOKEN} ?? null")
-        if not isinstance(token, str):
-            raise DriverError(
-                "the current document carries no WCC token; it was created before the "
-                "session was armed or the page is not a document this driver opened"
-            )
+        token, url, language, title = await self._read_document(session)
         if token != session.document_token:
             session.document_token = token
             session.current_document_id = new_id("doc")
 
         snapshot_id = new_id("snap")
         session.current_snapshot_id = snapshot_id
-        url = session.page.url
-        language = await session.page.evaluate("() => document.documentElement.lang || null")
         document_id = session.current_document_id
         assert document_id is not None  # noqa: S101 - set immediately above
         return DocumentIdentity(
@@ -277,8 +284,43 @@ class PlaywrightDriver:
             url=url,
             origin=origin_of(url),
             normalized_route_pattern=normalize_route_pattern(url),
-            title=await session.page.title() or None,
-            language=language if isinstance(language, str) and language else None,
+            title=title,
+            language=language,
+        )
+
+    async def _read_document(self, session: _Session) -> tuple[str, str, str | None, str | None]:
+        """Read token, URL, language, and title as one consistent observation.
+
+        Reading them across separate awaits lets a navigation land in between, so a
+        result could carry document A's identity beside document B's URL and title.
+        The token is re-read afterwards, and a mismatch means the page moved while
+        it was being described: the read is simply repeated.
+        """
+        for _ in range(_IDENTITY_READ_ATTEMPTS):
+            observed = await session.page.evaluate(
+                f"""() => ({{
+                    token: window.{_DOCUMENT_TOKEN} ?? null,
+                    url: document.location.href,
+                    language: document.documentElement.lang || null,
+                    title: document.title || null,
+                }})"""
+            )
+            if not isinstance(observed, dict) or not isinstance(observed.get("token"), str):
+                raise DriverError(
+                    "the current document carries no WCC token; it was created before "
+                    "the session was armed or the page is not one this driver opened"
+                )
+            confirmation = await session.page.evaluate(f"() => window.{_DOCUMENT_TOKEN} ?? null")
+            if confirmation == observed["token"]:
+                return (
+                    observed["token"],
+                    str(observed["url"]),
+                    observed.get("language"),
+                    observed.get("title"),
+                )
+        raise DriverError(
+            "the page kept navigating while it was being identified; no consistent "
+            f"observation after {_IDENTITY_READ_ATTEMPTS} attempts"
         )
 
     def drain_navigation_events(self, session_id: str) -> list[NavigationEvent]:
@@ -335,10 +377,14 @@ class PlaywrightDriver:
         await session.context.add_init_script(_DOCUMENT_TOKEN_SCRIPT)
 
         async def on_route(route: Route) -> None:
+            """Judge every request, not only the top-level document.
+
+            A page that can issue ``fetch("http://127.0.0.1:8080/admin")`` or embed
+            ``<img src="http://192.168.1.1/reboot">`` reaches the private network
+            just as effectively as a navigation would. Guarding documents alone
+            secures the address bar and leaves the browser context open.
+            """
             request = route.request
-            if request.resource_type != "document":
-                await route.continue_()
-                return
             try:
                 self._guard.check(
                     request.url,
@@ -347,7 +393,7 @@ class PlaywrightDriver:
             except NavigationBlockedError as blocked:
                 session.events.append(
                     NavigationEvent(
-                        kind="redirect" if request.redirected_from else "navigation",
+                        kind=_event_kind(request),
                         url=request.url,
                         blocked=True,
                         reason=blocked.message,
@@ -355,7 +401,7 @@ class PlaywrightDriver:
                 )
                 await route.abort("blockedbyclient")
                 return
-            if request.redirected_from is not None:
+            if request.resource_type == "document" and request.redirected_from is not None:
                 session.events.append(NavigationEvent(kind="redirect", url=request.url))
             await route.continue_()
 
