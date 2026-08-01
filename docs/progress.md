@@ -168,7 +168,7 @@ Decisions worth carrying forward:
 `~/.claude-sync/scripts/codex-review.sh` against commits `3a209f2..fbfb7d1`. Every
 claim below was checked against the code before it was accepted or rejected.
 
-Accepted and fixed in `f0f9b04`:
+Accepted and fixed in `70a03be`:
 
 | Finding | Verification | Fix |
 |---|---|---|
