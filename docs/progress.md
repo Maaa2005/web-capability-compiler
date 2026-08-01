@@ -53,3 +53,45 @@ identity, URL policy and redirect revalidation, element normalization and label
 resolution, locator candidates and unique re-resolution, collection and JSON-LD
 extraction, the three fingerprints, settle logic and resource limits, plus
 `wcc install-browser` and `wcc doctor`.
+
+---
+
+## Phase 1: Driver, URL policy, and snapshots — in progress
+
+Tasks are tracked as T1–T9 in specification Section 13 order. Each task lands with
+`scripts/test.sh` green before the next one starts.
+
+### T1: `Driver` protocol and Playwright implementation — done (2026-08-02)
+
+- `src/wcc/driver/base.py`: the five-method `Driver` protocol of specification 4.1,
+  a `NavigationGuard` protocol, `DriverSettings`, and an error taxonomy whose stable
+  `code` values let an agent tell blocked from stale from missing (specification 11.2).
+- `src/wcc/driver/playwright_driver.py`: Chromium via the Playwright async API.
+  Session lifecycle, `wait_settled`, guard-checked navigation, and navigation-event
+  surfacing are implemented.
+- `src/wcc/identifiers.py`: opaque prefixed IDs from `secrets`.
+- Tests: `tests/test_driver_contract.py` (no browser) and
+  `tests/test_playwright_driver.py` (Chromium against the loopback fixture server).
+- `scripts/test.sh`: ruff format, ruff lint, pyright 0 errors, 42 tests passed.
+
+Decisions worth carrying forward:
+
+- **The navigation guard is a required constructor argument, not an optional one.**
+  Specification 4.2 forbids the driver from deciding policy, and a default-permissive
+  guard would have made an unguarded driver the easy path. T3 supplies the real policy.
+- **Validation happens in Playwright's routing layer, not after `goto` returns.**
+  Specification 4.1 requires validation *before* a navigation is committed; routing
+  sees each redirect hop as its own document request, so a refused hop is aborted
+  rather than loaded and then regretted.
+- **`snapshot` and `execute_action` raise `DriverNotReadyError` naming T2/T4 and T5.**
+  This follows the Phase 0 convention that unimplemented surface must not look like
+  success. `execute_action` genuinely cannot land before T5, because addressing an
+  element requires the locator re-resolution of specification 7.7.
+- **Driver-side budgets live in `DriverSettings` for now.** T8 moves the full
+  specification 10.5 limit set into `policy/limits.py`.
+
+Unresolved:
+
+- `wait_settled` currently waits for network idle only. The full settle definition
+  arrives with T8.
+- Chromium is installed out-of-band today; `wcc install-browser` arrives with T9.

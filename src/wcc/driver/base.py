@@ -1,0 +1,139 @@
+"""The ``Driver`` interface every browser backend implements (specification 4.1).
+
+The runtime talks to a browser only through this protocol, so the post-MVP Chrome
+extension driver can replace Playwright without the compiler, binder, or executor
+changing. Two rules in this module carry most of that weight:
+
+- a driver never accepts a raw selector from outside; it addresses elements by the
+  internal ``element_id`` and resolves them through the locator chain of
+  specification 7.7;
+- a driver reports attempted redirects, downloads, popups, and new pages instead of
+  following them, leaving the decision to the runtime policy layer.
+
+Errors carry a stable ``code`` because specification 11.2 requires stale and
+blocked outcomes to be distinguishable by an agent, not just readable by a human.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Protocol, runtime_checkable
+
+from wcc.models.action import ActionObservation, PlannedAction
+from wcc.models.session import OpenSessionRequest, PageSnapshot, SessionInfo
+
+
+class DriverError(Exception):
+    """Base class for every failure a driver reports to the runtime."""
+
+    code = "driver_error"
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message
+
+
+class SessionNotFoundError(DriverError):
+    """The named session was never opened, or has already been closed."""
+
+    code = "session_not_found"
+
+
+class SessionLimitExceededError(DriverError):
+    """Opening another session would exceed the configured maximum."""
+
+    code = "session_limit_exceeded"
+
+
+class NavigationBlockedError(DriverError):
+    """A navigation was refused before it was committed (specification 10.2)."""
+
+    code = "navigation_blocked"
+
+
+class DriverTimeoutError(DriverError):
+    """A page load, settle wait, or action exceeded its configured budget."""
+
+    code = "driver_timeout"
+
+
+class ElementNotResolvedError(DriverError):
+    """No locator candidate produced exactly one match (specification 7.7).
+
+    Zero matches and ambiguous matches end here alike: the driver never picks the
+    closest element.
+    """
+
+    code = "element_not_resolved"
+
+
+class DriverNotReadyError(DriverError):
+    """A driver capability exists in the interface but not yet in this build.
+
+    Phase 0 established the convention that unimplemented surface names the task
+    that will implement it rather than returning something that looks like success.
+    """
+
+    code = "driver_not_ready"
+
+
+@dataclass(frozen=True)
+class DriverSettings:
+    """Conservative driver-side budgets.
+
+    Phase 1 task T8 moves the full resource-limit set of specification 10.5 into
+    ``policy/limits.py`` and makes it configurable through trusted local
+    configuration only. Until then these defaults keep the driver bounded.
+    """
+
+    max_active_sessions: int = 8
+    page_load_timeout_ms: int = 20_000
+    settle_timeout_ms: int = 5_000
+    action_timeout_ms: int = 10_000
+
+
+@runtime_checkable
+class NavigationGuard(Protocol):
+    """The runtime's decision point for every URL a driver is about to commit to.
+
+    Phase 1 task T3 supplies the real URL policy and redirect revalidation. The
+    driver calls this before a navigation is committed and again for each observed
+    redirect hop.
+    """
+
+    def check(self, url: str, *, allow_private_network: bool) -> None:
+        """Raise :class:`NavigationBlockedError` to refuse ``url``."""
+        ...
+
+
+@runtime_checkable
+class Driver(Protocol):
+    """Specification 4.1. All browser access lives behind these five methods."""
+
+    async def open_session(self, request: OpenSessionRequest) -> SessionInfo: ...
+
+    async def close_session(self, session_id: str) -> None: ...
+
+    async def snapshot(self, session_id: str) -> PageSnapshot: ...
+
+    async def execute_action(
+        self,
+        session_id: str,
+        action: PlannedAction,
+    ) -> ActionObservation: ...
+
+    async def wait_settled(self, session_id: str, timeout_ms: int) -> None: ...
+
+
+__all__ = [
+    "Driver",
+    "DriverError",
+    "DriverNotReadyError",
+    "DriverSettings",
+    "DriverTimeoutError",
+    "ElementNotResolvedError",
+    "NavigationBlockedError",
+    "NavigationGuard",
+    "SessionLimitExceededError",
+    "SessionNotFoundError",
+]
