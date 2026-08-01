@@ -217,7 +217,7 @@ highest-severity findings. It was re-run with the output written to a file. The
 re-run examined the pre-fix tree, so its finding 5 (the session-limit race) was
 already fixed by `70a03be`. Three findings were new, and all three were confirmed.
 
-Accepted and fixed in `2f8b3c1`:
+Accepted and fixed in `d05c779`:
 
 | Finding | Verification | Fix |
 |---|---|---|
