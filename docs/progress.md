@@ -241,3 +241,53 @@ Still deferred, and now the most important open risk:
   with the same T8 work.
 
 `scripts/test.sh`: ruff format, ruff lint, pyright 0 errors, 122 tests passed.
+
+### T4: element normalization and label resolution — done (2026-08-02)
+
+- `src/wcc/driver/page_script.py`: the DOM extraction script, kept as data. It
+  reports signals and decides nothing, except one refusal — see below.
+- `src/wcc/driver/normalize.py`: label priority (8.1), eligibility (8.2), control
+  classification, confidence (7.4), and locator-candidate collection (7.6).
+- `src/wcc/driver/playwright_driver.py`: `extract_elements()`.
+- `fixtures/sensitive-form/`: a checkout form where every sensitive control holds a
+  distinct sentinel value.
+- Tests: `tests/test_normalize.py` (browser-free rules) and four browser tests
+  covering sentinel absence, deliberate omission, hidden-input exclusion, and the
+  label coverage acceptance criterion 1 asks for.
+- `scripts/test.sh`: ruff format, ruff lint, pyright 0 errors, 164 tests passed.
+
+**A Phase 0 defect found and fixed here.** `LabelSource` had the specification 8.1
+order wrong: `aria-labelledby` outranked a wrapping `<label>`, and the eighth member
+was `title`, which specification 8.1 does not list at all. The correct eighth source
+is a nearby heading or fieldset legend. Members are now in specification order and
+`TITLE` is replaced by `LEGEND_OR_HEADING`. Nothing consumed the old order yet, so
+no migration is needed beyond this note.
+
+Schema change (specification rule 7): `ControlType` gains `password`, `file`, and
+`hidden`. These are additive; a reader written against the earlier list must treat
+an unknown control type as `other`. `SCHEMA_VERSION` is deliberately **not** bumped:
+it tracks the specification document version, and this adds no field. The reason for
+the change is that specification 7.2 forbids capturing these values, and a type that
+cannot be named cannot be checked.
+
+Decisions worth carrying forward:
+
+- **Sensitive values are refused twice, independently.** The page script never reads
+  `.value` for a password, payment, security-code, token-like, or file control, so
+  the value never enters the process; `NormalizedElement` then rejects any such value
+  outright. One barrier is a convention a later edit can quietly break.
+- **The sentinel test asserts absence across the whole serialized payload**, not the
+  `value` field alone, so a leak through a label, a locator key, or any future field
+  fails it and names the sentinel. The earlier fixture test only checked that inputs
+  existed, which a careless extractor would also pass.
+- **Hidden inputs are excluded entirely.** Specification 8.2 permits keeping a safe
+  semantic value, but nothing in Phase 1 reads one, and an element retained without
+  a reader is a value waiting to be recorded by accident.
+- **Element IDs are minted per observation, never derived from the DOM.** A
+  DOM-derived ID would leak page structure to an agent that must never receive a
+  selector (specification 10.3).
+
+Unresolved:
+
+- Locator chains are collected but not yet re-resolved against a live page; that is
+  T5, together with `execute_action`.

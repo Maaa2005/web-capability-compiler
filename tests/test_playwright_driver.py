@@ -26,7 +26,7 @@ from wcc.driver.base import (
 )
 from wcc.driver.playwright_driver import PlaywrightDriver
 from wcc.models.action import PlannedAction
-from wcc.models.common import ActionType, SessionStatus
+from wcc.models.common import ActionType, Confidence, ControlType, LabelSource, SessionStatus
 from wcc.models.session import OpenSessionRequest
 from wcc.policy.url_policy import UrlPolicy
 
@@ -322,3 +322,73 @@ async def test_a_subresource_to_a_refused_destination_is_blocked(
     assert reached is False
     events = driver.drain_navigation_events(session_id)
     assert any(event.kind == "subresource" and event.blocked for event in events)
+
+
+SENTINELS = (
+    "SENTINEL-CARD-4111",
+    "SENTINEL-CVC-737",
+    "SENTINEL-PASSWORD-HUNTER2",
+    "SENTINEL-CSRF-TOKEN",
+    "SENTINEL-SESSION-ID",
+)
+
+
+async def test_no_sensitive_sentinel_survives_extraction(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """Acceptance criterion 2, tested by absence rather than by inspection.
+
+    Each sensitive control in the fixture carries a distinct sentinel. Serializing
+    every extracted element and searching the whole payload means a leak through
+    any field — value, label, locator key — fails the test and names the sentinel.
+    """
+    session_id = await _open(driver, f"{fixture_server}/sensitive-form/")
+    elements = await driver.extract_elements(session_id)
+    payload = "[" + ",".join(element.model_dump_json() for element in elements) + "]"
+
+    leaked = [sentinel for sentinel in SENTINELS if sentinel in payload]
+    assert leaked == []
+    assert "PUBLIC-CARDHOLDER-OK" in payload
+
+
+async def test_sensitive_controls_are_marked_rather_than_dropped(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """An omitted value must be visible as a deliberate omission (specification 7.2)."""
+    session_id = await _open(driver, f"{fixture_server}/sensitive-form/")
+    by_label = {
+        element.resolved_label: element for element in await driver.extract_elements(session_id)
+    }
+
+    password = by_label["Password"]
+    assert password.control_type is ControlType.PASSWORD
+    assert password.value is None
+    assert password.value_omitted_for_safety is True
+
+    card = by_label["Card number"]
+    assert card.value is None
+    assert card.value_omitted_for_safety is True
+
+
+async def test_hidden_inputs_are_not_extracted_at_all(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    session_id = await _open(driver, f"{fixture_server}/sensitive-form/")
+    elements = await driver.extract_elements(session_id)
+    assert all(element.control_type is not ControlType.HIDDEN for element in elements)
+
+
+async def test_the_search_fixture_labels_every_control_from_a_named_source(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """Acceptance criterion 1 asks for correct labels and sources, not just labels."""
+    session_id = await _open(driver, f"{fixture_server}/search-page/")
+    elements = await driver.extract_elements(session_id)
+    labelled = [e for e in elements if e.resolved_label and e.label_source]
+
+    assert len(labelled) / len(elements) >= 0.95
+    keyword = next(e for e in elements if e.locator_chain.primary.key == "keyword")
+    assert keyword.resolved_label == "Search products"
+    assert keyword.label_source is LabelSource.LABEL_FOR
+    assert keyword.control_type is ControlType.SEARCH
+    assert keyword.confidence is Confidence.HIGH

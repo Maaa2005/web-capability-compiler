@@ -38,19 +38,32 @@ class SessionStatus(StrEnum):
 
 
 class LabelSource(StrEnum):
-    """Specification 8.1 accessible-name priority, highest first."""
+    """Specification 8.1 accessible-name priority, highest first.
+
+    The order is the specification's, not the DOM's convenience: a wrapping
+    ``<label>`` outranks ``aria-labelledby``. Phase 0 had these two transposed and
+    ended with ``title``, which specification 8.1 does not list at all; the eighth
+    source is a nearby heading or fieldset legend.
+    """
 
     LABEL_FOR = "label_for"
+    WRAPPING_LABEL = "wrapping_label"
     ARIA_LABELLEDBY = "aria_labelledby"
     ARIA_LABEL = "aria_label"
-    WRAPPING_LABEL = "wrapping_label"
     BUTTON_TEXT = "button_text"
     NAME_ATTRIBUTE = "name_attribute"
     PLACEHOLDER = "placeholder"
-    TITLE = "title"
+    LEGEND_OR_HEADING = "legend_or_heading"
 
 
 class ControlType(StrEnum):
+    """Additive since schema 0.2.1: ``PASSWORD``, ``FILE``, and ``HIDDEN``.
+
+    Specification 7.2 forbids capturing the values of these controls, and a type
+    that cannot be named cannot be checked. A reader written against the earlier
+    member list must treat an unknown control type as ``other``.
+    """
+
     TEXT = "text"
     SEARCH = "search"
     NUMBER = "number"
@@ -60,7 +73,14 @@ class ControlType(StrEnum):
     TEXTAREA = "textarea"
     BUTTON = "button"
     LINK = "link"
+    PASSWORD = "password"
+    FILE = "file"
+    HIDDEN = "hidden"
     OTHER = "other"
+
+
+#: Controls whose value is never recorded (specification 7.2).
+NEVER_CAPTURED = frozenset({ControlType.PASSWORD, ControlType.FILE, ControlType.HIDDEN})
 
 
 class CollectionKind(StrEnum):

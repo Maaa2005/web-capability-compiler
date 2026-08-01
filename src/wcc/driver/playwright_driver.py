@@ -50,9 +50,12 @@ from wcc.driver.base import (
     SessionLimitExceededError,
     SessionNotFoundError,
 )
+from wcc.driver.normalize import classify_control, is_eligible, normalize_element
+from wcc.driver.page_script import EXTRACT_ELEMENTS
 from wcc.identifiers import new_id
 from wcc.models.action import ActionObservation, NavigationEvent, PlannedAction
 from wcc.models.common import SessionStatus
+from wcc.models.element import NormalizedElement
 from wcc.models.session import OpenSessionRequest, PageSnapshot, SessionInfo
 
 _DOCUMENT_TOKEN = "__wccDocumentToken"
@@ -322,6 +325,25 @@ class PlaywrightDriver:
             "the page kept navigating while it was being identified; no consistent "
             f"observation after {_IDENTITY_READ_ATTEMPTS} attempts"
         )
+
+    async def extract_elements(self, session_id: str) -> list[NormalizedElement]:
+        """Report every eligible interactive element on the current document.
+
+        Element IDs are minted per observation rather than derived from the DOM:
+        specification 7 requires opaque WCC-issued IDs, and a DOM-derived ID would
+        leak page structure to an agent that must never receive a selector.
+        """
+        session = self._session(session_id)
+        records = await session.page.evaluate(EXTRACT_ELEMENTS)
+        elements: list[NormalizedElement] = []
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            control_type = classify_control(record)
+            if not is_eligible(record, control_type):
+                continue
+            elements.append(normalize_element(record, new_id("el")))
+        return elements
 
     def drain_navigation_events(self, session_id: str) -> list[NavigationEvent]:
         """Hand the runtime every navigation-adjacent effect seen since the last call."""

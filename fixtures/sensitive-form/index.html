@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Fixture: Sensitive Values</title></head>
+<body>
+  <main>
+    <h1>Checkout</h1>
+    <!-- Every value here is a distinct sentinel. A snapshot that serializes any
+         of them has violated specification 7.2, and the test names which one. -->
+    <form id="checkout" action="/pay" method="post">
+      <label for="cardholder">Cardholder</label>
+      <input type="text" id="cardholder" name="cardholder" value="PUBLIC-CARDHOLDER-OK">
+
+      <label for="card">Card number</label>
+      <input type="text" id="card" name="card_number" autocomplete="cc-number" value="SENTINEL-CARD-4111">
+
+      <label for="cvc">Security code</label>
+      <input type="text" id="cvc" name="cvc" autocomplete="cc-csc" value="SENTINEL-CVC-737">
+
+      <label for="pw">Password</label>
+      <input type="password" id="pw" name="password" value="SENTINEL-PASSWORD-HUNTER2">
+
+      <label for="doc">Identity document</label>
+      <input type="file" id="doc" name="identity_document">
+
+      <input type="hidden" name="csrf_token" value="SENTINEL-CSRF-TOKEN">
+      <input type="hidden" name="session_id" value="SENTINEL-SESSION-ID">
+
+      <button type="submit">Pay</button>
+    </form>
+  </main>
+</body>
+</html>

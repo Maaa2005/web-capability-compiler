@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from wcc.models.common import (
+    NEVER_CAPTURED,
     BoundingBox,
     CollectionKind,
     Confidence,
@@ -43,6 +44,23 @@ class NormalizedElement(WCCModel):
     form_id: str | None = None
     locator_chain: LocatorChain
     confidence: Confidence = Confidence.LOW
+
+    @model_validator(mode="after")
+    def _forbid_sensitive_values(self) -> NormalizedElement:
+        """Refuse to hold a value specification 7.2 says must never be captured.
+
+        The extractor already declines to read these values in the page, so this
+        is the second of two independent barriers. One barrier is a convention a
+        future edit can quietly break; two make the omission a property of the
+        model, and the failure is loud.
+        """
+        if self.control_type in NEVER_CAPTURED and self.value is not None:
+            raise ValueError(
+                f"a {self.control_type} value must never be captured "
+                "(specification 7.2); leave value unset and set "
+                "value_omitted_for_safety"
+            )
+        return self
 
 
 class CollectionRecord(WCCModel):
