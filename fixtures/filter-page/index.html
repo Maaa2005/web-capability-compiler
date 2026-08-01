@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Fixture: Filter Page</title></head>
+<body>
+  <header><nav aria-label="Main"><a href="/">Home</a></nav></header>
+  <main>
+    <h1>Filter products</h1>
+    <!-- Same controls as search-page's form but a different page class. -->
+    <form id="product-filter" role="search" action="/product-list/" method="get">
+      <label for="keyword">Search products</label>
+      <input type="search" id="keyword" name="keyword">
+      <label for="brand">Brand</label>
+      <select id="brand" name="brand"><option value="">All</option><option value="a">A</option></select>
+      <button type="submit">Filter</button>
+    </form>
+  </main>
+</body>
+</html>

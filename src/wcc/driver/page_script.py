@@ -142,3 +142,32 @@ EXTRACT_ELEMENTS = r"""
   return records;
 }
 """
+
+
+EXTRACT_LANDMARKS = r"""
+() => {
+  // Landmark structure, not content: the roles present and their nesting depth.
+  // Specification 7.3 counts this toward both fingerprints, so it must not carry
+  // any text that changes between two visits to the same page class.
+  const IMPLICIT = {
+    HEADER: 'banner', NAV: 'navigation', MAIN: 'main',
+    FOOTER: 'contentinfo', ASIDE: 'complementary', FORM: 'form', SECTION: 'region',
+  };
+  const AD_LIKE = /(^|[-_ ])(ad|ads|advert|advertisement|promo|sponsor|banner)([-_ ]|$)/i;
+
+  const isAdLike = (el) => AD_LIKE.test(el.id || '')
+    || AD_LIKE.test(el.className || '')
+    || Array.from(el.attributes).some((a) => a.name.startsWith('data-ad'));
+
+  const out = [];
+  const walk = (node, depth) => {
+    for (const child of node.children) {
+      const role = child.getAttribute('role') || IMPLICIT[child.tagName];
+      if (role && !isAdLike(child)) out.push(depth + ':' + role);
+      walk(child, role ? depth + 1 : depth);
+    }
+  };
+  walk(document.body, 0);
+  return out;
+}
+"""

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Fixture: Dynamic Results</title></head>
+<body>
+  <header><nav aria-label="Main"><a href="/">Home</a></nav></header>
+  <main>
+    <h1>Live search</h1>
+    <form id="live-search" role="search" action="/dynamic-results/" method="get">
+      <label for="q">Search products</label>
+      <input type="search" id="q" name="q">
+      <button type="submit">Search</button>
+    </form>
+
+    <!-- An ad-like region. Specification 7.3 excludes these from structural_hash,
+         so rotating the banner must not read as a structural change. -->
+    <aside id="promo" class="ad" data-ad-slot="sidebar">
+      <span id="promo-text">Sale: 20% off audio</span>
+    </aside>
+
+    <ul id="results" aria-label="Search results">
+      <li><a href="/products/1">Wireless Earbuds</a></li>
+      <li><a href="/products/2">Bluetooth Speaker</a></li>
+    </ul>
+  </main>
+</body>
+</html>

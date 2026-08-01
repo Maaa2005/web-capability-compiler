@@ -348,3 +348,52 @@ Decisions worth carrying forward:
   display data; an edited description should not read as a different record.
 - **Malformed JSON-LD is skipped, not fatal.** Page content is untrusted data under
   specification 10.3, and one broken block must not fail an entire snapshot.
+
+### T7: the three fingerprints — done (2026-08-02)
+
+- `src/wcc/compiler/fingerprints.py`: `structural_hash`, `page_signature`, count
+  buckets, and the control fingerprint.
+- `src/wcc/driver/page_script.py`: landmark extraction that skips ad-like regions.
+- `src/wcc/driver/playwright_driver.py`: `snapshot()` now assembles a full
+  `PageSnapshot`.
+- New fixtures: `filter-page/` (same controls, different page class) and
+  `dynamic-results/` (an ad-like promo region plus a mutable result list).
+- Tests: `tests/test_fingerprints.py` plus browser tests for acceptance criteria
+  3, 4, 5, and 6.
+- `scripts/test.sh`: ruff format, ruff lint, pyright 0 errors, 202 tests passed.
+
+Decisions worth carrying forward:
+
+- **`structural_hash` keeps element order; `page_signature` sorts it.** Moving a
+  control from the header into the main form is worth re-inspecting, but two
+  renderings that differ only in the order the server emitted two fields are the
+  same page class.
+- **`page_signature` excludes buttons and links.** Their labels track content — a
+  result card's link text, a paging button's number — so counting them would give
+  every search term its own page class and defeat template reuse entirely.
+- **Ad-like regions are dropped at landmark extraction**, matched on id, class, and
+  `data-ad*` attributes, which is what keeps criterion 4 true.
+
+A test bug found here, not a product bug: the first version of the criterion-6 test
+compared a page with no query against one with `?q=cables`. Criterion 6 is about two
+*different search terms*, so the test now pushes `?q=earbuds` before the first
+snapshot. The distinction is real and deliberate: query **keys** are part of the
+route pattern, so `/search` and `/search?q=` are different page classes, while
+`?q=earbuds` and `?q=cables` are the same one.
+
+### Acceptance criteria status
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | 95% of labelled fixture controls have correct labels and sources | Pass (T4) |
+| 2 | Password, payment, token, and file values never included | Pass (T4, sentinel test) |
+| 3 | Unchanged reload produces an identical structural hash | Pass (T7) |
+| 4 | Ad-like changes do not change the structural hash | Pass (T7) |
+| 5 | Form-structure changes change the structural hash | Pass (T7) |
+| 6 | Search-term changes preserve the page signature | Pass (T7) |
+| 7 | Collection changes change the collection hash | Pass (T6) |
+| 8 | Every executable target re-resolves uniquely after reload | Pass (T5) |
+| 9 | Disallowed schemes and private-network navigation rejected by default | Pass (T3) |
+
+All nine pass. T8 (settle logic and resource limits, plus the two deferred security
+items) and T9 (`wcc install-browser`, `wcc doctor`) remain before Phase 1 is closed.

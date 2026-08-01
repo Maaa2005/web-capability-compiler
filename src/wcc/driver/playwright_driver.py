@@ -40,6 +40,7 @@ from playwright.async_api import (
 )
 
 from wcc.compiler.collections import build_collection, parse_structured_data
+from wcc.compiler.fingerprints import page_signature, structural_hash
 from wcc.compiler.route import normalize_route_pattern, origin_of
 from wcc.driver.base import (
     DocumentIdentity,
@@ -55,7 +56,7 @@ from wcc.driver.base import (
 )
 from wcc.driver.collection_script import EXTRACT_COLLECTIONS
 from wcc.driver.normalize import classify_control, is_eligible, normalize_element
-from wcc.driver.page_script import EXTRACT_ELEMENTS
+from wcc.driver.page_script import EXTRACT_ELEMENTS, EXTRACT_LANDMARKS
 from wcc.driver.resolve import RESOLVE_CANDIDATE
 from wcc.identifiers import new_id
 from wcc.models.action import ActionObservation, NavigationEvent, PlannedAction
@@ -387,10 +388,34 @@ class PlaywrightDriver:
         return events
 
     async def snapshot(self, session_id: str) -> PageSnapshot:
-        self._session(session_id)
-        raise DriverNotReadyError(
-            "snapshot arrives with Phase 1 task T2 (session/document/snapshot identity) "
-            "and task T4 (element normalization)"
+        """One complete observation of the current document (specification 7.2)."""
+        session = self._session(session_id)
+        identity = await self.identify(session_id)
+        elements = await self.extract_elements(session_id)
+        collections, structured = await self.extract_collections(session_id)
+        landmarks = [
+            str(entry)
+            for entry in await session.page.evaluate(EXTRACT_LANDMARKS)
+            if isinstance(entry, str)
+        ]
+
+        return PageSnapshot(
+            session_id=identity.session_id,
+            document_id=identity.document_id,
+            snapshot_id=identity.snapshot_id,
+            captured_at=identity.captured_at,
+            url=identity.url,
+            origin=identity.origin,
+            normalized_route_pattern=identity.normalized_route_pattern,
+            title=identity.title,
+            language=identity.language,
+            elements=elements,
+            collections=collections,
+            structured_data=structured,
+            structural_hash=structural_hash(elements, collections, landmarks),
+            page_signature=page_signature(
+                identity.origin, identity.normalized_route_pattern, elements, landmarks
+            ),
         )
 
     async def resolve(self, session_id: str, element_id: str) -> str:

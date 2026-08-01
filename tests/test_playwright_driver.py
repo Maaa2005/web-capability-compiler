@@ -17,7 +17,6 @@ import pytest
 from playwright.async_api import Error as PlaywrightError
 
 from wcc.driver.base import (
-    DriverNotReadyError,
     DriverSettings,
     DriverTimeoutError,
     ElementNotResolvedError,
@@ -27,7 +26,14 @@ from wcc.driver.base import (
 )
 from wcc.driver.playwright_driver import PlaywrightDriver
 from wcc.models.action import PlannedAction
-from wcc.models.common import ActionType, Confidence, ControlType, LabelSource, SessionStatus
+from wcc.models.common import (
+    SCHEMA_VERSION,
+    ActionType,
+    Confidence,
+    ControlType,
+    LabelSource,
+    SessionStatus,
+)
 from wcc.models.session import OpenSessionRequest
 from wcc.policy.url_policy import UrlPolicy
 
@@ -279,17 +285,6 @@ async def test_a_failed_open_leaves_no_session_behind(fixture_server: str) -> No
         await impatient.shutdown()
 
 
-async def test_snapshot_still_names_the_tasks_that_will_deliver_it(
-    driver: PlaywrightDriver, fixture_server: str
-) -> None:
-    """Phase 0's convention: never let missing behaviour look like success."""
-    session_id = await _open(driver, f"{fixture_server}/search-page/")
-
-    with pytest.raises(DriverNotReadyError) as snapshot_error:
-        await driver.snapshot(session_id)
-    assert "T7" in str(snapshot_error.value) or "T4" in str(snapshot_error.value)
-
-
 async def test_a_subresource_to_a_refused_destination_is_blocked(
     driver: PlaywrightDriver, fixture_server: str
 ) -> None:
@@ -537,3 +532,110 @@ async def test_an_unchanged_page_yields_the_same_collection_hash(
         c for c in (await driver.extract_collections(session_id))[0] if c.record_count == 3
     )
     assert first.collection_hash == second.collection_hash
+
+
+async def test_an_unchanged_reload_keeps_the_structural_hash(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """Acceptance criterion 3."""
+    session_id = await _open(driver, f"{fixture_server}/search-page/")
+    before = await driver.snapshot(session_id)
+    await driver._session(session_id).page.reload()  # noqa: SLF001
+    after = await driver.snapshot(session_id)
+
+    assert after.structural_hash == before.structural_hash
+    assert after.snapshot_id != before.snapshot_id
+
+
+async def test_an_ad_like_change_does_not_change_the_structural_hash(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """Acceptance criterion 4: a rotating promo is not a structural change."""
+    session_id = await _open(driver, f"{fixture_server}/dynamic-results/")
+    before = await driver.snapshot(session_id)
+
+    await driver._session(session_id).page.evaluate(  # noqa: SLF001
+        "() => { document.getElementById('promo-text').textContent = 'Sale: 50% off cables'; }"
+    )
+    after = await driver.snapshot(session_id)
+    assert after.structural_hash == before.structural_hash
+
+
+async def test_a_form_structure_change_changes_the_structural_hash(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """Acceptance criterion 5."""
+    session_id = await _open(driver, f"{fixture_server}/search-page/")
+    before = await driver.snapshot(session_id)
+
+    await driver._session(session_id).page.evaluate(  # noqa: SLF001
+        """() => {
+            const form = document.getElementById('product-search');
+            const label = document.createElement('label');
+            label.setAttribute('for', 'colour');
+            label.textContent = 'Colour';
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.id = 'colour';
+            input.name = 'colour';
+            form.append(label, input);
+        }"""
+    )
+    after = await driver.snapshot(session_id)
+    assert after.structural_hash != before.structural_hash
+
+
+async def test_a_different_search_term_preserves_the_page_signature(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """Acceptance criterion 6: the term and the results change, the page class does not."""
+    session_id = await _open(driver, f"{fixture_server}/dynamic-results/")
+    page = driver._session(session_id).page  # noqa: SLF001
+    await page.evaluate(
+        """() => {
+            document.getElementById('q').value = 'earbuds';
+            history.pushState({}, '', '?q=earbuds');
+        }"""
+    )
+    before = await driver.snapshot(session_id)
+
+    await page.evaluate(
+        """() => {
+            document.getElementById('q').value = 'cables';
+            const results = document.getElementById('results');
+            results.innerHTML =
+                '<li><a href="/products/9">USB-C Cable</a></li>' +
+                '<li><a href="/products/8">HDMI Cable</a></li>' +
+                '<li><a href="/products/7">Audio Jack</a></li>';
+            history.pushState({}, '', '?q=cables');
+        }"""
+    )
+    after = await driver.snapshot(session_id)
+
+    assert after.page_signature == before.page_signature
+    assert after.url != before.url
+
+
+async def test_a_different_page_class_has_a_different_signature(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    session_id = await _open(driver, f"{fixture_server}/search-page/")
+    search = await driver.snapshot(session_id)
+    await driver._session(session_id).page.goto(f"{fixture_server}/filter-page/")  # noqa: SLF001
+    filter_page = await driver.snapshot(session_id)
+
+    assert filter_page.page_signature != search.page_signature
+
+
+async def test_a_snapshot_carries_its_evidence(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    session_id = await _open(driver, f"{fixture_server}/product-list/")
+    snapshot = await driver.snapshot(session_id)
+
+    assert snapshot.schema_version == SCHEMA_VERSION
+    assert snapshot.structural_hash.startswith("sha256:")
+    assert snapshot.page_signature.startswith("sha256:")
+    assert snapshot.collections
+    assert snapshot.structured_data
+    assert all(element.locator_chain.candidates for element in snapshot.elements)
