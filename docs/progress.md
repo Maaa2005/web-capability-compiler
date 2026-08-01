@@ -95,3 +95,42 @@ Unresolved:
 - `wait_settled` currently waits for network idle only. The full settle definition
   arrives with T8.
 - Chromium is installed out-of-band today; `wcc install-browser` arrives with T9.
+
+### T2: session/document/snapshot identity — done (2026-08-02)
+
+- `src/wcc/compiler/route.py`: `origin_of` and `normalize_route_pattern`, the
+  deterministic normalization specification 7.3 requires tests for.
+- `src/wcc/driver/base.py`: `DocumentIdentity` and a `PageSignals` protocol.
+- `src/wcc/driver/playwright_driver.py`: a per-document token stamped by an init
+  script, `identify()`, and a `SessionInfo` that now carries the first document and
+  snapshot IDs.
+- Tests: `tests/test_route_normalization.py` plus six identity tests driving real
+  navigations, reloads, and a `pushState`.
+- `scripts/test.sh`: ruff format, ruff lint, pyright 0 errors, 73 tests passed.
+
+Decisions worth carrying forward:
+
+- **Document identity comes from a token stamped into the page, not from navigation
+  events.** Playwright's `framenavigated` also fires for same-document history
+  updates, so trusting it would hand out a new `document_id` for a `pushState` that
+  never replaced the document — the exact confusion specification 7.2 forbids. The
+  init script runs before page scripts and defines the property non-writable and
+  non-configurable, so a hostile page cannot forge a stale document's identity
+  (specification 10.3).
+- **`PageSignals` sits beside `Driver` rather than inside it.** Specification 4.1
+  states the driver interface as exactly five methods; observation duties that the
+  runtime needs (identity, navigation events) are a separate protocol so the stated
+  interface is not quietly widened.
+- **Query keys are kept, query values are dropped.** `/search?keyword=` and
+  `/search?category=` are different page classes, so collapsing all queries would
+  merge templates that must stay apart, while keeping values would break acceptance
+  criterion 6. Path segments are replaced only for four closed shapes — all-digits,
+  UUID, ULID, and long hex — because a segment that merely contains a digit, such
+  as `v2`, names a real page class.
+- **The Chromium tests fail rather than skip when the browser is missing.** A skip
+  would let an unverified driver report success.
+
+Unresolved:
+
+- `snapshot()` still raises: assembling a `PageSnapshot` needs the elements of T4
+  and the fingerprints of T7. Identity is the part the driver can report today.

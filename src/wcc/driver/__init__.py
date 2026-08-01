@@ -6,6 +6,7 @@ should not pay for a browser binding.
 """
 
 from wcc.driver.base import (
+    DocumentIdentity,
     Driver,
     DriverError,
     DriverNotReadyError,
@@ -14,11 +15,13 @@ from wcc.driver.base import (
     ElementNotResolvedError,
     NavigationBlockedError,
     NavigationGuard,
+    PageSignals,
     SessionLimitExceededError,
     SessionNotFoundError,
 )
 
 __all__ = [
+    "DocumentIdentity",
     "Driver",
     "DriverError",
     "DriverNotReadyError",
@@ -27,6 +30,7 @@ __all__ = [
     "ElementNotResolvedError",
     "NavigationBlockedError",
     "NavigationGuard",
+    "PageSignals",
     "SessionLimitExceededError",
     "SessionNotFoundError",
 ]

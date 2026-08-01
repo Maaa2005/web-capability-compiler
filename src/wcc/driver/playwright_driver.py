@@ -32,7 +32,10 @@ from playwright.async_api import (
     TimeoutError as PlaywrightTimeoutError,
 )
 
+from wcc.compiler.route import normalize_route_pattern, origin_of
 from wcc.driver.base import (
+    DocumentIdentity,
+    DriverError,
     DriverNotReadyError,
     DriverSettings,
     DriverTimeoutError,
@@ -46,6 +49,26 @@ from wcc.models.action import ActionObservation, NavigationEvent, PlannedAction
 from wcc.models.common import SessionStatus
 from wcc.models.session import OpenSessionRequest, PageSnapshot, SessionInfo
 
+_DOCUMENT_TOKEN = "__wccDocumentToken"
+
+# Stamped into every new document before page scripts run. A same-document update
+# such as ``history.pushState`` leaves the token in place, which is exactly the
+# distinction specification 7.2 draws between a document and an observation. The
+# property is non-writable and non-configurable so a hostile page cannot forge a
+# stable identity for a document it replaced (specification 10.3).
+_DOCUMENT_TOKEN_SCRIPT = f"""
+(() => {{
+  const token =
+    Math.random().toString(36).slice(2) + '-' + Date.now().toString(36);
+  Object.defineProperty(window, {_DOCUMENT_TOKEN!r}, {{
+    value: token,
+    writable: false,
+    configurable: false,
+    enumerable: false,
+  }});
+}})();
+"""
+
 
 @dataclass
 class _Session:
@@ -58,6 +81,7 @@ class _Session:
     created_at: datetime
     allow_private_network: bool
     events: list[NavigationEvent] = field(default_factory=list)
+    document_token: str | None = None
     current_document_id: str | None = None
     current_snapshot_id: str | None = None
 
@@ -121,6 +145,7 @@ class PlaywrightDriver:
             raise
 
         self._sessions[session.session_id] = session
+        await self.identify(session.session_id)
         return SessionInfo(
             session_id=session.session_id,
             created_at=session.created_at,
@@ -163,6 +188,43 @@ class PlaywrightDriver:
             await session.page.wait_for_load_state("networkidle", timeout=budget)
         except PlaywrightTimeoutError as exc:
             raise DriverTimeoutError(f"page did not settle within {budget} ms") from exc
+
+    async def identify(self, session_id: str) -> DocumentIdentity:
+        """Mint a fresh snapshot identity, reusing the document identity if it holds.
+
+        The document token is read from the page rather than inferred from
+        navigation events: ``framenavigated`` fires for same-document history
+        updates too, so trusting it would hand out a new ``document_id`` for a
+        ``pushState`` that never replaced the document.
+        """
+        session = self._session(session_id)
+        token = await session.page.evaluate(f"() => window.{_DOCUMENT_TOKEN} ?? null")
+        if not isinstance(token, str):
+            raise DriverError(
+                "the current document carries no WCC token; it was created before the "
+                "session was armed or the page is not a document this driver opened"
+            )
+        if token != session.document_token:
+            session.document_token = token
+            session.current_document_id = new_id("doc")
+
+        snapshot_id = new_id("snap")
+        session.current_snapshot_id = snapshot_id
+        url = session.page.url
+        language = await session.page.evaluate("() => document.documentElement.lang || null")
+        document_id = session.current_document_id
+        assert document_id is not None  # noqa: S101 - set immediately above
+        return DocumentIdentity(
+            session_id=session.session_id,
+            document_id=document_id,
+            snapshot_id=snapshot_id,
+            captured_at=datetime.now(UTC),
+            url=url,
+            origin=origin_of(url),
+            normalized_route_pattern=normalize_route_pattern(url),
+            title=await session.page.title() or None,
+            language=language if isinstance(language, str) and language else None,
+        )
 
     def drain_navigation_events(self, session_id: str) -> list[NavigationEvent]:
         """Hand the runtime every navigation-adjacent effect seen since the last call."""
@@ -207,7 +269,8 @@ class PlaywrightDriver:
         return browser
 
     async def _arm_observers(self, session: _Session) -> None:
-        """Route document requests through the guard and record side effects."""
+        """Stamp document identity, route requests through the guard, record effects."""
+        await session.context.add_init_script(_DOCUMENT_TOKEN_SCRIPT)
 
         async def on_route(route: Route) -> None:
             request = route.request

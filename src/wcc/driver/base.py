@@ -17,9 +17,10 @@ blocked outcomes to be distinguishable by an agent, not just readable by a human
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Protocol, runtime_checkable
 
-from wcc.models.action import ActionObservation, PlannedAction
+from wcc.models.action import ActionObservation, NavigationEvent, PlannedAction
 from wcc.models.session import OpenSessionRequest, PageSnapshot, SessionInfo
 
 
@@ -92,6 +93,43 @@ class DriverSettings:
     action_timeout_ms: int = 10_000
 
 
+@dataclass(frozen=True)
+class DocumentIdentity:
+    """Who and when an observation is about, before anything is extracted from it.
+
+    Specification 7.2 splits two lifetimes that are easy to conflate:
+    ``document_id`` survives same-document DOM updates and changes only after a
+    committed navigation to a new document, while ``snapshot_id`` is minted for
+    every observation. Assembling a :class:`PageSnapshot` needs the element
+    normalization of task T4 and the fingerprints of task T7; identity is the part
+    the driver can report on its own, and specification 4.2 keeps IR construction
+    in the runtime rather than in the driver.
+    """
+
+    session_id: str
+    document_id: str
+    snapshot_id: str
+    captured_at: datetime
+    url: str
+    origin: str
+    normalized_route_pattern: str
+    title: str | None = None
+    language: str | None = None
+
+
+@runtime_checkable
+class PageSignals(Protocol):
+    """The observation duties specification 4.2 assigns to a driver.
+
+    These sit beside :class:`Driver` rather than inside it so the five-method
+    interface of specification 4.1 stays exactly as the specification states it.
+    """
+
+    async def identify(self, session_id: str) -> DocumentIdentity: ...
+
+    def drain_navigation_events(self, session_id: str) -> list[NavigationEvent]: ...
+
+
 @runtime_checkable
 class NavigationGuard(Protocol):
     """The runtime's decision point for every URL a driver is about to commit to.
@@ -126,6 +164,7 @@ class Driver(Protocol):
 
 
 __all__ = [
+    "DocumentIdentity",
     "Driver",
     "DriverError",
     "DriverNotReadyError",
@@ -134,6 +173,7 @@ __all__ = [
     "ElementNotResolvedError",
     "NavigationBlockedError",
     "NavigationGuard",
+    "PageSignals",
     "SessionLimitExceededError",
     "SessionNotFoundError",
 ]

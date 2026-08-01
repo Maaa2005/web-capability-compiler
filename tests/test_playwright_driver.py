@@ -2,9 +2,10 @@
 
 Reaching ``127.0.0.1`` is the explicit developer private-network allowance of
 specification 10.2, so every request here sets ``allow_private_network=True``.
-The tests skip rather than fail when the Chromium build is absent, because the
-browser is installed by ``wcc install-browser`` (Phase 1 task T9) and a missing
-browser is an environment fact, not a defect in the driver.
+
+These tests require the Playwright Chromium build and fail loudly without it. A
+skip would hide the fact that the driver went unverified; installing the browser
+is a documented setup step that ``wcc install-browser`` (task T9) will automate.
 """
 
 from __future__ import annotations
@@ -111,6 +112,84 @@ async def test_settling_a_static_fixture_succeeds(
     session_id = await _open(driver, f"{fixture_server}/search-page/")
     await driver.wait_settled(session_id, timeout_ms=5_000)
     assert driver.drain_navigation_events(session_id) == []
+
+
+async def test_open_session_reports_the_first_document_and_snapshot(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    info = await driver.open_session(
+        OpenSessionRequest(url=f"{fixture_server}/search-page/", allow_private_network=True)
+    )
+    assert info.current_document_id is not None
+    assert info.current_document_id.startswith("doc_")
+    assert info.current_snapshot_id is not None
+    assert info.current_snapshot_id.startswith("snap_")
+
+
+async def test_identity_describes_the_page(driver: PlaywrightDriver, fixture_server: str) -> None:
+    session_id = await _open(driver, f"{fixture_server}/search-page/")
+    identity = await driver.identify(session_id)
+    assert identity.session_id == session_id
+    assert identity.origin == fixture_server
+    assert identity.normalized_route_pattern == "/search-page/"
+    assert identity.title == "Fixture: Product Search"
+    assert identity.language == "en"
+    assert identity.captured_at.tzinfo is not None
+
+
+async def test_every_observation_is_a_new_snapshot_of_the_same_document(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    session_id = await _open(driver, f"{fixture_server}/search-page/")
+    first = await driver.identify(session_id)
+    second = await driver.identify(session_id)
+    assert first.document_id == second.document_id
+    assert first.snapshot_id != second.snapshot_id
+
+
+async def test_a_same_document_history_update_keeps_the_document_id(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """Specification 7.2: ``pushState`` is an update, not a new document.
+
+    Reaching for the page directly stands in for the user gesture that task T5
+    will be able to perform through ``execute_action``.
+    """
+    session_id = await _open(driver, f"{fixture_server}/search-page/")
+    before = await driver.identify(session_id)
+    page = driver._session(session_id).page  # noqa: SLF001 - stands in for task T5
+    await page.evaluate("() => history.pushState({}, '', '?keyword=earbuds')")
+    after = await driver.identify(session_id)
+
+    assert after.document_id == before.document_id
+    assert after.snapshot_id != before.snapshot_id
+    assert after.normalized_route_pattern == "/search-page/?keyword="
+
+
+async def test_a_committed_navigation_starts_a_new_document(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    session_id = await _open(driver, f"{fixture_server}/search-page/")
+    before = await driver.identify(session_id)
+    page = driver._session(session_id).page  # noqa: SLF001 - stands in for task T5
+    await page.goto(f"{fixture_server}/product-list/")
+    after = await driver.identify(session_id)
+
+    assert after.document_id != before.document_id
+    assert after.normalized_route_pattern == "/product-list/"
+
+
+async def test_a_reload_replaces_the_document(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    session_id = await _open(driver, f"{fixture_server}/search-page/")
+    before = await driver.identify(session_id)
+    page = driver._session(session_id).page  # noqa: SLF001 - stands in for task T5
+    await page.reload()
+    after = await driver.identify(session_id)
+
+    assert after.document_id != before.document_id
+    assert after.url == before.url
 
 
 async def test_unimplemented_surface_names_the_task_that_will_deliver_it(
