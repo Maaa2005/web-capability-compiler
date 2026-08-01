@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Fixture: Ambiguous Controls</title></head>
+<body>
+  <main>
+    <h1>Two identical filters</h1>
+    <!-- Both forms carry a control with the same name and the same visible label.
+         Specification 7.7 requires an ambiguous candidate to be skipped rather
+         than resolved to whichever element happens to come first. -->
+    <form id="filter-left" action="/search" method="get">
+      <label for="left-city">City</label>
+      <input type="text" id="left-city" name="city">
+      <button type="submit">Apply</button>
+    </form>
+
+    <form id="filter-right" action="/search" method="get">
+      <label for="right-city">City</label>
+      <input type="text" id="right-city" name="city">
+      <button type="submit">Apply</button>
+    </form>
+  </main>
+</body>
+</html>

@@ -291,3 +291,34 @@ Unresolved:
 
 - Locator chains are collected but not yet re-resolved against a live page; that is
   T5, together with `execute_action`.
+
+### T5: locator candidates and unique re-resolution — done (2026-08-02)
+
+- `src/wcc/driver/resolve.py`: in-page re-resolution for each candidate kind.
+- `src/wcc/driver/playwright_driver.py`: `resolve()` walking the chain in priority
+  order, and `execute_action()` for the six allowlisted actions of specification 10.4.
+- `fixtures/ambiguous-controls/`: two forms whose controls share a name and a label,
+  so only the id distinguishes them.
+- Tests: re-resolution after reload (acceptance criterion 8), ambiguity handling,
+  staleness after removal, and one test per action shape.
+- `scripts/test.sh`: ruff format, ruff lint, pyright 0 errors, 171 tests passed,
+  run twice to confirm stability.
+
+Decisions worth carrying forward:
+
+- **An ambiguous candidate is worth exactly as much as one that matched nothing.**
+  Both move to the next candidate. Choosing the closest, first, or most visible
+  match is how automation types into the wrong field with full confidence, and
+  specification 7.7 forbids it outright.
+- **Re-resolution happens per action, not once per observation.** The page may have
+  changed since it was described, and specification 11.2 wants a stale target
+  reported rather than guessed at.
+- **The resolved element is tagged with a random in-page marker.** No selector
+  crosses the driver boundary in either direction, which keeps the guarantee of
+  specification 10.3 that an agent can never supply or receive one.
+- **Fixed `asyncio.sleep` is gone from the browser tests.** The popup test failed
+  once under load — exactly the flakiness the counter-review predicted — and now
+  synchronizes on `expect_event`. The suite was run twice to confirm.
+
+The test asserting `execute_action` was unimplemented has been retired, since it now
+is. The equivalent assertion for `snapshot` remains until T7 assembles it.

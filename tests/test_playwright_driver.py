@@ -20,6 +20,7 @@ from wcc.driver.base import (
     DriverNotReadyError,
     DriverSettings,
     DriverTimeoutError,
+    ElementNotResolvedError,
     NavigationBlockedError,
     SessionLimitExceededError,
     SessionNotFoundError,
@@ -189,9 +190,10 @@ async def test_a_reload_replaces_the_document(
 async def test_a_popup_is_refused_and_closed(driver: PlaywrightDriver, fixture_server: str) -> None:
     """Specification 10.2 rejects popups, tabs, and windows by default."""
     session_id = await _open(driver, f"{fixture_server}/search-page/")
-    page = driver._session(session_id).page  # noqa: SLF001 - stands in for task T5
-    await page.evaluate("() => window.open('/product-list/', '_blank')")
-    await asyncio.sleep(0.2)
+    session = driver._session(session_id)  # noqa: SLF001
+    async with session.context.expect_event("page"):
+        await session.page.evaluate("() => window.open('/product-list/', '_blank')")
+    await driver.drain_cleanups()
 
     events = driver.drain_navigation_events(session_id)
     assert [event.kind for event in events] == ["new_page"]
@@ -202,17 +204,16 @@ async def test_a_popup_is_refused_and_closed(driver: PlaywrightDriver, fixture_s
 async def test_a_download_is_refused(driver: PlaywrightDriver, fixture_server: str) -> None:
     session_id = await _open(driver, f"{fixture_server}/search-page/")
     page = driver._session(session_id).page  # noqa: SLF001 - stands in for task T5
-    await page.evaluate(
-        """() => {
-            const a = document.createElement('a');
-            a.href = 'data:text/plain,hello';
-            a.download = 'hello.txt';
-            document.body.append(a);
-            a.click();
-        }"""
-    )
-    await asyncio.sleep(0.5)
-
+    async with page.expect_download():
+        await page.evaluate(
+            """() => {
+                const a = document.createElement('a');
+                a.href = 'data:text/plain,hello';
+                a.download = 'hello.txt';
+                document.body.append(a);
+                a.click();
+            }"""
+        )
     await driver.drain_cleanups()
     events = driver.drain_navigation_events(session_id)
     assert any(event.kind == "download" and event.blocked for event in events)
@@ -278,7 +279,7 @@ async def test_a_failed_open_leaves_no_session_behind(fixture_server: str) -> No
         await impatient.shutdown()
 
 
-async def test_unimplemented_surface_names_the_task_that_will_deliver_it(
+async def test_snapshot_still_names_the_tasks_that_will_deliver_it(
     driver: PlaywrightDriver, fixture_server: str
 ) -> None:
     """Phase 0's convention: never let missing behaviour look like success."""
@@ -286,14 +287,7 @@ async def test_unimplemented_surface_names_the_task_that_will_deliver_it(
 
     with pytest.raises(DriverNotReadyError) as snapshot_error:
         await driver.snapshot(session_id)
-    assert "T2" in str(snapshot_error.value)
-
-    with pytest.raises(DriverNotReadyError) as action_error:
-        await driver.execute_action(
-            session_id,
-            PlannedAction(action=ActionType.FOCUS, element_id="el_unknown"),
-        )
-    assert "T5" in str(action_error.value)
+    assert "T7" in str(snapshot_error.value) or "T4" in str(snapshot_error.value)
 
 
 async def test_a_subresource_to_a_refused_destination_is_blocked(
@@ -392,3 +386,106 @@ async def test_the_search_fixture_labels_every_control_from_a_named_source(
     assert keyword.label_source is LabelSource.LABEL_FOR
     assert keyword.control_type is ControlType.SEARCH
     assert keyword.confidence is Confidence.HIGH
+
+
+async def test_an_element_re_resolves_after_a_reload(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """Acceptance criterion 8: every executable target survives a reload."""
+    session_id = await _open(driver, f"{fixture_server}/search-page/")
+    elements = await driver.extract_elements(session_id)
+
+    page = driver._session(session_id).page  # noqa: SLF001
+    await page.reload()
+    await driver.extract_elements(session_id)
+
+    for element in elements:
+        assert await driver.resolve(session_id, element.element_id)
+
+
+async def test_an_ambiguous_candidate_is_skipped_rather_than_guessed(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """Two controls share a name and a label; only the id tells them apart."""
+    session_id = await _open(driver, f"{fixture_server}/ambiguous-controls/")
+    elements = await driver.extract_elements(session_id)
+    left = next(e for e in elements if e.locator_chain.primary.key == "left-city")
+
+    marker = await driver.resolve(session_id, left.element_id)
+    page = driver._session(session_id).page  # noqa: SLF001
+    resolved_id = await page.get_attribute(f"[data-wcc-resolved='{marker}']", "id")
+    assert resolved_id == "left-city"
+
+
+async def test_an_unknown_element_is_reported_as_unresolvable(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    session_id = await _open(driver, f"{fixture_server}/search-page/")
+    with pytest.raises(ElementNotResolvedError):
+        await driver.resolve(session_id, "el_never_observed")
+
+
+async def test_a_removed_element_becomes_stale(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """Specification 11.2: a target that no longer resolves is stale, not retried blind."""
+    session_id = await _open(driver, f"{fixture_server}/search-page/")
+    elements = await driver.extract_elements(session_id)
+    keyword = next(e for e in elements if e.locator_chain.primary.key == "keyword")
+
+    page = driver._session(session_id).page  # noqa: SLF001
+    await page.evaluate("() => document.getElementById('product-search').remove()")
+
+    with pytest.raises(ElementNotResolvedError, match="stale"):
+        await driver.resolve(session_id, keyword.element_id)
+
+
+async def test_setting_a_value_is_observed(driver: PlaywrightDriver, fixture_server: str) -> None:
+    session_id = await _open(driver, f"{fixture_server}/search-page/")
+    elements = await driver.extract_elements(session_id)
+    keyword = next(e for e in elements if e.locator_chain.primary.key == "keyword")
+
+    observation = await driver.execute_action(
+        session_id,
+        PlannedAction(action=ActionType.SET_VALUE, element_id=keyword.element_id, value="earbuds"),
+    )
+
+    assert observation.succeeded is True
+    assert observation.document_changed is False
+    refreshed = await driver.extract_elements(session_id)
+    assert next(e for e in refreshed if e.locator_chain.primary.key == "keyword").value == "earbuds"
+
+
+async def test_checking_a_box_requires_the_desired_state(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """Specification 10.4 has no state-relative toggle, so the caller states the target."""
+    session_id = await _open(driver, f"{fixture_server}/search-page/")
+    elements = await driver.extract_elements(session_id)
+    in_stock = next(e for e in elements if e.locator_chain.primary.key == "in-stock")
+
+    observation = await driver.execute_action(
+        session_id,
+        PlannedAction(action=ActionType.SET_CHECKED, element_id=in_stock.element_id, checked=True),
+    )
+    assert observation.succeeded is True
+
+    refreshed = await driver.extract_elements(session_id)
+    assert next(e for e in refreshed if e.locator_chain.primary.key == "in-stock").checked is True
+
+
+async def test_activating_a_search_button_commits_a_new_document(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    session_id = await _open(driver, f"{fixture_server}/search-page/")
+    elements = await driver.extract_elements(session_id)
+    submit = next(
+        e for e in elements if e.resolved_label == "Search" and e.control_type is ControlType.BUTTON
+    )
+
+    observation = await driver.execute_action(
+        session_id, PlannedAction(action=ActionType.ACTIVATE, element_id=submit.element_id)
+    )
+
+    assert observation.succeeded is True
+    assert observation.document_changed is True

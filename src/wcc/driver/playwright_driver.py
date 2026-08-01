@@ -25,6 +25,7 @@ from playwright.async_api import (
     BrowserContext,
     Download,
     FileChooser,
+    Locator,
     Page,
     Playwright,
     Request,
@@ -45,6 +46,7 @@ from wcc.driver.base import (
     DriverNotReadyError,
     DriverSettings,
     DriverTimeoutError,
+    ElementNotResolvedError,
     NavigationBlockedError,
     NavigationGuard,
     SessionLimitExceededError,
@@ -52,10 +54,12 @@ from wcc.driver.base import (
 )
 from wcc.driver.normalize import classify_control, is_eligible, normalize_element
 from wcc.driver.page_script import EXTRACT_ELEMENTS
+from wcc.driver.resolve import RESOLVE_CANDIDATE
 from wcc.identifiers import new_id
 from wcc.models.action import ActionObservation, NavigationEvent, PlannedAction
-from wcc.models.common import SessionStatus
+from wcc.models.common import ActionType, SessionStatus
 from wcc.models.element import NormalizedElement
+from wcc.models.locator import LocatorChain
 from wcc.models.session import OpenSessionRequest, PageSnapshot, SessionInfo
 
 _DOCUMENT_TOKEN = "__wccDocumentToken"
@@ -99,6 +103,7 @@ class _Session:
     allow_private_network: bool
     events: list[NavigationEvent] = field(default_factory=list)
     document_token: str | None = None
+    chains: dict[str, LocatorChain] = field(default_factory=dict)
     current_document_id: str | None = None
     current_snapshot_id: str | None = None
 
@@ -342,7 +347,9 @@ class PlaywrightDriver:
             control_type = classify_control(record)
             if not is_eligible(record, control_type):
                 continue
-            elements.append(normalize_element(record, new_id("el")))
+            element = normalize_element(record, new_id("el"))
+            session.chains[element.element_id] = element.locator_chain
+            elements.append(element)
         return elements
 
     def drain_navigation_events(self, session_id: str) -> list[NavigationEvent]:
@@ -359,16 +366,106 @@ class PlaywrightDriver:
             "and task T4 (element normalization)"
         )
 
+    async def resolve(self, session_id: str, element_id: str) -> str:
+        """Re-resolve an element, returning an in-page marker for the single match.
+
+        Specification 7.7: candidates are tried in priority order, and only an
+        exactly-one match counts. Both zero matches and an ambiguous match move on
+        to the next candidate; neither is ever resolved by picking the closest
+        element.
+        """
+        session = self._session(session_id)
+        chain = session.chains.get(element_id)
+        if chain is None:
+            raise ElementNotResolvedError(
+                f"{element_id} was not produced by an observation of this session"
+            )
+
+        attempts: list[str] = []
+        for candidate in chain.ordered():
+            outcome = await session.page.evaluate(
+                RESOLVE_CANDIDATE,
+                {
+                    "kind": int(candidate.kind),
+                    "key": candidate.key,
+                    "role": candidate.role,
+                    "form_id": candidate.form_id,
+                },
+            )
+            count = outcome.get("count") if isinstance(outcome, dict) else None
+            if isinstance(outcome, dict) and outcome.get("handle"):
+                return str(outcome["handle"])
+            attempts.append(f"{candidate.kind.name.lower()}={count}")
+
+        raise ElementNotResolvedError(
+            f"{element_id} is stale: no candidate matched exactly once ({', '.join(attempts)})"
+        )
+
     async def execute_action(
         self,
         session_id: str,
         action: PlannedAction,
     ) -> ActionObservation:
-        self._session(session_id)
-        raise DriverNotReadyError(
-            f"executing {action.action} arrives with Phase 1 task T5, which adds the "
-            "locator re-resolution the driver needs to address an element"
+        """Perform one allowlisted action against a freshly re-resolved element.
+
+        Re-resolution happens per action rather than once per observation: the
+        page may have changed since it was described, and specification 11.2 wants
+        a stale target reported rather than guessed at.
+        """
+        session = self._session(session_id)
+        before = session.current_document_id
+        marker = await self.resolve(session_id, action.element_id)
+        locator = session.page.locator(f"[data-wcc-resolved='{marker}']")
+        timeout = self._settings.action_timeout_ms
+
+        succeeded = True
+        error_code: str | None = None
+        error_message: str | None = None
+        try:
+            await self._perform(locator, action, timeout)
+        except PlaywrightTimeoutError as exc:
+            succeeded, error_code, error_message = False, "driver_timeout", str(exc)
+        except PlaywrightError as exc:
+            succeeded, error_code, error_message = False, "action_failed", str(exc)
+
+        identity = await self.identify(session_id)
+        return ActionObservation(
+            action=action,
+            succeeded=succeeded,
+            observed_at=datetime.now(UTC),
+            document_id=identity.document_id,
+            snapshot_id=identity.snapshot_id,
+            document_changed=before is not None and identity.document_id != before,
+            settled=await self._settled_quietly(session_id),
+            navigation_events=list(session.events),
+            error_code=error_code,
+            error_message=error_message,
         )
+
+    async def _perform(self, locator: Locator, action: PlannedAction, timeout: int) -> None:
+        """Map one allowlisted action onto Playwright (specification 10.4)."""
+        if action.action is ActionType.FOCUS:
+            await locator.focus(timeout=timeout)
+        elif action.action is ActionType.SCROLL_INTO_VIEW:
+            await locator.scroll_into_view_if_needed(timeout=timeout)
+        elif action.action is ActionType.SET_VALUE:
+            await locator.fill(action.value or "", timeout=timeout)
+        elif action.action is ActionType.SELECT_OPTION:
+            await locator.select_option(action.option, timeout=timeout)
+        elif action.action is ActionType.SET_CHECKED:
+            await locator.set_checked(bool(action.checked), timeout=timeout)
+        elif action.action is ActionType.ACTIVATE:
+            await locator.click(timeout=timeout)
+        else:  # pragma: no cover - ActionType is closed and fully covered above
+            raise DriverNotReadyError(f"{action.action} has no driver implementation")
+
+    async def _settled_quietly(self, session_id: str) -> bool:
+        """Report whether the page settled, without turning a busy page into an error."""
+        try:
+            await self.wait_settled(session_id, self._settings.settle_timeout_ms)
+        except DriverTimeoutError:
+            return False
+        return True
 
     # -- internals ---------------------------------------------------------
 
