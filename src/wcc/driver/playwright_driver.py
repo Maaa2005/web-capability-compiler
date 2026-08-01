@@ -14,12 +14,17 @@ left for the runtime policy layer to judge; the driver never decides policy
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Coroutine
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import Any
 
 from playwright.async_api import (
     Browser,
     BrowserContext,
+    Download,
+    FileChooser,
     Page,
     Playwright,
     Route,
@@ -68,6 +73,28 @@ _DOCUMENT_TOKEN_SCRIPT = f"""
   }});
 }})();
 """
+
+
+_BACKGROUND_TASKS: set[asyncio.Task[Any]] = set()
+
+
+def _schedule(work: Coroutine[Any, Any, Any]) -> None:
+    """Run cleanup that a synchronous Playwright event handler cannot await.
+
+    A strong reference is held until the task finishes; without it the event loop
+    is free to garbage-collect a pending close and the refusal silently does not
+    happen. Failures are swallowed because the page or download being cleaned up
+    may already be gone, and the refusal is recorded either way.
+    """
+
+    def _finish(task: asyncio.Task[Any]) -> None:
+        _BACKGROUND_TASKS.discard(task)
+        if not task.cancelled():
+            task.exception()
+
+    task = asyncio.ensure_future(work)
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_finish)
 
 
 @dataclass
@@ -299,17 +326,46 @@ class PlaywrightDriver:
 
         await session.context.route("**/*", on_route)
 
-        session.context.on(
-            "page",
-            lambda page: session.events.append(NavigationEvent(kind="new_page", url=page.url)),
-        )
-        session.page.on(
-            "popup",
-            lambda page: session.events.append(NavigationEvent(kind="popup", url=page.url)),
-        )
-        session.page.on(
-            "download",
-            lambda download: session.events.append(
-                NavigationEvent(kind="download", url=download.url)
-            ),
-        )
+        def on_new_page(page: Page) -> None:
+            """Refuse a popup, tab, or window and close it (specification 10.2)."""
+            session.events.append(
+                NavigationEvent(
+                    kind="new_page",
+                    url=page.url,
+                    blocked=True,
+                    reason="popups, tabs, and windows are refused by default",
+                )
+            )
+            _schedule(page.close())
+
+        def on_download(download: Download) -> None:
+            """Refuse a download rather than let it reach the filesystem."""
+            session.events.append(
+                NavigationEvent(
+                    kind="download",
+                    url=download.url,
+                    blocked=True,
+                    reason="downloads are blocked",
+                )
+            )
+            _schedule(download.cancel())
+
+        def on_file_chooser(chooser: FileChooser) -> None:
+            """Record a refused file chooser; specification 10.2 rejects uploads.
+
+            Leaving the chooser unanswered is the refusal: setting no files is the
+            only way to decline, and ``set_files`` is never called anywhere in this
+            driver.
+            """
+            del chooser
+            session.events.append(
+                NavigationEvent(
+                    kind="file_chooser",
+                    blocked=True,
+                    reason="file upload is not an allowed action",
+                )
+            )
+
+        session.context.on("page", on_new_page)
+        session.page.on("download", on_download)
+        session.page.on("filechooser", on_file_chooser)

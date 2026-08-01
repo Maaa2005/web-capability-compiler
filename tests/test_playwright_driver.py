@@ -10,6 +10,7 @@ is a documented setup step that ``wcc install-browser`` (task T9) will automate.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 
 import pytest
@@ -25,29 +26,14 @@ from wcc.driver.playwright_driver import PlaywrightDriver
 from wcc.models.action import PlannedAction
 from wcc.models.common import ActionType, SessionStatus
 from wcc.models.session import OpenSessionRequest
+from wcc.policy.url_policy import UrlPolicy
 
 pytestmark = pytest.mark.asyncio
 
 
-class _AllowLoopback:
-    """Stand-in for the Phase 1 task T3 URL policy.
-
-    It refuses everything that is not ``http``/``https``, and refuses loopback
-    unless the caller asked for the private-network allowance.
-    """
-
-    def check(self, url: str, *, allow_private_network: bool) -> None:
-        scheme, _, rest = url.partition("://")
-        if scheme not in {"http", "https"}:
-            raise NavigationBlockedError(f"scheme {scheme!r} is not allowed")
-        host = rest.split("/")[0].split(":")[0]
-        if host in {"127.0.0.1", "localhost", "::1"} and not allow_private_network:
-            raise NavigationBlockedError(f"{host} is a private-network destination")
-
-
 @pytest.fixture
 async def driver() -> AsyncIterator[PlaywrightDriver]:
-    instance = PlaywrightDriver(_AllowLoopback(), DriverSettings(max_active_sessions=2))
+    instance = PlaywrightDriver(UrlPolicy(), DriverSettings(max_active_sessions=2))
     try:
         yield instance
     finally:
@@ -190,6 +176,37 @@ async def test_a_reload_replaces_the_document(
 
     assert after.document_id != before.document_id
     assert after.url == before.url
+
+
+async def test_a_popup_is_refused_and_closed(driver: PlaywrightDriver, fixture_server: str) -> None:
+    """Specification 10.2 rejects popups, tabs, and windows by default."""
+    session_id = await _open(driver, f"{fixture_server}/search-page/")
+    page = driver._session(session_id).page  # noqa: SLF001 - stands in for task T5
+    await page.evaluate("() => window.open('/product-list/', '_blank')")
+    await asyncio.sleep(0.2)
+
+    events = driver.drain_navigation_events(session_id)
+    assert [event.kind for event in events] == ["new_page"]
+    assert events[0].blocked is True
+    assert len(driver._session(session_id).context.pages) == 1  # noqa: SLF001
+
+
+async def test_a_download_is_refused(driver: PlaywrightDriver, fixture_server: str) -> None:
+    session_id = await _open(driver, f"{fixture_server}/search-page/")
+    page = driver._session(session_id).page  # noqa: SLF001 - stands in for task T5
+    await page.evaluate(
+        """() => {
+            const a = document.createElement('a');
+            a.href = 'data:text/plain,hello';
+            a.download = 'hello.txt';
+            document.body.append(a);
+            a.click();
+        }"""
+    )
+    await asyncio.sleep(0.5)
+
+    events = driver.drain_navigation_events(session_id)
+    assert any(event.kind == "download" and event.blocked for event in events)
 
 
 async def test_unimplemented_surface_names_the_task_that_will_deliver_it(

@@ -134,3 +134,31 @@ Unresolved:
 
 - `snapshot()` still raises: assembling a `PageSnapshot` needs the elements of T4
   and the fingerprints of T7. Identity is the part the driver can report today.
+
+### T3: URL policy and redirect revalidation — done (2026-08-02)
+
+- `src/wcc/policy/url_policy.py`: `UrlPolicy` implementing the specification 10.2
+  default policy — scheme allowlist, credential rejection, cloud-metadata refusal by
+  name and by address, and post-resolution rejection of loopback, private,
+  link-local, multicast, unspecified, and reserved ranges.
+- `src/wcc/driver/playwright_driver.py`: popups, tabs, and windows are closed on
+  arrival; downloads are cancelled; file choosers are left unanswered. Each refusal
+  is recorded as a blocked `NavigationEvent`.
+- Tests: `tests/test_url_policy.py` with a fake resolver, plus real-browser tests
+  for the popup and download refusals. The driver tests now run against the real
+  `UrlPolicy` rather than a permissive stub.
+- `scripts/test.sh`: ruff format, ruff lint, pyright 0 errors, 108 tests passed.
+
+Decisions worth carrying forward:
+
+- **Resolution is repeated on every check and never cached.** Specification 10.2
+  wants the resolved address validated at navigation time, so a cache would reopen
+  the DNS-rebinding window the rule exists to close. A test drives a name that
+  answers publicly once and with loopback the second time.
+- **Every resolved address is checked, not just the first.** A split-horizon name
+  answering with one public and one private address is refused.
+- **The private-network allowance never opens cloud metadata.** The developer flag
+  exists so the loopback fixture server is reachable; a metadata endpoint is a
+  credential source, so it stays refused even with the flag on.
+- **Redirect hops are validated in the routing layer.** Each hop is its own document
+  request, so the guard sees it before the browser commits to it.
