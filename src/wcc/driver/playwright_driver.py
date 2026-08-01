@@ -39,6 +39,7 @@ from playwright.async_api import (
     TimeoutError as PlaywrightTimeoutError,
 )
 
+from wcc.compiler.collections import build_collection, parse_structured_data
 from wcc.compiler.route import normalize_route_pattern, origin_of
 from wcc.driver.base import (
     DocumentIdentity,
@@ -52,15 +53,21 @@ from wcc.driver.base import (
     SessionLimitExceededError,
     SessionNotFoundError,
 )
+from wcc.driver.collection_script import EXTRACT_COLLECTIONS
 from wcc.driver.normalize import classify_control, is_eligible, normalize_element
 from wcc.driver.page_script import EXTRACT_ELEMENTS
 from wcc.driver.resolve import RESOLVE_CANDIDATE
 from wcc.identifiers import new_id
 from wcc.models.action import ActionObservation, NavigationEvent, PlannedAction
 from wcc.models.common import ActionType, SessionStatus
-from wcc.models.element import NormalizedElement
+from wcc.models.element import CollectionSnapshot, NormalizedElement
 from wcc.models.locator import LocatorChain
-from wcc.models.session import OpenSessionRequest, PageSnapshot, SessionInfo
+from wcc.models.session import (
+    OpenSessionRequest,
+    PageSnapshot,
+    SessionInfo,
+    StructuredDataBlock,
+)
 
 _DOCUMENT_TOKEN = "__wccDocumentToken"
 _IDENTITY_READ_ATTEMPTS = 3
@@ -351,6 +358,26 @@ class PlaywrightDriver:
             session.chains[element.element_id] = element.locator_chain
             elements.append(element)
         return elements
+
+    async def extract_collections(
+        self, session_id: str
+    ) -> tuple[list[CollectionSnapshot], list[StructuredDataBlock]]:
+        """Report repeated structures and JSON-LD blocks (specification 8.4, 3.2)."""
+        session = self._session(session_id)
+        raw = await session.page.evaluate(EXTRACT_COLLECTIONS)
+        if not isinstance(raw, dict):
+            return [], []
+
+        collections = [
+            build_collection(entry)
+            for entry in raw.get("collections", [])
+            if isinstance(entry, dict)
+        ]
+        structured = [
+            StructuredDataBlock(source="json-ld", data=block)
+            for block in parse_structured_data(list(raw.get("structured", [])))
+        ]
+        return collections, structured
 
     def drain_navigation_events(self, session_id: str) -> list[NavigationEvent]:
         """Hand the runtime every navigation-adjacent effect seen since the last call."""

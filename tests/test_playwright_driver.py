@@ -489,3 +489,51 @@ async def test_activating_a_search_button_commits_a_new_document(
 
     assert observation.succeeded is True
     assert observation.document_changed is True
+
+
+async def test_the_product_list_yields_one_collection_and_its_json_ld(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    session_id = await _open(driver, f"{fixture_server}/product-list/")
+    collections, structured = await driver.extract_collections(session_id)
+
+    products = next(c for c in collections if c.record_count == 3)
+    assert products.records[0].fields["link_text"] == "Wireless Earbuds"
+    assert all(record.identity for record in products.records)
+    assert products.collection_hash.startswith("sha256:")
+
+    assert structured
+    assert structured[0].data["@type"] == "ItemList"
+
+
+async def test_a_changed_record_changes_the_collection_hash(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """Acceptance criterion 7, driven through a real DOM edit."""
+    session_id = await _open(driver, f"{fixture_server}/product-list/")
+    before = next(
+        c for c in (await driver.extract_collections(session_id))[0] if c.record_count == 3
+    )
+
+    page = driver._session(session_id).page  # noqa: SLF001
+    await page.evaluate(
+        "() => { document.querySelector('.product a').textContent = 'Renamed Product'; }"
+    )
+    after = next(
+        c for c in (await driver.extract_collections(session_id))[0] if c.record_count == 3
+    )
+
+    assert after.collection_hash != before.collection_hash
+
+
+async def test_an_unchanged_page_yields_the_same_collection_hash(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    session_id = await _open(driver, f"{fixture_server}/product-list/")
+    first = next(
+        c for c in (await driver.extract_collections(session_id))[0] if c.record_count == 3
+    )
+    second = next(
+        c for c in (await driver.extract_collections(session_id))[0] if c.record_count == 3
+    )
+    assert first.collection_hash == second.collection_hash

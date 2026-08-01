@@ -322,3 +322,29 @@ Decisions worth carrying forward:
 
 The test asserting `execute_action` was unimplemented has been retired, since it now
 is. The equivalent assertion for `snapshot` remains until T7 assembles it.
+
+### T6: collection and JSON-LD extraction — done (2026-08-02)
+
+- `src/wcc/driver/collection_script.py`: repeated-structure detection for tables,
+  lists, search-result blocks, and cards.
+- `src/wcc/compiler/collections.py`: the per-record identity projection and
+  `collection_hash`.
+- `src/wcc/driver/playwright_driver.py`: `extract_collections()`.
+- Tests: `tests/test_collections.py` (browser-free) plus three browser tests
+  covering a real DOM edit changing the hash and an unchanged page not changing it.
+- `scripts/test.sh`: ruff format, ruff lint, pyright 0 errors, 183 tests passed.
+
+Decisions worth carrying forward:
+
+- **Repetition is judged on structure, never on text.** Two cards are the same kind
+  of thing because they are built the same way. Grouping on text would split one
+  collection in two the moment a product name changed, which is precisely the event
+  `collection_hash` exists to report.
+- **The record count is hashed alongside the identities.** A result set that grew or
+  shrank is then always a change, independent of how the identities sort.
+- **Order affects the hash only where order is declared meaningful.** Tables, lists,
+  and search results say yes; a card grid does not, so a reflow is not a result change.
+- **Long field values are truncated to 200 characters for identity.** Free text is
+  display data; an edited description should not read as a different record.
+- **Malformed JSON-LD is skipped, not fatal.** Page content is untrusted data under
+  specification 10.3, and one broken block must not fail an entire snapshot.
