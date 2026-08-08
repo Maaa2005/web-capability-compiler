@@ -498,3 +498,66 @@ the same repurposing through a real DOM, a cross-origin action, and a sentinel q
 value proved absent from the whole snapshot. 223 tests green, ruff and pyright clean.
 
 `control_fingerprint` was removed along the way — the rewrite left it with no caller.
+
+---
+
+### T8: settle logic and resource limits — done (2026-08-08)
+
+**The full settle definition.** `wait_settled` waited for network idle, which
+reports a page settled at the moment the last response arrives — before the
+framework that asked for it has rendered anything. A snapshot taken there describes
+the old page and calls it the new one. Settled now means three things at once: the
+document has finished loading, nothing is in flight, and the DOM has not changed
+for a quiet period. All three must hold together, so a render that triggers another
+fetch restarts the wait rather than banking the quiet instant between them.
+
+The DOM half comes from a `MutationObserver` installed as an init script, reporting
+when the page last changed. The clock stays writable — it has to, to be a clock —
+and a page that lies about it can only make itself look busy, which the settle
+timeout already bounds. In-flight requests are counted from context events rather
+than from the route handler, so a request the handler aborts is still seen through
+to its failure.
+
+**Resource limits (specification 10.5)** move into `wcc/limits.py` as
+`ResourceLimits`, and `DriverSettings` keeps only the one setting that is a
+permission rather than a budget. The module sits above both packages that need it:
+`policy.url_policy` already imports `driver.base` for its error type, so a
+`driver.base` importing anything from `policy` closes the loop through the package
+`__init__` files.
+
+The limits divide by what specification 10.5 permits on exceeding them. Executable
+evidence raises `LimitExceededError` — the element count, and a redirect chain
+longer than the allowance, which is refused at the hop and walked from the request
+so two navigations in one session are two chains. Display data truncates and says
+so in `PageSnapshot.warnings`: collections and their records. A truncated
+collection keeps its original `record_count` and `collection_hash`, because both
+describe the page rather than the trim, and a postcondition comparing them must not
+read our truncation as the result set having shrunk.
+
+**Both deferred security items are closed, and both fail the session closed.** A
+breach is only a boundary if surviving it is impossible: a page that reached a
+refused address or committed an unchecked document has already had its effect, and
+continuing to observe it would let a capability rest on evidence gathered after the
+fact. `_session` raises `SessionFailedError` from then on, so every entry point is
+covered by one check.
+
+- *Check-to-connect DNS rebinding.* The policy resolves with `getaddrinfo` while
+  Chromium resolves independently, so the address checked was never provably the
+  address reached, and re-resolving only proves the policy keeps getting the same
+  answer. The connected peer settles it: `response.server_addr()` is judged by the
+  same guard, as a bare address, so no second policy can drift out of step with the
+  first. In practice the breach lands on the first response, so `open_session`
+  refuses rather than returning a session that already reached the address.
+- *Non-network document commits.* `window.location = "about:blank"`, and the same
+  move with `data:`, `blob:`, or `srcdoc`, commits a document without a network
+  request, so the route handler — a network boundary — never sees it. A
+  `framenavigated` check on the main frame catches the commit. `about:blank` is
+  exempt only before the session's first document exists, since that is where every
+  context starts.
+
+Tests: DOM quiet is waited for and an endless animation times out; the element
+limit refuses a snapshot while records truncate with a stated warning; an
+`about:blank` commit and a rebinding guard each fail the session closed. 230 tests
+green, ruff and pyright clean.
+
+Phase 1 now has only T9 (`wcc install-browser`, `wcc doctor`) outstanding.

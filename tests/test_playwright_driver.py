@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+from urllib.parse import urlsplit
 
 import pytest
 from playwright.async_api import Error as PlaywrightError
@@ -20,11 +21,14 @@ from wcc.driver.base import (
     DriverSettings,
     DriverTimeoutError,
     ElementNotResolvedError,
+    LimitExceededError,
     NavigationBlockedError,
+    SessionFailedError,
     SessionLimitExceededError,
     SessionNotFoundError,
 )
 from wcc.driver.playwright_driver import PlaywrightDriver
+from wcc.limits import ResourceLimits
 from wcc.models.action import PlannedAction
 from wcc.models.common import (
     SCHEMA_VERSION,
@@ -45,7 +49,10 @@ pytestmark = pytest.mark.asyncio
 async def driver() -> AsyncIterator[PlaywrightDriver]:
     instance = PlaywrightDriver(
         UrlPolicy(),
-        DriverSettings(max_active_sessions=2, allow_private_network=True),
+        DriverSettings(
+            allow_private_network=True,
+            limits=ResourceLimits(max_active_sessions=2),
+        ),
     )
     try:
         yield instance
@@ -275,7 +282,10 @@ async def test_a_failed_open_leaves_no_session_behind(fixture_server: str) -> No
     """A context whose ID never reached the caller can never be closed by them."""
     impatient = PlaywrightDriver(
         UrlPolicy(),
-        DriverSettings(page_load_timeout_ms=1, allow_private_network=True),
+        DriverSettings(
+            allow_private_network=True,
+            limits=ResourceLimits(page_load_timeout_ms=1),
+        ),
     )
     try:
         with pytest.raises(DriverTimeoutError):
@@ -703,3 +713,146 @@ async def test_a_snapshot_carries_its_evidence(
     assert snapshot.collections
     assert snapshot.structured_data
     assert all(element.locator_chain.candidates for element in snapshot.elements)
+
+
+# -- T8: settle, limits, and the two deferred security items -------------------
+
+
+async def test_settling_waits_for_the_dom_to_stop_changing(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """Network quiet is not settled: a framework still rendering is still changing.
+
+    The page here has no request in flight at all, so a network-idle definition
+    would call it settled immediately. It is not — it is appending nodes, which is
+    exactly the state a snapshot must not be taken in.
+    """
+    session_id = await _open(driver, f"{fixture_server}/search-page/")
+    page = driver._session(session_id).page  # noqa: SLF001
+    await page.evaluate(
+        """() => {
+            let n = 0;
+            const timer = setInterval(() => {
+                const li = document.createElement('div');
+                li.textContent = 'late render ' + n;
+                document.body.append(li);
+                if (++n >= 6) clearInterval(timer);
+            }, 60);
+        }"""
+    )
+
+    await driver.wait_settled(session_id, timeout_ms=5_000)
+
+    quiet_for = await page.evaluate("() => Date.now() - window.__wccLastMutation")
+    assert quiet_for >= 0
+    assert await page.evaluate("() => document.querySelectorAll('div').length") >= 6
+
+
+async def test_a_page_that_never_stops_changing_times_out(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """A settle wait is bounded; an animation that never ends is not settled."""
+    session_id = await _open(driver, f"{fixture_server}/search-page/")
+    page = driver._session(session_id).page  # noqa: SLF001
+    await page.evaluate(
+        """() => setInterval(() => {
+            document.body.setAttribute('data-tick', String(Date.now()));
+        }, 20)"""
+    )
+
+    with pytest.raises(DriverTimeoutError):
+        await driver.wait_settled(session_id, timeout_ms=800)
+
+
+async def test_more_elements_than_the_limit_refuses_the_snapshot(
+    fixture_server: str,
+) -> None:
+    """Specification 10.5: executable evidence is never silently truncated."""
+    tiny = PlaywrightDriver(
+        UrlPolicy(),
+        DriverSettings(
+            allow_private_network=True,
+            limits=ResourceLimits(max_elements_per_snapshot=3),
+        ),
+    )
+    try:
+        session_id = await _open(tiny, f"{fixture_server}/search-page/")
+        with pytest.raises(LimitExceededError):
+            await tiny.snapshot(session_id)
+    finally:
+        await tiny.shutdown()
+
+
+async def test_records_beyond_the_limit_are_trimmed_and_reported(
+    fixture_server: str,
+) -> None:
+    """Display data may be truncated only when the truncation is stated."""
+    tiny = PlaywrightDriver(
+        UrlPolicy(),
+        DriverSettings(
+            allow_private_network=True,
+            limits=ResourceLimits(max_records_per_collection=1),
+        ),
+    )
+    try:
+        session_id = await _open(tiny, f"{fixture_server}/product-list/")
+        snapshot = await tiny.snapshot(session_id)
+
+        trimmed = [c for c in snapshot.collections if c.truncated]
+        assert trimmed, "the fixture should have a collection longer than one record"
+        for collection in trimmed:
+            assert len(collection.records) == 1
+            # The count and the hash still describe the page, not the trim.
+            assert collection.record_count > 1
+        assert any("specification 10.5 limit" in warning for warning in snapshot.warnings)
+    finally:
+        await tiny.shutdown()
+
+
+async def test_a_non_network_document_commit_fails_the_session_closed(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """``about:blank`` never reaches the route handler, so the frame check catches it."""
+    session_id = await _open(driver, f"{fixture_server}/search-page/")
+    page = driver._session(session_id).page  # noqa: SLF001
+
+    await page.evaluate("() => { window.location = 'about:blank'; }")
+    for _ in range(100):
+        await asyncio.sleep(0.02)
+        if driver._sessions[session_id].failure is not None:  # noqa: SLF001
+            break
+
+    with pytest.raises(SessionFailedError):
+        await driver.snapshot(session_id)
+
+
+async def test_a_response_from_a_refused_address_fails_the_session_closed(
+    fixture_server: str,
+) -> None:
+    """The DNS-rebinding gap: what was checked is not what Chromium connected to.
+
+    The guard here admits the name and refuses the address, which is the shape of a
+    rebinding answer. Re-resolving would not catch it — the policy would keep
+    getting the same admissible answer. Only the connected peer settles it.
+
+    The breach is caught on the very first response, so ``open_session`` refuses
+    rather than handing back a session that already reached a forbidden address.
+    """
+
+    class RebindingGuard:
+        def check(self, url: str, *, allow_private_network: bool) -> None:
+            del allow_private_network
+            if (urlsplit(url).hostname or "") == "127.0.0.1":
+                raise NavigationBlockedError("127.0.0.1 is a loopback address")
+
+    port = urlsplit(fixture_server).port
+    driver = PlaywrightDriver(RebindingGuard(), DriverSettings(allow_private_network=True))
+    try:
+        with pytest.raises(NavigationBlockedError) as refused:
+            await driver.open_session(
+                OpenSessionRequest(url=f"http://localhost:{port}/search-page/")
+            )
+        assert "127.0.0.1" in str(refused.value)
+        assert driver._sessions == {}  # noqa: SLF001
+    finally:
+        await driver.shutdown()

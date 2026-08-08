@@ -16,10 +16,11 @@ blocked outcomes to be distinguishable by an agent, not just readable by a human
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Protocol, runtime_checkable
 
+from wcc.limits import ResourceLimits
 from wcc.models.action import ActionObservation, NavigationEvent, PlannedAction
 from wcc.models.session import OpenSessionRequest, PageSnapshot, SessionInfo
 
@@ -58,6 +59,30 @@ class DriverTimeoutError(DriverError):
     code = "driver_timeout"
 
 
+class LimitExceededError(DriverError):
+    """A resource limit of specification 10.5 was reached.
+
+    Separate from :class:`DriverTimeoutError` because the two ask different things
+    of a caller: a timeout may be worth retrying, while a page carrying more
+    elements than the limit allows will carry just as many next time.
+    """
+
+    code = "limit_exceeded"
+
+
+class SessionFailedError(DriverError):
+    """The session was closed because something happened that must not be survived.
+
+    Specification 10.2's boundary is only a boundary if breaching it ends the
+    session. A page that reached an address the policy would have refused, or that
+    committed a document the route handler never saw, has already had whatever
+    effect it was going to have; continuing to observe it would let a compiled
+    capability rest on evidence gathered after the breach.
+    """
+
+    code = "session_failed"
+
+
 class ElementNotResolvedError(DriverError):
     """No locator candidate produced exactly one match (specification 7.7).
 
@@ -80,11 +105,11 @@ class DriverNotReadyError(DriverError):
 
 @dataclass(frozen=True)
 class DriverSettings:
-    """Conservative driver-side budgets.
+    """What the driver is allowed to do, and how much of it.
 
-    Phase 1 task T8 moves the full resource-limit set of specification 10.5 into
-    ``policy/limits.py`` and makes it configurable through trusted local
-    configuration only. Until then these defaults keep the driver bounded.
+    Everything a driver may spend now comes from :class:`ResourceLimits`, which is
+    the single home specification 10.5 asks for. What remains here is the one
+    setting that is a permission rather than a budget.
     """
 
     allow_private_network: bool = False
@@ -94,10 +119,7 @@ class DriverSettings:
     reachable in development, and it is unsafe to enable for untrusted agents.
     """
 
-    max_active_sessions: int = 8
-    page_load_timeout_ms: int = 20_000
-    settle_timeout_ms: int = 5_000
-    action_timeout_ms: int = 10_000
+    limits: ResourceLimits = field(default_factory=ResourceLimits)
 
 
 @dataclass(frozen=True)
@@ -178,9 +200,12 @@ __all__ = [
     "DriverSettings",
     "DriverTimeoutError",
     "ElementNotResolvedError",
+    "LimitExceededError",
     "NavigationBlockedError",
     "NavigationGuard",
     "PageSignals",
+    "ResourceLimits",
+    "SessionFailedError",
     "SessionLimitExceededError",
     "SessionNotFoundError",
 ]

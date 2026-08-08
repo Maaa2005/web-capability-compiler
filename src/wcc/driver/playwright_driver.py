@@ -19,16 +19,19 @@ from collections.abc import Coroutine
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlsplit
 
 from playwright.async_api import (
     Browser,
     BrowserContext,
     Download,
     FileChooser,
+    Frame,
     Locator,
     Page,
     Playwright,
     Request,
+    Response,
     Route,
     async_playwright,
 )
@@ -49,8 +52,10 @@ from wcc.driver.base import (
     DriverSettings,
     DriverTimeoutError,
     ElementNotResolvedError,
+    LimitExceededError,
     NavigationBlockedError,
     NavigationGuard,
+    SessionFailedError,
     SessionLimitExceededError,
     SessionNotFoundError,
 )
@@ -71,7 +76,18 @@ from wcc.models.session import (
 )
 
 _DOCUMENT_TOKEN = "__wccDocumentToken"
+_MUTATION_CLOCK = "__wccLastMutation"
 _IDENTITY_READ_ATTEMPTS = 3
+
+#: How often the settle loop asks the page whether it has gone quiet. Short enough
+#: that the quiet period is measured rather than rounded up to it.
+_SETTLE_POLL_MS = 50
+
+#: Schemes whose documents arrive through the routing layer. Not a policy list —
+#: the policy's allowed set lives in :mod:`wcc.policy.url_policy` and is the
+#: runtime's to decide. This is the driver stating which commits it can actually
+#: see, so that a document arriving by any other route is treated as unchecked.
+_NETWORK_SCHEMES = frozenset({"http", "https"})
 
 # Stamped into every new document before page scripts run. A same-document update
 # such as ``history.pushState`` leaves the token in place, which is exactly the
@@ -90,6 +106,61 @@ _DOCUMENT_TOKEN_SCRIPT = f"""
   }});
 }})();
 """
+
+# The DOM half of the settle definition. Network quiet alone calls a page settled
+# while a framework is still rendering the response it already received, so the
+# page reports when it last changed and the driver waits for that to go quiet too.
+# The clock is a plain property rather than a frozen one: it must stay writable to
+# be a clock, and a page that lies about it can only make itself look busy — the
+# settle timeout bounds that, and nothing downstream trusts the value for anything
+# but waiting.
+_MUTATION_CLOCK_SCRIPT = f"""
+(() => {{
+  window[{_MUTATION_CLOCK!r}] = Date.now();
+  const bump = () => {{ window[{_MUTATION_CLOCK!r}] = Date.now(); }};
+  const start = () => {{
+    new MutationObserver(bump).observe(document.documentElement, {{
+      subtree: true,
+      childList: true,
+      attributes: true,
+      characterData: true,
+    }});
+  }};
+  if (document.documentElement) {{
+    start();
+  }} else {{
+    document.addEventListener('readystatechange', function once() {{
+      if (document.documentElement) {{
+        document.removeEventListener('readystatechange', once);
+        start();
+      }}
+    }});
+  }}
+}})();
+"""
+
+#: Read together so the two halves of the answer describe the same instant.
+_SETTLE_PROBE = f"""
+() => ({{
+  quietFor: Date.now() - (window[{_MUTATION_CLOCK!r}] || 0),
+  ready: document.readyState,
+}})
+"""
+
+
+def _redirect_depth(request: Request) -> int:
+    """Count the hops that led to ``request``.
+
+    Walked from the request rather than counted per session: two navigations in one
+    session are two chains, and a counter that did not reset would refuse the
+    second for the sins of the first.
+    """
+    depth = 0
+    hop = request.redirected_from
+    while hop is not None:
+        depth += 1
+        hop = hop.redirected_from
+    return depth
 
 
 def _event_kind(request: Request) -> str:
@@ -110,6 +181,17 @@ class _Session:
     created_at: datetime
     allow_private_network: bool
     events: list[NavigationEvent] = field(default_factory=list)
+    in_flight: int = 0
+    """Requests started and not yet finished or failed.
+
+    Counted from context events rather than from the route handler: a request the
+    handler aborts still has to be seen through to its failure, and a handler that
+    both admitted and counted would have to be correct twice.
+    """
+
+    failure: str | None = None
+    """Why the session was failed closed, if it was (specification 10.2)."""
+
     document_token: str | None = None
     chains: dict[str, LocatorChain] = field(default_factory=dict)
     current_document_id: str | None = None
@@ -131,6 +213,7 @@ class PlaywrightDriver:
     ) -> None:
         self._guard = navigation_guard
         self._settings = settings or DriverSettings()
+        self._limits = self._settings.limits
         self._playwright: Playwright | None = None
         self._browsers: dict[bool, Browser] = {}
         self._sessions: dict[str, _Session] = {}
@@ -149,11 +232,11 @@ class PlaywrightDriver:
             # The slot is reserved under the lock and released on failure. Counting
             # sessions before the awaits that create one would let two concurrent
             # callers both see room that only one of them can have.
-            if len(self._sessions) + len(self._reserved) >= self._settings.max_active_sessions:
+            if len(self._sessions) + len(self._reserved) >= self._limits.max_active_sessions:
                 raise SessionLimitExceededError(
                     f"{len(self._sessions) + len(self._reserved)} sessions are already "
                     f"active or opening; the configured maximum is "
-                    f"{self._settings.max_active_sessions}"
+                    f"{self._limits.max_active_sessions}"
                 )
             self._reserved.add(session_id)
 
@@ -180,10 +263,10 @@ class PlaywrightDriver:
             await self._arm_observers(session)
 
             try:
-                await page.goto(request.url, timeout=self._settings.page_load_timeout_ms)
+                await page.goto(request.url, timeout=self._limits.page_load_timeout_ms)
             except PlaywrightTimeoutError as exc:
                 raise DriverTimeoutError(
-                    f"loading {request.url} exceeded {self._settings.page_load_timeout_ms} ms"
+                    f"loading {request.url} exceeded {self._limits.page_load_timeout_ms} ms"
                 ) from exc
             except PlaywrightError as exc:
                 blocked = next((e for e in session.events if e.blocked), None)
@@ -262,17 +345,57 @@ class PlaywrightDriver:
     async def wait_settled(self, session_id: str, timeout_ms: int) -> None:
         """Wait for the page to stop changing, bounded by ``timeout_ms``.
 
-        Task T8 replaces this with the full settle definition of the
-        specification, which also accounts for in-flight XHR and DOM mutation
-        quiescence. Waiting for the network to go idle is the honest subset of
-        that behaviour available today.
+        Settled means three things at once, and all three are needed. The document
+        has finished loading. Nothing is in flight. And the DOM has not changed for
+        the configured quiet period.
+
+        Network idle alone — what this used to wait for — reports a page settled at
+        the moment the last response arrives, which is before the framework that
+        asked for it has rendered anything. A snapshot taken there sees the old
+        page and calls it the new one. Requiring DOM quiet as well is what moves
+        the wait from "the data arrived" to "the page stopped reacting to it".
+
+        The three conditions must hold *together*, so any of them failing restarts
+        the wait rather than banking the progress: a render that triggers another
+        fetch is not a settled page, however quiet the instant between them was.
         """
         session = self._session(session_id)
-        budget = min(timeout_ms, self._settings.settle_timeout_ms)
+        budget = min(timeout_ms, self._limits.settle_timeout_ms)
+        quiet_period = self._limits.settle_quiet_period_ms
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + budget / 1000
+
+        while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                raise DriverTimeoutError(f"page did not settle within {budget} ms")
+            if session.in_flight == 0:
+                probe = await self._probe_settle(session)
+                if (
+                    probe is not None
+                    and probe["ready"] == "complete"
+                    and probe["quiet_for"] >= quiet_period
+                    # Re-read: evaluating the probe took time, and a request that
+                    # started during it means the quiet reading is already stale.
+                    and session.in_flight == 0
+                ):
+                    return
+            await asyncio.sleep(min(_SETTLE_POLL_MS / 1000, remaining))
+
+    async def _probe_settle(self, session: _Session) -> dict[str, Any] | None:
+        """Ask the page how long it has been quiet, or ``None`` if it cannot answer.
+
+        A page mid-navigation destroys the execution context under the evaluate.
+        That is not a failure to settle, it is a page that has not started; the
+        caller keeps waiting and the deadline still applies.
+        """
         try:
-            await session.page.wait_for_load_state("networkidle", timeout=budget)
-        except PlaywrightTimeoutError as exc:
-            raise DriverTimeoutError(f"page did not settle within {budget} ms") from exc
+            raw = await session.page.evaluate(_SETTLE_PROBE)
+        except PlaywrightError:
+            return None
+        if not isinstance(raw, dict):
+            return None
+        return {"ready": raw.get("ready"), "quiet_for": raw.get("quietFor") or 0}
 
     async def identify(self, session_id: str) -> DocumentIdentity:
         """Mint a fresh snapshot identity, reusing the document identity if it holds.
@@ -358,6 +481,12 @@ class PlaywrightDriver:
             element = normalize_element(record, new_id("el"), session.page.url)
             session.chains[element.element_id] = element.locator_chain
             elements.append(element)
+            if len(elements) > self._limits.max_elements_per_snapshot:
+                raise LimitExceededError(
+                    f"the page has more than {self._limits.max_elements_per_snapshot} "
+                    "eligible elements; specification 10.5 refuses the snapshot rather "
+                    "than returning a subset an agent would mistake for all of them"
+                )
         return elements
 
     async def extract_collections(
@@ -398,6 +527,7 @@ class PlaywrightDriver:
             for entry in await session.page.evaluate(EXTRACT_LANDMARKS)
             if isinstance(entry, str)
         ]
+        collections, warnings = self._apply_display_limits(collections)
 
         return PageSnapshot(
             session_id=identity.session_id,
@@ -416,7 +546,54 @@ class PlaywrightDriver:
             page_signature=page_signature(
                 identity.origin, identity.normalized_route_pattern, elements, landmarks
             ),
+            warnings=warnings,
         )
+
+    def _apply_display_limits(
+        self, collections: list[CollectionSnapshot]
+    ) -> tuple[list[CollectionSnapshot], list[str]]:
+        """Trim the parts of a snapshot an agent reads but never acts on.
+
+        Specification 10.5 allows truncating non-critical display data and requires
+        saying so. Collections qualify: an agent reads them, and postconditions
+        compare ``collection_hash`` values, which are computed over what was
+        actually kept. Elements do not qualify and are never trimmed here — an
+        element an agent cannot address is a capability that silently lost a step.
+
+        ``record_count`` and ``collection_hash`` keep describing what the page held,
+        not what survived the trim. Both are evidence about the page: a
+        postcondition that compares them must not read our truncation as the result
+        set having shrunk. ``truncated`` is what tells a reader the records list is
+        the short version.
+        """
+        warnings: list[str] = []
+        kept = collections
+        if len(collections) > self._limits.max_collections_per_snapshot:
+            warnings.append(
+                f"kept {self._limits.max_collections_per_snapshot} of "
+                f"{len(collections)} collections (specification 10.5 limit)"
+            )
+            kept = collections[: self._limits.max_collections_per_snapshot]
+
+        trimmed: list[CollectionSnapshot] = []
+        for collection in kept:
+            if len(collection.records) <= self._limits.max_records_per_collection:
+                trimmed.append(collection)
+                continue
+            warnings.append(
+                f"collection {collection.collection_id} kept "
+                f"{self._limits.max_records_per_collection} of "
+                f"{len(collection.records)} records (specification 10.5 limit)"
+            )
+            trimmed.append(
+                collection.model_copy(
+                    update={
+                        "records": collection.records[: self._limits.max_records_per_collection],
+                        "truncated": True,
+                    }
+                )
+            )
+        return trimmed, warnings
 
     async def resolve(self, session_id: str, element_id: str) -> str:
         """Re-resolve an element, returning an in-page marker for the single match.
@@ -468,7 +645,7 @@ class PlaywrightDriver:
         before = session.current_document_id
         marker = await self.resolve(session_id, action.element_id)
         locator = session.page.locator(f"[data-wcc-resolved='{marker}']")
-        timeout = self._settings.action_timeout_ms
+        timeout = self._limits.execution_timeout_ms
 
         succeeded = True
         error_code: str | None = None
@@ -514,17 +691,74 @@ class PlaywrightDriver:
     async def _settled_quietly(self, session_id: str) -> bool:
         """Report whether the page settled, without turning a busy page into an error."""
         try:
-            await self.wait_settled(session_id, self._settings.settle_timeout_ms)
+            await self.wait_settled(session_id, self._limits.settle_timeout_ms)
         except DriverTimeoutError:
             return False
         return True
 
     # -- internals ---------------------------------------------------------
 
+    async def _audit_peer(self, session: _Session, response: Response) -> None:
+        """Fail the session closed if the connected address would not have passed.
+
+        The peer is judged by the same rules as a resolved address, through the
+        guard the runtime supplied, so there is no second policy here to drift out
+        of step with the first.
+        """
+        if session.failure is not None:
+            return
+        try:
+            peer = await response.server_addr()
+        except PlaywrightError:
+            return
+        if not peer:
+            return
+        address = peer.get("ipAddress")
+        if not address:
+            return
+
+        # A bare address is checked as itself: passing it back through the guard as
+        # a URL means the same category rules apply, and the resolver returns the
+        # literal unchanged rather than asking DNS a second question.
+        host = f"[{address}]" if ":" in address else address
+        try:
+            self._guard.check(
+                f"{urlsplit(response.url).scheme}://{host}",
+                allow_private_network=session.allow_private_network,
+            )
+        except NavigationBlockedError as blocked:
+            self._fail_session(
+                session,
+                f"{response.url} was served from {address}, which the policy "
+                f"refuses: {blocked.message}",
+                kind=(
+                    "navigation" if response.request.resource_type == "document" else "subresource"
+                ),
+            )
+
+    def _fail_session(self, session: _Session, reason: str, *, kind: str) -> None:
+        """Record the breach and close the session's page to it.
+
+        Recording before closing matters: the runtime learns *why* from the drained
+        events, and a session closed without a reason is indistinguishable from one
+        the agent closed itself.
+        """
+        if session.failure is not None:
+            return
+        session.failure = reason
+        session.events.append(
+            NavigationEvent(kind=kind, url=session.page.url, blocked=True, reason=reason)
+        )
+        self._spawn(session.context.close())
+
     def _session(self, session_id: str) -> _Session:
         session = self._sessions.get(session_id)
         if session is None:
             raise SessionNotFoundError(f"no active session {session_id}")
+        if session.failure is not None:
+            # Every entry point comes through here, so a failed session cannot be
+            # observed or acted on by any route, only closed.
+            raise SessionFailedError(session.failure)
         return session
 
     async def _browser(self, *, headless: bool) -> Browser:
@@ -546,6 +780,63 @@ class PlaywrightDriver:
     async def _arm_observers(self, session: _Session) -> None:
         """Stamp document identity, route requests through the guard, record effects."""
         await session.context.add_init_script(_DOCUMENT_TOKEN_SCRIPT)
+        await session.context.add_init_script(_MUTATION_CLOCK_SCRIPT)
+
+        def on_request(request: Request) -> None:
+            del request
+            session.in_flight += 1
+
+        def on_request_done(request: Request) -> None:
+            del request
+            session.in_flight = max(0, session.in_flight - 1)
+
+        session.context.on("request", on_request)
+        session.context.on("requestfinished", on_request_done)
+        session.context.on("requestfailed", on_request_done)
+
+        def on_response(response: Response) -> None:
+            """Check the address Chromium actually connected to (specification 10.2).
+
+            The policy resolves a hostname with ``getaddrinfo`` while Chromium
+            resolves it independently, so the address that was checked is not
+            provably the address that was reached. That gap is the DNS-rebinding
+            window, and no amount of re-resolving in the policy closes it — it only
+            proves the policy keeps getting the same answer.
+
+            The connected peer is the one fact that settles it. Playwright reports
+            it per response, after the connection exists, so this cannot prevent the
+            connection; what it can do is stop the session before anything observed
+            over that connection becomes evidence.
+            """
+            self._spawn(self._audit_peer(session, response))
+
+        session.page.on("response", on_response)
+
+        def on_frame_navigated(frame: Frame) -> None:
+            """Catch a document the route handler never saw.
+
+            ``window.location = "about:blank"``, and the same move with ``data:``,
+            ``blob:``, or a ``srcdoc`` frame, commits a document without issuing a
+            network request. The route handler is a network boundary, so none of
+            these reach it, and a snapshot taken afterwards would describe a
+            document that passed no check at all.
+            """
+            if frame is not session.page.main_frame:
+                return
+            scheme = urlsplit(frame.url).scheme.lower()
+            if scheme in _NETWORK_SCHEMES or not frame.url:
+                return
+            # ``about:blank`` is where every context starts, so it is only a breach
+            # once the session has committed the document it was opened for.
+            if frame.url == "about:blank" and session.document_token is None:
+                return
+            self._fail_session(
+                session,
+                f"the page committed {frame.url!r}, a document the network boundary never saw",
+                kind="navigation",
+            )
+
+        session.page.on("framenavigated", on_frame_navigated)
 
         async def on_route(route: Route) -> None:
             """Judge every request, not only the top-level document.
@@ -574,6 +865,18 @@ class PlaywrightDriver:
                 return
             if request.resource_type == "document" and request.redirected_from is not None:
                 session.events.append(NavigationEvent(kind="redirect", url=request.url))
+                if _redirect_depth(request) > self._limits.max_redirects_per_navigation:
+                    reason = (
+                        f"the redirect chain exceeded "
+                        f"{self._limits.max_redirects_per_navigation} hops"
+                    )
+                    session.events.append(
+                        NavigationEvent(
+                            kind="redirect", url=request.url, blocked=True, reason=reason
+                        )
+                    )
+                    await route.abort("blockedbyclient")
+                    return
             await route.continue_()
 
         await session.context.route("**/*", on_route)

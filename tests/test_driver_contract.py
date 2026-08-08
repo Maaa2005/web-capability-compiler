@@ -50,9 +50,10 @@ def test_error_codes_are_distinct_and_stable() -> None:
 
 
 def test_driver_settings_default_to_bounded_budgets() -> None:
-    settings = DriverSettings()
-    assert settings.max_active_sessions > 0
-    assert settings.settle_timeout_ms <= settings.page_load_timeout_ms
+    limits = DriverSettings().limits
+    assert limits.max_active_sessions > 0
+    assert limits.settle_timeout_ms <= limits.page_load_timeout_ms
+    assert limits.settle_quiet_period_ms < limits.settle_timeout_ms
 
 
 def test_unknown_session_is_rejected_before_any_browser_work() -> None:
