@@ -561,3 +561,57 @@ limit refuses a snapshot while records truncate with a stated warning; an
 green, ruff and pyright clean.
 
 Phase 1 now has only T9 (`wcc install-browser`, `wcc doctor`) outstanding.
+
+---
+
+### T9: `wcc install-browser` and `wcc doctor` — done (2026-08-08)
+
+Phase 1 is complete. Chromium is no longer installed out-of-band, and the two
+notes left "Unresolved" under T1 — the settle definition and the browser install —
+are both closed.
+
+**Neither command imports Playwright.** `wcc doctor` runs on the machines where the
+browser is missing, broken, or built for the wrong platform, which is exactly where
+importing the library or launching the browser would hang or crash instead of
+reporting the problem. Both questions go to Playwright's own installer as a
+subprocess: `install --dry-run chromium` says where the build belongs, and the
+driver then looks. Reimplementing Playwright's cache layout here would have been
+the alternative, and it would drift the first time that layout changed.
+
+Parsing a CLI carries a risk, so the failure mode is chosen rather than inherited.
+An unrecognised format returns "could not tell where Playwright keeps its Chromium
+build", not "the browser is missing" — a wrong diagnosis sends the user to install
+something they already have. The Chromium entry is matched exactly enough to
+exclude `chromium-headless-shell`, which is a separate download the driver never
+launches.
+
+**`sys.executable -m playwright` rather than a bare `playwright`.** The console
+script may be absent from `PATH` in a virtual environment that was never activated,
+and installing into a different interpreter than the one running is the failure
+that would produce a passing install followed by a failing `doctor`.
+
+**Doctor runs every check before answering,** and its exit code is the
+machine-readable half: 0 when fit, 1 when not, so a setup script can branch without
+parsing the lines a human reads. Stopping at the first failure would tell a user
+about one of the three things wrong with their machine and turn one fix into three
+round trips.
+
+`IMPLEMENTED_COMMANDS` now sits beside `PENDING_COMMANDS`, and a test asserts the
+two never overlap — a command left in both would report a phase it has already
+passed.
+
+243 tests green, ruff and pyright clean.
+
+---
+
+## Phase 1 closed (2026-08-08)
+
+All nine acceptance criteria pass, T1 through T9 are done, and the two deferred
+security findings from the Codex counter-review are closed rather than carried.
+Next is Phase 2: Agent Page IR, templates, binding, and persistence.
+
+One review debt is carried forward: the Codex counter-review of T4–T6 was launched
+on 2026-08-02, written to a scratchpad file, and never read — the session ended
+first and the temporary directory was cleared on 2026-08-07. The T1–T3 review was
+processed in full and is recorded above; this one was not. Re-running it before
+Phase 2 persists anything is the cheaper order.
