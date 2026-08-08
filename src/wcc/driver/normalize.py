@@ -8,13 +8,16 @@ the decision.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
+from wcc.compiler.route import normalize_route_pattern, origin_of
 from wcc.models.common import (
     NEVER_CAPTURED,
     BoundingBox,
     Confidence,
     ControlType,
+    FormActionKind,
     LabelSource,
 )
 from wcc.models.element import NormalizedElement
@@ -55,6 +58,11 @@ _INPUT_TYPES: dict[str, ControlType] = {
 _INTERACTIVE_ROLES = frozenset(
     {"button", "link", "checkbox", "radio", "combobox", "searchbox", "textbox"}
 )
+
+#: ``rel`` values that mark a control as paging rather than as a result.
+_PAGINATION_RELS = frozenset({"next", "prev", "previous", "first", "last"})
+
+_BARE_NUMBER = re.compile(r"^\d+$")
 
 
 def resolve_label(record: dict[str, Any]) -> tuple[str | None, LabelSource | None]:
@@ -127,6 +135,69 @@ def assess_confidence(record: dict[str, Any], source: LabelSource | None) -> Con
     return Confidence.LOW
 
 
+def form_destination(
+    record: dict[str, Any], page_url: str | None
+) -> tuple[str | None, str | None, FormActionKind | None]:
+    """Return the method, normalized action route, and origin relationship of the form.
+
+    The route is normalized here rather than stored raw because a form action may
+    carry query values, and specification 7.2's rule about not holding page content
+    does not stop at input values. Normalizing at the boundary means no later layer
+    has to remember.
+
+    An action that cannot be parsed yields :data:`FormActionKind.UNKNOWN` rather
+    than a guess. Two forms whose destinations are both unknown are then treated as
+    indistinguishable, which is the conservative direction: it can merge page
+    classes that differ, never split one that does not.
+    """
+    if not record.get("form_present"):
+        return None, None, None
+
+    method = str(record.get("form_method") or "get").lower()
+    action = record.get("form_action")
+    if not isinstance(action, str) or not action:
+        return method, None, FormActionKind.UNKNOWN
+
+    try:
+        route = normalize_route_pattern(action)
+        action_origin = origin_of(action)
+    except ValueError:
+        return method, None, FormActionKind.UNKNOWN
+
+    if page_url is None:
+        return method, route, FormActionKind.UNKNOWN
+    try:
+        same_origin = origin_of(page_url) == action_origin
+    except ValueError:
+        return method, route, FormActionKind.UNKNOWN
+    return (
+        method,
+        route,
+        (FormActionKind.SAME_ORIGIN if same_origin else FormActionKind.CROSS_ORIGIN),
+    )
+
+
+def is_pagination_control(
+    record: dict[str, Any], control_type: ControlType, label: str | None
+) -> bool:
+    """Decide whether a button or link pages through a result set.
+
+    Two signals, both structural. An explicit ``rel`` is definitive wherever it
+    appears. Failing that, a bare number inside a navigation landmark is a page
+    number: the landmark supplies the intent, so the digits do not have to be
+    read as content. A numeric label outside a landmark stays an ordinary control,
+    because "3" on a product card is a quantity, not a page.
+    """
+    if control_type not in {ControlType.LINK, ControlType.BUTTON}:
+        return False
+    rels = {part.lower() for part in str(record.get("rel") or "").split() if part}
+    if rels & _PAGINATION_RELS:
+        return True
+    if not record.get("in_navigation"):
+        return False
+    return bool(label) and bool(_BARE_NUMBER.match(label.strip()))
+
+
 def build_locator_chain(record: dict[str, Any], label: str | None) -> LocatorChain:
     """Collect every applicable candidate in specification 7.6 priority order.
 
@@ -173,10 +244,18 @@ def build_locator_chain(record: dict[str, Any], label: str | None) -> LocatorCha
     return LocatorChain(primary=candidates[0], candidates=candidates)
 
 
-def normalize_element(record: dict[str, Any], element_id: str) -> NormalizedElement:
-    """Map one raw record onto the public model."""
+def normalize_element(
+    record: dict[str, Any], element_id: str, page_url: str | None = None
+) -> NormalizedElement:
+    """Map one raw record onto the public model.
+
+    ``page_url`` decides only whether a form action is same-origin or cross-origin.
+    It is optional so a record can still be normalized without a live page; the
+    origin relationship then reads as unknown rather than as same-origin.
+    """
     control_type = classify_control(record)
     label, source = resolve_label(record)
+    method, action_route, action_kind = form_destination(record, page_url)
     sensitive = bool(record.get("sensitive")) or control_type in NEVER_CAPTURED
     raw_value = record.get("value")
     value = None if sensitive or not isinstance(raw_value, str) else raw_value
@@ -199,6 +278,11 @@ def normalize_element(record: dict[str, Any], element_id: str) -> NormalizedElem
         visible=bool(record.get("visible")),
         bounding_box=BoundingBox(**box) if isinstance(box, dict) else None,
         form_id=record.get("form_id"),
+        form_method=method,
+        form_action_route=action_route,
+        form_action_kind=action_kind,
+        submits_form=bool(record.get("submits_form")),
+        is_pagination_control=is_pagination_control(record, control_type, label),
         locator_chain=build_locator_chain(record, label),
         confidence=assess_confidence(record, source),
     )

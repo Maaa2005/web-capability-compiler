@@ -31,6 +31,7 @@ from wcc.models.common import (
     ActionType,
     Confidence,
     ControlType,
+    FormActionKind,
     LabelSource,
     SessionStatus,
 )
@@ -614,6 +615,69 @@ async def test_a_different_search_term_preserves_the_page_signature(
 
     assert after.page_signature == before.page_signature
     assert after.url != before.url
+
+
+async def test_a_repurposed_submit_changes_the_page_signature(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """The defect this closes, driven through a real DOM.
+
+    Nothing an ordinary locator looks at moves: the button keeps its id, its text,
+    and its place in the form, so it still re-resolves to exactly one element. Only
+    the destination changes, and a template compiled against the old page must not
+    be served for the new one.
+    """
+    session_id = await _open(driver, f"{fixture_server}/search-page/")
+    before = await driver.snapshot(session_id)
+
+    await driver._session(session_id).page.evaluate(  # noqa: SLF001
+        """() => {
+            const form = document.getElementById('product-search');
+            form.setAttribute('method', 'post');
+            form.setAttribute('action', '/account/close');
+        }"""
+    )
+    after = await driver.snapshot(session_id)
+
+    assert after.page_signature != before.page_signature
+
+
+async def test_a_cross_origin_form_action_is_recorded_as_such(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """A form that starts posting to another origin is not the same page class."""
+    session_id = await _open(driver, f"{fixture_server}/search-page/")
+    before = await driver.snapshot(session_id)
+
+    await driver._session(session_id).page.evaluate(  # noqa: SLF001
+        """() => {
+            document
+                .getElementById('product-search')
+                .setAttribute('action', 'https://elsewhere.example/product-list/');
+        }"""
+    )
+    after = await driver.snapshot(session_id)
+
+    submits = [element for element in after.elements if element.submits_form]
+    assert any(element.form_action_kind is FormActionKind.CROSS_ORIGIN for element in submits)
+    assert after.page_signature != before.page_signature
+
+
+async def test_a_form_action_query_value_never_reaches_the_snapshot(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """Normalizing at the boundary is what keeps page content out of the model."""
+    session_id = await _open(driver, f"{fixture_server}/search-page/")
+    await driver._session(session_id).page.evaluate(  # noqa: SLF001
+        """() => {
+            document
+                .getElementById('product-search')
+                .setAttribute('action', '/product-list/?keyword=SENTINEL-TERM');
+        }"""
+    )
+    snapshot = await driver.snapshot(session_id)
+
+    assert "SENTINEL-TERM" not in snapshot.model_dump_json()
 
 
 async def test_a_different_page_class_has_a_different_signature(

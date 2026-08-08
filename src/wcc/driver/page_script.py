@@ -88,6 +88,19 @@ EXTRACT_ELEMENTS = r"""
     return parts.join('>');
   };
 
+  // Where the form submits, resolved against the document base so the Python
+  // layer can normalize one absolute URL instead of re-implementing relative
+  // resolution. An empty action means "this document", which resolves to the
+  // current URL, so the ordinary case needs no special handling.
+  const formAction = (form) => {
+    if (!form) return null;
+    try {
+      return new URL(form.getAttribute('action') || '', document.baseURI).href;
+    } catch (e) {
+      return null;
+    }
+  };
+
   const SELECTOR = [
     'input', 'select', 'textarea', 'button', 'a[href]',
     '[role="button"]', '[role="link"]', '[role="checkbox"]', '[role="radio"]',
@@ -113,6 +126,13 @@ EXTRACT_ELEMENTS = r"""
       name: el.getAttribute('name'),
       form_id: form ? (form.id || null) : null,
       form_present: Boolean(form),
+      form_method: form ? (form.getAttribute('method') || 'get').toLowerCase() : null,
+      form_action: formAction(form),
+      submits_form: Boolean(form) && (
+        (tag === 'button' && (type === '' || type === 'submit'))
+        || (tag === 'input' && type === 'submit')),
+      rel: el.getAttribute('rel'),
+      in_navigation: Boolean(el.closest('nav, [role="navigation"]')),
       label_for: labelFor(el),
       wrapping_label: wrappingLabel(el),
       aria_labelledby: ariaLabelledBy(el),

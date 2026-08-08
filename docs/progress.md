@@ -453,3 +453,48 @@ from a research summary, not from primary sources, and they measure a different
 quantity than WCC would claim: sending a semantic tree instead of raw HTML makes each
 call lighter, whereas warm binding aims to remove the call. Confirming what those
 numbers actually measure is a prerequisite for designing the Phase 7 benchmark.
+
+---
+
+## The `page_signature` defect, fixed (2026-08-08)
+
+Closed before Phase 2 so that no persisted template needs migrating, as the
+positioning decision above required.
+
+**What was wrong.** `page_signature` dropped every button and link
+unconditionally. The exclusion was written to protect template reuse — a result
+link's text and a paging button's number are content, and counting them would give
+every search term its own page class — but it took the submit button with them.
+A submit is the one control that says what the form *does*, so a page whose search
+button had been replaced by a differently-purposed one carried an unchanged
+signature and was served the old template. Unique re-resolution does not contain
+this: a replacement keeping the same id, accessible name, and in-form structure
+still resolves to exactly one element. Uniqueness is not semantic equivalence.
+
+**The fix separates structure from content** rather than including everything.
+Controls now fall into three groups. Ordinary fields enter whole, as before. A
+form-associated submit enters as its destination — tag, role, control type, form
+association, method, normalized action route, and origin relationship — and
+deliberately without its label, because the label is precisely the field a
+repurposed button keeps. Result links still leave the signature entirely, and
+paging controls collapse to one presence marker per kind, so whether the page pages
+counts while how many pages it has today does not.
+
+**This needed the extractor, not only `fingerprints.py`.** `NormalizedElement` knew
+`form_id` and nothing else about the form, and the page script never read a form's
+`method` or `action`. Both now do, along with `rel` and whether a control sits
+inside a navigation landmark, which is what tells a page number from a quantity
+without reading the digits as content. The action is resolved against the document
+base in the page and normalized to a route pattern the moment it reaches Python, so
+a query value never enters the model — specification 7.2's rule about not holding
+page content does not stop at input values. An action that will not parse reads as
+`unknown` rather than as a guess; two unknown destinations then compare equal, which
+can merge page classes that differ but never splits one that does not.
+
+**Regressions covering it.** Unit: a changed result link leaves the signature alone,
+a removed submit moves it, GET-to-POST moves it, a changed action route moves it, a
+retitled submit does not, page count does not, the appearance of paging does. Driver:
+the same repurposing through a real DOM, a cross-origin action, and a sentinel query
+value proved absent from the whole snapshot. 223 tests green, ruff and pyright clean.
+
+`control_fingerprint` was removed along the way — the rewrite left it with no caller.

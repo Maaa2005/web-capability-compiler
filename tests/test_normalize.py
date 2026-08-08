@@ -10,11 +10,13 @@ from wcc.driver.normalize import (
     assess_confidence,
     build_locator_chain,
     classify_control,
+    form_destination,
     is_eligible,
+    is_pagination_control,
     normalize_element,
     resolve_label,
 )
-from wcc.models.common import Confidence, ControlType, LabelSource
+from wcc.models.common import Confidence, ControlType, FormActionKind, LabelSource
 from wcc.models.locator import LocatorKind
 
 
@@ -44,6 +46,11 @@ def _record(**overrides: Any) -> dict[str, Any]:
         "box": {"x": 0.0, "y": 0.0, "width": 120.0, "height": 24.0},
         "structural_path": "form>input",
         "search_signal": False,
+        "form_method": "get",
+        "form_action": "https://shop.example/search?keyword=earbuds",
+        "submits_form": False,
+        "rel": None,
+        "in_navigation": False,
     }
     base.update(overrides)
     return base
@@ -185,3 +192,58 @@ def test_a_value_the_page_leaked_is_still_dropped_by_type() -> None:
     )
     assert element.value is None
     assert element.value_omitted_for_safety is True
+
+
+def test_a_form_action_is_normalized_before_it_is_stored() -> None:
+    """A search term reaching the model through the action would be page content."""
+    element = normalize_element(_record(), "el_f", "https://shop.example/products")
+    assert element.form_action_route == "/search?keyword="
+    assert element.form_action_kind is FormActionKind.SAME_ORIGIN
+    assert element.form_method == "get"
+    assert "earbuds" not in element.model_dump_json()
+
+
+def test_a_form_posting_elsewhere_is_marked_cross_origin() -> None:
+    method, route, kind = form_destination(
+        _record(form_method="POST", form_action="https://pay.example/charge"),
+        "https://shop.example/cart",
+    )
+    assert (method, route, kind) == ("post", "/charge", FormActionKind.CROSS_ORIGIN)
+
+
+def test_an_unparseable_action_is_unknown_rather_than_guessed() -> None:
+    method, route, kind = form_destination(
+        _record(form_action="::not a url::"), "https://shop.example/products"
+    )
+    assert (method, route, kind) == ("get", None, FormActionKind.UNKNOWN)
+
+
+def test_an_element_outside_a_form_has_no_destination() -> None:
+    assert form_destination(_record(form_present=False), "https://shop.example/") == (
+        None,
+        None,
+        None,
+    )
+
+
+def test_a_normalization_without_a_page_url_does_not_claim_same_origin() -> None:
+    """Absent the page, the origin relationship is unknown — never assumed to match."""
+    element = normalize_element(_record(), "el_g")
+    assert element.form_action_kind is FormActionKind.UNKNOWN
+
+
+@pytest.mark.parametrize(
+    ("overrides", "control_type", "label", "expected"),
+    [
+        ({"rel": "next"}, ControlType.LINK, "Continue", True),
+        ({"rel": "NEXT nofollow"}, ControlType.LINK, "Continue", True),
+        ({"in_navigation": True}, ControlType.LINK, "3", True),
+        ({"in_navigation": True}, ControlType.LINK, "Wireless Earbuds", False),
+        ({"in_navigation": False}, ControlType.LINK, "3", False),
+        ({"in_navigation": True}, ControlType.TEXT, "3", False),
+    ],
+)
+def test_paging_controls_are_told_apart_from_results(
+    overrides: dict[str, Any], control_type: ControlType, label: str, expected: bool
+) -> None:
+    assert is_pagination_control(_record(**overrides), control_type, label) is expected

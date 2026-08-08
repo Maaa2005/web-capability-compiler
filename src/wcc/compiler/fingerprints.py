@@ -63,18 +63,6 @@ def _control_entry(element: NormalizedElement) -> list[str | bool | None]:
     ]
 
 
-def control_fingerprint(elements: list[NormalizedElement]) -> list[list[str | bool | None]]:
-    """Describe the page's controls, sorted so DOM order cannot perturb it.
-
-    Sorting matters for ``page_signature``: two renderings of the same form that
-    differ only in the order the server emitted two fields are the same page class.
-    """
-    return sorted(
-        (_control_entry(element) for element in elements),
-        key=lambda entry: json.dumps(entry, ensure_ascii=False, sort_keys=True),
-    )
-
-
 def structural_hash(
     elements: list[NormalizedElement],
     collections: list[CollectionSnapshot],
@@ -98,6 +86,65 @@ def structural_hash(
     )
 
 
+def _submit_entry(element: NormalizedElement) -> list[str | None]:
+    """Describe a submit by where it sends the page, never by what it is called.
+
+    The label is deliberately absent. The case this entry exists for is a submit
+    swapped for a different-purpose button that keeps the same id, accessible name,
+    and in-form structure, so the label is exactly the field that does not move.
+    The destination does.
+    """
+    return [
+        "submit",
+        element.tag_name,
+        element.role,
+        str(element.control_type),
+        element.form_id,
+        element.form_method,
+        element.form_action_route,
+        str(element.form_action_kind) if element.form_action_kind else None,
+    ]
+
+
+def _signature_controls(elements: list[NormalizedElement]) -> list[list[str | bool | None]]:
+    """Split the page's controls into the part that names a page class.
+
+    Three groups, by what each one tracks:
+
+    Ordinary controls — fields, selects, checkboxes — enter whole. Their labels are
+    the form's vocabulary and do not vary between two visits to the same page class.
+
+    Form-associated submits enter as a destination. Specification 7.3 wants a
+    normalized control fingerprint, and a submit's destination is the structural
+    half of it.
+
+    Everything else — result links, buttons scattered through a result set — leaves.
+    Their labels are the content of the page, so counting them would give every
+    search term its own class. Paging controls collapse to one presence marker per
+    kind: whether the page pages is a property of the page class, while how many
+    pages it has today is not.
+    """
+    entries: list[list[str | bool | None]] = []
+    paging: set[str] = set()
+
+    for element in elements:
+        if element.is_pagination_control:
+            paging.add(str(element.control_type))
+            continue
+        if element.submits_form:
+            entries.append(list(_submit_entry(element)))
+            continue
+        if element.control_type in {ControlType.BUTTON, ControlType.LINK}:
+            continue
+        entries.append(_control_entry(element))
+
+    entries.extend(["pagination", kind] for kind in sorted(paging))
+
+    # Sorted, unlike in ``structural_hash``: two renderings of the same form that
+    # differ only in the order the server emitted two fields are the same class.
+    return sorted(entries, key=lambda entry: json.dumps(entry, ensure_ascii=False, sort_keys=True))
+
+
 def page_signature(
     origin: str,
     normalized_route_pattern: str,
@@ -106,20 +153,19 @@ def page_signature(
 ) -> str:
     """Fingerprint the reusable page class (specification 7.3).
 
-    Buttons and links are excluded from the control fingerprint. Their labels track
-    content — a result card's link text, a paging button's number — so including
-    them would give every search term its own page class and defeat template reuse.
+    What belongs in the signature is decided by one question per control: does it
+    vary between two visits to the same page class? See :func:`_signature_controls`
+    for how each group answers it.
+
+    This is not the whole defence, and it is not meant to be. Binding still turns on
+    unique re-resolution; the signature's job is to stop a page whose controls now
+    mean something different from being served an old template in the first place.
     """
-    controls = [
-        element
-        for element in elements
-        if element.control_type not in {ControlType.BUTTON, ControlType.LINK}
-    ]
     return _digest(
         {
             "origin": origin,
             "route": normalized_route_pattern,
-            "controls": control_fingerprint(controls),
+            "controls": _signature_controls(elements),
             "landmarks": sorted(landmarks),
         }
     )

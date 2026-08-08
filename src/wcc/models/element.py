@@ -10,6 +10,7 @@ from wcc.models.common import (
     CollectionKind,
     Confidence,
     ControlType,
+    FormActionKind,
     LabelSource,
     WCCModel,
 )
@@ -24,6 +25,13 @@ class NormalizedElement(WCCModel):
     tokens, and file-input paths are never captured (specification 7.2), so the
     extractor leaves ``value`` as ``None`` for those controls rather than storing
     a redacted placeholder.
+
+    The ``form_*`` fields describe where a submit sends the page, not what it
+    sends. They exist because unique re-resolution is not semantic equivalence: a
+    submit replaced by a different-purpose button keeping the same id, accessible
+    name, and in-form structure still re-resolves to exactly one element, and only
+    the destination separates the two. ``form_action_route`` is already normalized
+    when it arrives, so no query value is ever held here.
     """
 
     element_id: str
@@ -42,6 +50,11 @@ class NormalizedElement(WCCModel):
     visible: bool = True
     bounding_box: BoundingBox | None = None
     form_id: str | None = None
+    form_method: str | None = None
+    form_action_route: str | None = None
+    form_action_kind: FormActionKind | None = None
+    submits_form: bool = False
+    is_pagination_control: bool = False
     locator_chain: LocatorChain
     confidence: Confidence = Confidence.LOW
 

@@ -355,7 +355,7 @@ class PlaywrightDriver:
             control_type = classify_control(record)
             if not is_eligible(record, control_type):
                 continue
-            element = normalize_element(record, new_id("el"))
+            element = normalize_element(record, new_id("el"), session.page.url)
             session.chains[element.element_id] = element.locator_chain
             elements.append(element)
         return elements

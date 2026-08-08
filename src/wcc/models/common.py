@@ -83,6 +83,20 @@ class ControlType(StrEnum):
 NEVER_CAPTURED = frozenset({ControlType.PASSWORD, ControlType.FILE, ControlType.HIDDEN})
 
 
+class FormActionKind(StrEnum):
+    """Where a form submits, expressed without the content of where.
+
+    ``page_signature`` needs to tell a search form from a delete form, and the two
+    differ in where they submit. It must not learn the search term, so only the
+    origin relationship is recorded here; the path arrives separately as a
+    normalized route pattern, which drops query values by construction.
+    """
+
+    SAME_ORIGIN = "same-origin"
+    CROSS_ORIGIN = "cross-origin"
+    UNKNOWN = "unknown"
+
+
 class CollectionKind(StrEnum):
     """Specification 8.4 repeated-structure categories."""
 
