@@ -25,9 +25,9 @@ from playwright.async_api import (
     Browser,
     BrowserContext,
     Download,
+    ElementHandle,
     FileChooser,
     Frame,
-    Locator,
     Page,
     Playwright,
     Request,
@@ -204,6 +204,14 @@ class _Session:
 
     document_token: str | None = None
     chains: dict[str, LocatorChain] = field(default_factory=dict)
+    handles: dict[str, ElementHandle] = field(default_factory=dict)
+    """Resolved elements, held by the driver and named by an opaque WCC ID.
+
+    The page never learns these IDs and never sees the elements being tracked, so
+    it cannot move a target between the moment it is resolved and the moment it is
+    acted on.
+    """
+
     current_document_id: str | None = None
     current_snapshot_id: str | None = None
 
@@ -274,6 +282,12 @@ class PlaywrightDriver:
 
             try:
                 await page.goto(request.url, timeout=self._limits.page_load_timeout_ms)
+                # The peer check runs on a response event, which means it can still
+                # be in flight here. Waiting for it before the session ID is handed
+                # back is what makes the boundary a boundary rather than a race:
+                # otherwise a caller could snapshot a page served from a refused
+                # address in the gap.
+                await self._settle_audits(session)
             except PlaywrightTimeoutError as exc:
                 raise DriverTimeoutError(
                     f"loading {request.url} exceeded {self._limits.page_load_timeout_ms} ms"
@@ -332,6 +346,19 @@ class PlaywrightDriver:
         task = asyncio.ensure_future(work)
         self._cleanups.add(task)
         task.add_done_callback(_finish)
+
+    async def _settle_audits(self, session: _Session) -> None:
+        """Wait for any peer audit this navigation started to reach a verdict.
+
+        Two yields before draining: Playwright dispatches the response event on this
+        loop, and the handler that spawns the audit has to run before there is
+        anything to drain.
+        """
+        for _ in range(2):
+            await asyncio.sleep(0)
+        await self.drain_cleanups()
+        if session.failure is not None:
+            raise NavigationBlockedError(session.failure)
 
     async def drain_cleanups(self) -> None:
         """Wait for every scheduled refusal to finish."""
@@ -653,7 +680,7 @@ class PlaywrightDriver:
         session = self._session(session_id)
         attempts: list[str] = []
         for candidate in chain.ordered():
-            outcome = await session.page.evaluate(
+            outcome = await session.page.evaluate_handle(
                 RESOLVE_CANDIDATE,
                 {
                     "kind": int(candidate.kind),
@@ -662,14 +689,28 @@ class PlaywrightDriver:
                     "form_id": candidate.form_id,
                 },
             )
-            count = outcome.get("count") if isinstance(outcome, dict) else None
-            if isinstance(outcome, dict) and outcome.get("handle"):
-                return str(outcome["handle"])
+            try:
+                count = await (await outcome.get_property("count")).json_value()
+                element = (await outcome.get_property("node")).as_element()
+            finally:
+                await outcome.dispose()
+
+            if element is not None:
+                handle_id = new_id("res")
+                session.handles[handle_id] = element
+                return handle_id
             attempts.append(f"{candidate.kind.name.lower()}={count}")
 
         raise ElementNotResolvedError(
             f"{described_as} is stale: no candidate matched exactly once ({', '.join(attempts)})"
         )
+
+    def _handle(self, session: _Session, handle_id: str) -> ElementHandle:
+        """Return the element a resolution produced, or say it is gone."""
+        element = session.handles.get(handle_id)
+        if element is None:
+            raise ElementNotResolvedError(f"{handle_id} is not a resolution this session produced")
+        return element
 
     async def execute_action(
         self,
@@ -684,15 +725,15 @@ class PlaywrightDriver:
         """
         session = self._session(session_id)
         before = session.current_document_id
-        marker = await self.resolve(session_id, action.element_id)
-        locator = session.page.locator(f"[data-wcc-resolved='{marker}']")
+        handle_id = await self.resolve(session_id, action.element_id)
+        element = self._handle(session, handle_id)
         timeout = self._limits.execution_timeout_ms
 
         succeeded = True
         error_code: str | None = None
         error_message: str | None = None
         try:
-            await self._perform(locator, action, timeout)
+            await self._perform(element, action, timeout)
         except PlaywrightTimeoutError as exc:
             succeeded, error_code, error_message = False, "driver_timeout", str(exc)
         except PlaywrightError as exc:
@@ -712,20 +753,25 @@ class PlaywrightDriver:
             error_message=error_message,
         )
 
-    async def _perform(self, locator: Locator, action: PlannedAction, timeout: int) -> None:
-        """Map one allowlisted action onto Playwright (specification 10.4)."""
+    async def _perform(self, element: ElementHandle, action: PlannedAction, timeout: int) -> None:
+        """Map one allowlisted action onto Playwright (specification 10.4).
+
+        Acts on the handle the resolution produced rather than on a selector
+        re-queried at action time. Re-querying is what let the page substitute the
+        target; a handle points at the element that was actually checked.
+        """
         if action.action is ActionType.FOCUS:
-            await locator.focus(timeout=timeout)
+            await element.focus()
         elif action.action is ActionType.SCROLL_INTO_VIEW:
-            await locator.scroll_into_view_if_needed(timeout=timeout)
+            await element.scroll_into_view_if_needed(timeout=timeout)
         elif action.action is ActionType.SET_VALUE:
-            await locator.fill(action.value or "", timeout=timeout)
+            await element.fill(action.value or "", timeout=timeout)
         elif action.action is ActionType.SELECT_OPTION:
-            await locator.select_option(action.option, timeout=timeout)
+            await element.select_option(action.option, timeout=timeout)
         elif action.action is ActionType.SET_CHECKED:
-            await locator.set_checked(bool(action.checked), timeout=timeout)
+            await element.set_checked(bool(action.checked), timeout=timeout)
         elif action.action is ActionType.ACTIVATE:
-            await locator.click(timeout=timeout)
+            await element.click(timeout=timeout)
         else:  # pragma: no cover - ActionType is closed and fully covered above
             raise DriverNotReadyError(f"{action.action} has no driver implementation")
 
@@ -748,14 +794,31 @@ class PlaywrightDriver:
         """
         if session.failure is not None:
             return
+        if urlsplit(response.url).scheme.lower() not in _NETWORK_SCHEMES:
+            # Not a network response, so there is no peer to check. The
+            # frame-commit check is what covers documents that arrive this way.
+            return
+
         try:
             peer = await response.server_addr()
-        except PlaywrightError:
+        except PlaywrightError as exc:
+            self._fail_session(
+                session,
+                f"the address {response.url} was served from could not be checked: {exc}",
+                kind="navigation",
+            )
             return
-        if not peer:
-            return
-        address = peer.get("ipAddress")
+
+        address = (peer or {}).get("ipAddress")
         if not address:
+            # Fail closed. Specification 10.2 is a boundary, and "we could not tell"
+            # is not permission to proceed — an unverifiable peer is exactly the
+            # shape a rebinding answer would take if the check could be dodged.
+            self._fail_session(
+                session,
+                f"{response.url} was served from an address that could not be determined",
+                kind="navigation",
+            )
             return
 
         # A bare address is checked as itself: passing it back through the guard as

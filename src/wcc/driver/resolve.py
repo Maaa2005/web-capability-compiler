@@ -112,12 +112,16 @@ RESOLVE_CANDIDATE = r"""
   }
 
   matches = matches.filter(visible);
-  if (matches.length !== 1) return {count: matches.length, handle: null};
+  if (matches.length !== 1) return {count: matches.length, node: null};
 
-  // The winner is tagged so the caller can act on it without a selector ever
-  // leaving this function.
-  const marker = 'wcc-resolved-' + Math.random().toString(36).slice(2);
-  matches[0].setAttribute('data-wcc-resolved', marker);
-  return {count: 1, handle: marker};
+  // The element itself is returned, not a name for it. An earlier version tagged
+  // the winner with a `data-wcc-resolved` attribute and acted on that attribute
+  // later, which handed the page a way to move the target: the attribute is
+  // visible to page scripts and can be removed and re-applied to a different
+  // element between resolution and action. Specification 10.3 treats the page as
+  // untrusted, so the handle to act on must be one the page cannot reach or
+  // rewrite — and it must leave no trace in the DOM for page logic, CSS, or the
+  // mutation counter to notice.
+  return {count: 1, node: matches[0]};
 }
 """

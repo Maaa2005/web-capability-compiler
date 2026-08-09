@@ -417,10 +417,9 @@ async def test_an_ambiguous_candidate_is_skipped_rather_than_guessed(
     elements = await driver.extract_elements(session_id)
     left = next(e for e in elements if e.locator_chain.primary.key == "left-city")
 
-    marker = await driver.resolve(session_id, left.element_id)
-    page = driver._session(session_id).page  # noqa: SLF001
-    resolved_id = await page.get_attribute(f"[data-wcc-resolved='{marker}']", "id")
-    assert resolved_id == "left-city"
+    handle_id = await driver.resolve(session_id, left.element_id)
+    element = driver._session(session_id).handles[handle_id]  # noqa: SLF001
+    assert await element.get_attribute("id") == "left-city"
 
 
 async def test_an_unknown_element_is_reported_as_unresolvable(
@@ -835,8 +834,9 @@ async def test_a_response_from_a_refused_address_fails_the_session_closed(
     rebinding answer. Re-resolving would not catch it — the policy would keep
     getting the same admissible answer. Only the connected peer settles it.
 
-    The breach is caught on the very first response, so ``open_session`` refuses
-    rather than handing back a session that already reached a forbidden address.
+    The breach is caught on the very first response, and ``open_session`` waits for
+    that verdict before returning. Without the wait it was a race: whether the
+    caller got a refusal or a usable session depended on which finished first.
     """
 
     class RebindingGuard:
@@ -909,3 +909,54 @@ async def test_the_mutation_counter_cannot_be_redefined(
     assert isinstance(before, int) and isinstance(after, int)
     assert after > before
     assert after != 999999
+
+
+async def test_resolving_leaves_no_trace_the_page_can_see(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """The counter-review's finding: a marker attribute is a handle the page owns.
+
+    Tagging the winner with ``data-wcc-resolved`` and acting on that attribute later
+    let the page move the target — page scripts can read the attribute, remove it,
+    and put it on a different element in the gap between resolution and action.
+    Specification 10.3 treats the page as untrusted, so nothing about a resolution
+    may be visible to it.
+    """
+    session_id = await _open(driver, f"{fixture_server}/search-page/")
+    elements = await driver.extract_elements(session_id)
+    keyword = next(e for e in elements if e.locator_chain.primary.key == "keyword")
+
+    await driver.resolve(session_id, keyword.element_id)
+
+    page = driver._session(session_id).page  # noqa: SLF001
+    assert await page.evaluate("() => document.querySelectorAll('[data-wcc-resolved]').length") == 0
+    assert "wcc-resolved" not in await page.content()
+
+
+async def test_the_page_cannot_substitute_the_target_after_resolution(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """A handle points at the element that was checked, not at whatever matches later."""
+    session_id = await _open(driver, f"{fixture_server}/search-page/")
+    elements = await driver.extract_elements(session_id)
+    keyword = next(e for e in elements if e.locator_chain.primary.key == "keyword")
+    page = driver._session(session_id).page  # noqa: SLF001
+
+    handle_id = await driver.resolve(session_id, keyword.element_id)
+
+    # The page does everything it can to redirect whatever comes next.
+    await page.evaluate(
+        """() => {
+            const decoy = document.createElement('input');
+            decoy.id = 'decoy';
+            document.body.append(decoy);
+            document.getElementById('keyword').id = 'keyword-moved';
+            decoy.setAttribute('id', 'keyword');
+        }"""
+    )
+
+    element = driver._session(session_id).handles[handle_id]  # noqa: SLF001
+    await element.fill("earbuds")
+
+    assert await page.evaluate("() => document.getElementById('keyword-moved').value") == "earbuds"
+    assert await page.evaluate("() => document.getElementById('keyword').value") == ""
