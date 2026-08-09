@@ -1,0 +1,358 @@
+"""Reading and writing the models (specification 17).
+
+Every write goes through the same three steps, in this order: validate the model,
+check it carries nothing that may never be persisted, then write the searchable
+columns and the payload together in one statement. Every read validates again on
+the way out, and checks that the columns and the payload still agree.
+
+Reading is where that last check earns its place. A row whose ``page_signature``
+column says one thing while its payload says another has been edited by something
+that was not this code, and a template looked up by a column value but *executed*
+from its payload would then bind against the wrong page class. Cheap to check,
+impossible to notice otherwise.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import sqlite3
+from collections.abc import Sequence
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+from pydantic import ValidationError
+
+from wcc.models.capability import BindingStatus, BoundCapability, CapabilityTemplate
+from wcc.models.common import SCHEMA_VERSION, WCCModel
+from wcc.models.ir import PageIR
+from wcc.models.session import PageSnapshot, SessionInfo
+from wcc.store.database import SchemaVersionError, connect, migrate, transaction
+from wcc.store.guard import assert_no_sensitive_values
+from wcc.store.paths import database_path
+
+
+class StoreError(Exception):
+    """A payload could not be stored or read back as the model it claims to be."""
+
+
+def content_hash(template: CapabilityTemplate) -> str:
+    """Identify a template by what it does, not by when it was made.
+
+    Excludes the ID, the timestamps, and the usage counters, so recompiling an
+    unchanged page produces the same hash and reuses the existing row instead of
+    adding a near-duplicate that lookup would then have to tiebreak between.
+    """
+    payload = template.model_dump(
+        mode="json",
+        exclude={"template_id", "created_at", "provenance"},
+    )
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _dump(model: WCCModel, described_as: str) -> tuple[str, dict[str, Any]]:
+    payload = model.model_dump(mode="json")
+    assert_no_sensitive_values(payload, described_as=described_as)
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":")), payload
+
+
+def _load[ModelT: WCCModel](
+    model_type: type[ModelT], row: sqlite3.Row, *, columns: Sequence[str]
+) -> ModelT:
+    """Rebuild a model, refusing a payload that disagrees with its own columns."""
+    stored_version = row["schema_version"]
+    if stored_version != SCHEMA_VERSION:
+        raise SchemaVersionError(
+            f"a stored {model_type.__name__} is schema {stored_version} and this build "
+            f"reads {SCHEMA_VERSION}; no migration is defined, so it will not be read "
+            f"rather than read with the wrong meaning"
+        )
+    try:
+        payload = json.loads(row["payload_json"])
+    except json.JSONDecodeError as exc:
+        raise StoreError(f"a stored {model_type.__name__} is not valid JSON: {exc}") from exc
+
+    try:
+        model = model_type.model_validate(payload)
+    except ValidationError as exc:
+        raise StoreError(
+            f"a stored {model_type.__name__} does not match the current model: {exc}"
+        ) from exc
+
+    for column in columns:
+        if payload.get(column) != row[column]:
+            raise StoreError(
+                f"a stored {model_type.__name__} disagrees with its own index: column "
+                f"{column}={row[column]!r} but payload {column}={payload.get(column)!r}"
+            )
+    return model
+
+
+class Store:
+    """The SQLite persistence layer of specification 17."""
+
+    def __init__(self, path: Path | None = None) -> None:
+        self._path = path or database_path()
+        self._connection = connect(self._path)
+        migrate(self._connection)
+
+    @property
+    def path(self) -> Path:
+        return self._path
+
+    def close(self) -> None:
+        self._connection.close()
+
+    def __enter__(self) -> Store:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
+
+    # -- sessions and observations ----------------------------------------
+
+    def save_session(self, session: SessionInfo) -> None:
+        payload_json, _ = _dump(session, "a session")
+        self._connection.execute(
+            "INSERT OR REPLACE INTO sessions "
+            "(session_id, initial_url, created_at, status, schema_version, payload_json) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                session.session_id,
+                session.initial_url,
+                session.created_at.isoformat(),
+                str(session.status),
+                SCHEMA_VERSION,
+                payload_json,
+            ),
+        )
+
+    def save_snapshot(self, snapshot: PageSnapshot) -> None:
+        payload_json, _ = _dump(snapshot, f"snapshot {snapshot.snapshot_id}")
+        with transaction(self._connection):
+            self._connection.execute(
+                "INSERT OR IGNORE INTO documents "
+                "(document_id, session_id, origin, normalized_route_pattern, first_seen_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    snapshot.document_id,
+                    snapshot.session_id,
+                    snapshot.origin,
+                    snapshot.normalized_route_pattern,
+                    snapshot.captured_at.isoformat(),
+                ),
+            )
+            self._connection.execute(
+                "INSERT OR REPLACE INTO page_snapshots "
+                "(snapshot_id, session_id, document_id, origin, normalized_route_pattern, "
+                " page_signature, structural_hash, captured_at, schema_version, payload_json) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    snapshot.snapshot_id,
+                    snapshot.session_id,
+                    snapshot.document_id,
+                    snapshot.origin,
+                    snapshot.normalized_route_pattern,
+                    snapshot.page_signature,
+                    snapshot.structural_hash,
+                    snapshot.captured_at.isoformat(),
+                    SCHEMA_VERSION,
+                    payload_json,
+                ),
+            )
+
+    def load_snapshot(self, snapshot_id: str) -> PageSnapshot | None:
+        row = self._connection.execute(
+            "SELECT * FROM page_snapshots WHERE snapshot_id = ?", (snapshot_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        return _load(PageSnapshot, row, columns=("page_signature", "structural_hash", "origin"))
+
+    def save_ir(self, ir: PageIR) -> None:
+        payload_json, _ = _dump(ir, f"IR {ir.ir_id}")
+        self._connection.execute(
+            "INSERT OR REPLACE INTO page_irs "
+            "(ir_id, session_id, snapshot_id, origin, normalized_route_pattern, "
+            " page_signature, built_at, schema_version, payload_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                ir.ir_id,
+                ir.session_id,
+                ir.snapshot_id,
+                ir.origin,
+                ir.normalized_route_pattern,
+                ir.page_signature,
+                ir.built_at.isoformat(),
+                SCHEMA_VERSION,
+                payload_json,
+            ),
+        )
+
+    def load_ir(self, ir_id: str) -> PageIR | None:
+        row = self._connection.execute(
+            "SELECT * FROM page_irs WHERE ir_id = ?", (ir_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        return _load(PageIR, row, columns=("page_signature", "origin"))
+
+    # -- templates ---------------------------------------------------------
+
+    def save_template(self, template: CapabilityTemplate) -> CapabilityTemplate:
+        """Store a template, or return the equivalent one already stored.
+
+        Recompiling a page that has not changed produces an identical template with
+        a new ID. Storing both would leave lookup choosing between duplicates and
+        would split the usage statistics that specification 17 keeps, so the
+        existing row wins and its history stays whole.
+        """
+        payload_json, _ = _dump(template, f"template {template.name}")
+        digest = content_hash(template)
+
+        existing = self._connection.execute(
+            "SELECT * FROM capability_templates WHERE origin = ? AND "
+            "normalized_route_pattern = ? AND page_signature = ? AND content_hash = ?",
+            (
+                template.origin,
+                template.normalized_route_pattern,
+                template.page_signature,
+                digest,
+            ),
+        ).fetchone()
+        if existing is not None:
+            return _load(
+                CapabilityTemplate,
+                existing,
+                columns=("origin", "normalized_route_pattern", "page_signature", "name"),
+            )
+
+        self._connection.execute(
+            "INSERT INTO capability_templates "
+            "(template_id, origin, normalized_route_pattern, page_signature, name, category, "
+            " provenance, content_hash, schema_version, created_at, payload_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                template.template_id,
+                template.origin,
+                template.normalized_route_pattern,
+                template.page_signature,
+                template.name,
+                str(template.category),
+                template.provenance,
+                digest,
+                SCHEMA_VERSION,
+                template.created_at.isoformat(),
+                payload_json,
+            ),
+        )
+        return template
+
+    def find_templates(
+        self, origin: str, normalized_route_pattern: str
+    ) -> list[CapabilityTemplate]:
+        """Every candidate for this page class (specification 7.10 step 1).
+
+        Ordering is the binder's job, not SQL's: specification 7.10 step 2 states
+        the preference, and leaving it here would put half the rule in a query
+        string where no test would look for it.
+        """
+        rows = self._connection.execute(
+            "SELECT * FROM capability_templates WHERE origin = ? AND normalized_route_pattern = ?",
+            (origin, normalized_route_pattern),
+        ).fetchall()
+        return [
+            _load(
+                CapabilityTemplate,
+                row,
+                columns=("origin", "normalized_route_pattern", "page_signature", "name"),
+            )
+            for row in rows
+        ]
+
+    def record_bind_outcome(self, template_id: str, *, succeeded: bool) -> None:
+        """Update the usage statistics specification 17 requires.
+
+        Incremented in SQL rather than read-modify-written in Python: two sessions
+        binding the same template at once would otherwise both read the old count
+        and write the same new one, losing an outcome.
+        """
+        now = datetime.now(UTC).isoformat()
+        if succeeded:
+            self._connection.execute(
+                "UPDATE capability_templates SET success_count = success_count + 1, "
+                "last_successful_bind_at = ? WHERE template_id = ?",
+                (now, template_id),
+            )
+        else:
+            self._connection.execute(
+                "UPDATE capability_templates SET failure_count = failure_count + 1 "
+                "WHERE template_id = ?",
+                (template_id,),
+            )
+
+    def usage_of(self, template_id: str) -> sqlite3.Row | None:
+        return self._connection.execute(
+            "SELECT success_count, failure_count, last_successful_bind_at, "
+            "last_successful_use_at FROM capability_templates WHERE template_id = ?",
+            (template_id,),
+        ).fetchone()
+
+    # -- bindings ----------------------------------------------------------
+
+    def save_binding(self, binding: BoundCapability) -> None:
+        payload_json, _ = _dump(binding, f"binding {binding.capability_id}")
+        self._connection.execute(
+            "INSERT OR REPLACE INTO bound_capabilities "
+            "(capability_id, template_id, session_id, document_id, bound_snapshot_id, "
+            " status, bound_at, schema_version, payload_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                binding.capability_id,
+                binding.template_id,
+                binding.session_id,
+                binding.document_id,
+                binding.bound_snapshot_id,
+                str(binding.status),
+                binding.bound_at.isoformat(),
+                SCHEMA_VERSION,
+                payload_json,
+            ),
+        )
+
+    def load_binding(self, capability_id: str) -> BoundCapability | None:
+        """Return the *record* of a binding, which is never itself permission.
+
+        Whether this may be executed is a question about a live session, and
+        :class:`~wcc.binding.registry.SessionRegistry` is the only thing that can
+        answer it. The status is left exactly as stored so the registry, not this
+        method, decides.
+        """
+        row = self._connection.execute(
+            "SELECT * FROM bound_capabilities WHERE capability_id = ?", (capability_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        return _load(BoundCapability, row, columns=("template_id", "session_id", "document_id"))
+
+    def expire_bindings_from_previous_runs(self) -> int:
+        """Mark every binding left active by a dead process as stale.
+
+        A binding names a browser session, and no browser session survives the
+        process that opened it. Anything still marked active at startup was
+        interrupted, and leaving it that way would let a restarted server hand back
+        a binding whose page closed hours ago.
+        """
+        with transaction(self._connection):
+            cursor = self._connection.execute(
+                "UPDATE bound_capabilities SET status = ?, "
+                "payload_json = json_set(payload_json, '$.status', ?) WHERE status = ?",
+                (
+                    str(BindingStatus.STALE),
+                    str(BindingStatus.STALE),
+                    str(BindingStatus.ACTIVE),
+                ),
+            )
+            return cursor.rowcount

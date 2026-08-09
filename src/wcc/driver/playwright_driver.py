@@ -596,7 +596,7 @@ class PlaywrightDriver:
         return trimmed, warnings
 
     async def resolve(self, session_id: str, element_id: str) -> str:
-        """Re-resolve an element, returning an in-page marker for the single match.
+        """Re-resolve an element this session observed, by its ID.
 
         Specification 7.7: candidates are tried in priority order, and only an
         exactly-one match counts. Both zero matches and an ambiguous match move on
@@ -609,7 +609,20 @@ class PlaywrightDriver:
             raise ElementNotResolvedError(
                 f"{element_id} was not produced by an observation of this session"
             )
+        return await self.resolve_chain(session_id, chain, described_as=element_id)
 
+    async def resolve_chain(
+        self, session_id: str, chain: LocatorChain, *, described_as: str = "the target"
+    ) -> str:
+        """Re-resolve from a locator chain that no session has to have observed.
+
+        This is what lets a template saved yesterday bind today. A template holds
+        chains, never element IDs — specification 7.8 forbids it to hold a live
+        handle — so binding cannot go through :meth:`resolve`, whose whole input is
+        an ID minted by one session's observation. The re-resolution rule is
+        identical either way; only where the chain comes from differs.
+        """
+        session = self._session(session_id)
         attempts: list[str] = []
         for candidate in chain.ordered():
             outcome = await session.page.evaluate(
@@ -627,7 +640,7 @@ class PlaywrightDriver:
             attempts.append(f"{candidate.kind.name.lower()}={count}")
 
         raise ElementNotResolvedError(
-            f"{element_id} is stale: no candidate matched exactly once ({', '.join(attempts)})"
+            f"{described_as} is stale: no candidate matched exactly once ({', '.join(attempts)})"
         )
 
     async def execute_action(

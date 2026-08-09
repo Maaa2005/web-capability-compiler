@@ -1,10 +1,21 @@
 """Public WCC models.
 
-Phase 0 defines the models the driver interface needs (specification 13, Phase 0).
-Agent Page IR, capability templates, and bound capabilities arrive in Phase 2.
+Phase 0 defined the models the driver interface needs; Phase 2 adds the Agent Page
+IR, capability templates, and bound capabilities.
 """
 
 from wcc.models.action import ActionObservation, NavigationEvent, PlannedAction
+from wcc.models.capability import (
+    BindingStatus,
+    BoundCapability,
+    CapabilityCategory,
+    CapabilityTemplate,
+    ExpectedEffect,
+    PlanStep,
+    Risk,
+    RiskLevel,
+    SideEffect,
+)
 from wcc.models.common import (
     SCHEMA_VERSION,
     ActionType,
@@ -17,6 +28,7 @@ from wcc.models.common import (
     WCCModel,
 )
 from wcc.models.element import CollectionRecord, CollectionSnapshot, NormalizedElement
+from wcc.models.ir import Entity, Evidence, IRWarning, PageIR
 from wcc.models.locator import LocatorCandidate, LocatorChain, LocatorKind
 from wcc.models.session import (
     OpenSessionRequest,
@@ -26,15 +38,22 @@ from wcc.models.session import (
 )
 
 __all__ = [
-    "SCHEMA_VERSION",
     "ActionObservation",
     "ActionType",
+    "BindingStatus",
+    "BoundCapability",
     "BoundingBox",
+    "CapabilityCategory",
+    "CapabilityTemplate",
     "CollectionKind",
     "CollectionRecord",
     "CollectionSnapshot",
     "Confidence",
     "ControlType",
+    "Entity",
+    "Evidence",
+    "ExpectedEffect",
+    "IRWarning",
     "LabelSource",
     "LocatorCandidate",
     "LocatorChain",
@@ -42,10 +61,16 @@ __all__ = [
     "NavigationEvent",
     "NormalizedElement",
     "OpenSessionRequest",
+    "PageIR",
     "PageSnapshot",
+    "PlanStep",
     "PlannedAction",
+    "Risk",
+    "RiskLevel",
+    "SCHEMA_VERSION",
     "SessionInfo",
     "SessionStatus",
+    "SideEffect",
     "StructuredDataBlock",
     "WCCModel",
 ]

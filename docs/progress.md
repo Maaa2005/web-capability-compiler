@@ -615,3 +615,93 @@ on 2026-08-02, written to a scratchpad file, and never read — the session ende
 first and the temporary directory was cleared on 2026-08-07. The T1–T3 review was
 processed in full and is recorded above; this one was not. Re-running it before
 Phase 2 persists anything is the cheaper order.
+
+---
+
+## Phase 2: Agent Page IR, templates, binding, and persistence — complete (2026-08-09)
+
+Deliberated with GPT-5.6 Sol over two rounds before any code was written. Two of
+the opening proposals were wrong, and both were worth catching first.
+
+**Specification 17 was under-read.** It requires templates to persist their last
+successful bind and use, and their success and failure counts. The first schema
+had none of them. They are columns rather than payload fields because they are
+updated on their own, and rewriting a whole template document to increment a
+counter makes every successful bind a chance to corrupt the template.
+
+**Re-binding could not have worked as designed.** `resolve(session_id, element_id)`
+resolves only elements the same session observed, and a saved template holds
+locator chains, never element IDs — specification 7.8 forbids it to hold a live
+handle. The driver gained `resolve_chain`, which runs the identical specification
+7.7 rule against a chain from anywhere. Without it, the central Phase 2 acceptance
+criterion was unreachable.
+
+### What was built
+
+**Models.** `PageIR` is the reading of a snapshot, kept separate from the snapshot
+because an observation is a fact and an interpretation can be wrong. `Evidence`
+refuses to be constructed pointing at nothing — evidence supporting nothing would
+satisfy an "every entity has evidence" check while supporting nothing.
+`CapabilityTemplate` enforces that its plan and its locators name the same targets
+in both directions: a step without a locator cannot run, and an unused locator is
+a step that went missing.
+
+**Persistence** is hybrid: SQL holds what is searched, owned, counted, or related;
+one JSON column holds the model. Full normalisation would state every model shape
+twice, and Phases 3–5 still move those shapes. Both directions are validated, and
+a read also checks the columns against the payload — a row looked up by column but
+executed from payload could otherwise bind against the wrong page class.
+
+`wcc/limits.py` set the precedent and `wcc/store/` follows it: the data directory
+comes from the OS, never from the working directory, because the MCP server is
+launched from wherever its client happens to be and `clear-data` must find every
+database. `WCC_DATA_DIR` overrides it, absolute paths only, and a relative or blank
+value is refused rather than repaired.
+
+Database revision (`user_version`) and model `schema_version` are versioned
+separately: one moves when the DDL moves, the other when a portable model changes,
+and a single number would tie an index change to exported templates. An unknown
+version is refused, never read best-effort — a locator or risk field read with the
+wrong meaning is worse than a refusal with a message.
+
+**A third barrier before the disk.** The page script never reads a password and
+`NormalizedElement` never holds one; both guard the extraction path, while
+persistence writes whole documents. The check is structural — "a control whose type
+may never carry a value, carrying one" — because looking for a sentinel only finds
+the value a test planted.
+
+**Binding** resolves every target into a local dictionary before constructing
+anything. Specification 7.10 step 6 is not a rule a caller can be trusted to keep:
+the natural loop has already recorded two targets by the time the third fails.
+Candidates are ordered totally — exact signature, then newest, then ID — so binding
+never depends on the order SQLite returned rows in, and trying the next candidate
+after one fails is not a partial bind but a second all-or-nothing attempt.
+
+A binding is usable only while its session lives. That is a question about live
+state, not about where the record came from, so `SessionRegistry` answers it and a
+row read back from SQLite is a record of a binding that happened.
+
+Risk is re-checked at bind time through an injected classifier. The rules are Phase
+3; the refusal path is built and tested now.
+
+### Two determinism bugs the acceptance test found
+
+Both were random per-observation IDs leaking into content. The IR builder wrote
+`record_id` into evidence detail, and the canonical projection renamed element IDs
+but not collection IDs. Two readings of one unchanged page therefore disagreed. The
+first now uses the record's deterministic identity; the second renames both.
+
+Renaming rather than dropping is the point. Dropping IDs would hide evidence that
+had come unhooked from its entity, since the projection would match a correct
+reading exactly.
+
+### Acceptance
+
+All six criteria, with the central one driven through a real browser: a template
+compiled in one session, written to SQLite, and bound in a *different* session
+against a different search term. 319 tests green, ruff and pyright clean.
+
+Carried forward: the Codex counter-review of the Phase 1 code is still unrun. It
+was launched in the background here and stalled with no output — `codex exec` waits
+on stdin when detached, and neither `timeout` nor `gtimeout` exists on this machine,
+so the script's own limit never fired. It needs a foreground run.
