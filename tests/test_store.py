@@ -12,6 +12,8 @@ import pytest
 
 from factories import a_binding, a_session, a_snapshot, a_template, an_ir
 from wcc.models.capability import BindingStatus
+from wcc.models.common import SessionStatus
+from wcc.models.ir import Evidence
 from wcc.store import (
     DATA_DIR_ENV,
     SCHEMA_REVISION,
@@ -282,3 +284,69 @@ def test_an_ir_round_trips(store: Store) -> None:
     loaded = store.load_ir(ir.ir_id)
     assert loaded is not None
     assert loaded.entities == ir.entities
+
+
+# -- what the counter-review found ---------------------------------------------
+
+
+def test_re_saving_a_session_does_not_delete_its_history(store: Store) -> None:
+    """``INSERT OR REPLACE`` deletes before it inserts, and cascades follow.
+
+    Updating a session's status used to remove every document, snapshot, IR, and
+    binding that referenced it. Nothing reported an error; the data was simply gone.
+    """
+    snapshot = a_snapshot()
+    store.save_session(a_session(snapshot.session_id))
+    store.save_snapshot(snapshot)
+    template = store.save_template(a_template())
+    store.save_binding(a_binding(template_id=template.template_id))
+
+    store.save_session(a_session(snapshot.session_id, status=SessionStatus.CLOSED))
+
+    assert store.load_snapshot(snapshot.snapshot_id) is not None
+    assert store.load_binding("cap_1") is not None
+
+
+def test_re_saving_a_snapshot_does_not_delete_the_ir_built_from_it(store: Store) -> None:
+    snapshot = a_snapshot()
+    store.save_session(a_session(snapshot.session_id))
+    store.save_snapshot(snapshot)
+    ir = an_ir(snapshot)
+    store.save_ir(ir)
+
+    store.save_snapshot(snapshot)
+
+    assert store.load_ir(ir.ir_id) is not None
+
+
+def test_re_inspecting_the_same_page_reuses_the_template(store: Store) -> None:
+    """The deduplication that never fired.
+
+    Every inspection mints new snapshot and element IDs, so evidence differs even
+    when the capability does not. Hashing the evidence meant a new row every time.
+    """
+    monday = store.save_template(
+        a_template(
+            template_id="tmpl_monday",
+            evidence=[Evidence(kind="dom", element_id="el_aaa", snapshot_id="snap_1")],
+        )
+    )
+    tuesday = store.save_template(
+        a_template(
+            template_id="tmpl_tuesday",
+            evidence=[Evidence(kind="dom", element_id="el_bbb", snapshot_id="snap_2")],
+        )
+    )
+
+    assert tuesday.template_id == monday.template_id
+    assert len(store.find_templates(monday.origin, monday.normalized_route_pattern)) == 1
+
+
+def test_an_imported_template_is_never_absorbed_into_a_compiled_one(store: Store) -> None:
+    """Specification 17 keeps imported provenance; collapsing them would erase it."""
+    compiled = store.save_template(a_template(template_id="tmpl_mine"))
+    imported = store.save_template(a_template(template_id="tmpl_theirs", provenance="imported"))
+
+    assert imported.template_id != compiled.template_id
+    stored = store.find_templates(compiled.origin, compiled.normalized_route_pattern)
+    assert {t.provenance for t in stored} == {"compiled", "imported"}

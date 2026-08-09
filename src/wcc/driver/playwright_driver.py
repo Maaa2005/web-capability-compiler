@@ -109,22 +109,32 @@ _DOCUMENT_TOKEN_SCRIPT = f"""
 
 # The DOM half of the settle definition. Network quiet alone calls a page settled
 # while a framework is still rendering the response it already received, so the
-# page reports when it last changed and the driver waits for that to go quiet too.
-# The clock is a plain property rather than a frozen one: it must stay writable to
-# be a clock, and a page that lies about it can only make itself look busy — the
-# settle timeout bounds that, and nothing downstream trusts the value for anything
-# but waiting.
+# page also has to stop changing.
+#
+# What the page exposes is a *count*, not a timestamp, and the count is behind a
+# non-configurable getter over a closure variable. Both choices are about the same
+# threat. An earlier version stored a timestamp in a writable property and argued
+# that a lying page could only make itself look busy; that was wrong in the one
+# direction that matters. Setting the clock to zero made "time since last change"
+# enormous, so a page mutating continuously reported itself instantly quiet.
+#
+# A count cannot be moved backwards into looking quiet: quiet is *no change*, and
+# any write the page makes is a change. The getter closes the other route — a page
+# cannot redefine the property to freeze what the driver reads, the same protection
+# specification 10.3 already asks for around the document token.
 _MUTATION_CLOCK_SCRIPT = f"""
 (() => {{
-  window[{_MUTATION_CLOCK!r}] = Date.now();
-  const bump = () => {{ window[{_MUTATION_CLOCK!r}] = Date.now(); }};
+  let mutations = 0;
+  Object.defineProperty(window, {_MUTATION_CLOCK!r}, {{
+    get: () => mutations,
+    configurable: false,
+    enumerable: false,
+  }});
   const start = () => {{
-    new MutationObserver(bump).observe(document.documentElement, {{
-      subtree: true,
-      childList: true,
-      attributes: true,
-      characterData: true,
-    }});
+    new MutationObserver((records) => {{ mutations += records.length; }}).observe(
+      document.documentElement,
+      {{subtree: true, childList: true, attributes: true, characterData: true}},
+    );
   }};
   if (document.documentElement) {{
     start();
@@ -142,7 +152,7 @@ _MUTATION_CLOCK_SCRIPT = f"""
 #: Read together so the two halves of the answer describe the same instant.
 _SETTLE_PROBE = f"""
 () => ({{
-  quietFor: Date.now() - (window[{_MUTATION_CLOCK!r}] || 0),
+  mutations: window[{_MUTATION_CLOCK!r}],
   ready: document.readyState,
 }})
 """
@@ -361,41 +371,59 @@ class PlaywrightDriver:
         """
         session = self._session(session_id)
         budget = min(timeout_ms, self._limits.settle_timeout_ms)
-        quiet_period = self._limits.settle_quiet_period_ms
+        quiet_period = self._limits.settle_quiet_period_ms / 1000
         loop = asyncio.get_running_loop()
         deadline = loop.time() + budget / 1000
 
+        # How long the page has been quiet is measured here rather than in the
+        # page, because the page is the thing being measured. The driver keeps the
+        # count it last saw and the moment it last changed; nothing the page can do
+        # to its own state shortens that interval.
+        seen: int | None = None
+        changed_at = loop.time()
+
         while True:
-            remaining = deadline - loop.time()
+            now = loop.time()
+            remaining = deadline - now
             if remaining <= 0:
                 raise DriverTimeoutError(f"page did not settle within {budget} ms")
+
             if session.in_flight == 0:
                 probe = await self._probe_settle(session)
-                if (
-                    probe is not None
-                    and probe["ready"] == "complete"
-                    and probe["quiet_for"] >= quiet_period
-                    # Re-read: evaluating the probe took time, and a request that
-                    # started during it means the quiet reading is already stale.
-                    and session.in_flight == 0
-                ):
-                    return
+                if probe is None:
+                    # Unreadable: mid-navigation, or a page that broke the property.
+                    # Either way this is not a settled page, and the deadline still
+                    # bounds the wait.
+                    seen, changed_at = None, loop.time()
+                else:
+                    if probe["mutations"] != seen:
+                        seen, changed_at = probe["mutations"], loop.time()
+                    if (
+                        probe["ready"] == "complete"
+                        and loop.time() - changed_at >= quiet_period
+                        # Re-read: evaluating the probe took time, and a request
+                        # that started during it makes the reading already stale.
+                        and session.in_flight == 0
+                    ):
+                        return
             await asyncio.sleep(min(_SETTLE_POLL_MS / 1000, remaining))
 
     async def _probe_settle(self, session: _Session) -> dict[str, Any] | None:
-        """Ask the page how long it has been quiet, or ``None`` if it cannot answer.
+        """Read the mutation count, or ``None`` if the page cannot answer for it.
 
-        A page mid-navigation destroys the execution context under the evaluate.
-        That is not a failure to settle, it is a page that has not started; the
-        caller keeps waiting and the deadline still applies.
+        ``None`` covers two cases that both mean "not settled": a page mid-navigation
+        whose execution context went away under the evaluate, and a count that is not
+        a number, which means the property this depends on is not the one the init
+        script installed. Neither is treated as quiet — an unreadable page is exactly
+        where a settled verdict would be least defensible.
         """
         try:
             raw = await session.page.evaluate(_SETTLE_PROBE)
         except PlaywrightError:
             return None
-        if not isinstance(raw, dict):
+        if not isinstance(raw, dict) or not isinstance(raw.get("mutations"), int):
             return None
-        return {"ready": raw.get("ready"), "quiet_for": raw.get("quietFor") or 0}
+        return {"ready": raw.get("ready"), "mutations": raw["mutations"]}
 
     async def identify(self, session_id: str) -> DocumentIdentity:
         """Mint a fresh snapshot identity, reusing the document identity if it holds.

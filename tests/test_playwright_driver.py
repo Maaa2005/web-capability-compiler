@@ -856,3 +856,56 @@ async def test_a_response_from_a_refused_address_fails_the_session_closed(
         assert driver._sessions == {}  # noqa: SLF001
     finally:
         await driver.shutdown()
+
+
+async def test_a_page_cannot_fake_being_settled(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """The counter-review's finding, kept as a test.
+
+    The first version of this stored a timestamp in a writable property and argued
+    that a hostile page could only make itself look busy. Setting the clock to zero
+    made "time since the last change" enormous, so a page mutating continuously
+    reported itself instantly quiet. A count cannot be moved backwards into quiet —
+    quiet is no change, and every write is a change.
+    """
+    session_id = await _open(driver, f"{fixture_server}/search-page/")
+    page = driver._session(session_id).page  # noqa: SLF001
+
+    await page.evaluate(
+        """() => {
+            // Mutate forever, and try every way of silencing the counter.
+            setInterval(() => {
+                document.body.setAttribute('data-tick', String(Date.now()));
+            }, 20);
+            try { window.__wccLastMutation = 0; } catch (e) {}
+            try { delete window.__wccLastMutation; } catch (e) {}
+            try {
+                Object.defineProperty(window, '__wccLastMutation', {value: 0});
+            } catch (e) {}
+        }"""
+    )
+
+    with pytest.raises(DriverTimeoutError):
+        await driver.wait_settled(session_id, timeout_ms=1_000)
+
+
+async def test_the_mutation_counter_cannot_be_redefined(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """A non-configurable getter is what stops the page freezing what we read."""
+    session_id = await _open(driver, f"{fixture_server}/search-page/")
+    page = driver._session(session_id).page  # noqa: SLF001
+
+    before = await page.evaluate("() => window.__wccLastMutation")
+    await page.evaluate(
+        """() => {
+            try { window.__wccLastMutation = 999999; } catch (e) {}
+            document.body.append(document.createElement('span'));
+        }"""
+    )
+    after = await page.evaluate("() => window.__wccLastMutation")
+
+    assert isinstance(before, int) and isinstance(after, int)
+    assert after > before
+    assert after != 999999

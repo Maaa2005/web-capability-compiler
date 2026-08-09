@@ -38,15 +38,22 @@ class StoreError(Exception):
 
 
 def content_hash(template: CapabilityTemplate) -> str:
-    """Identify a template by what it does, not by when it was made.
+    """Identify a template by what it does, not by the observation that produced it.
 
-    Excludes the ID, the timestamps, and the usage counters, so recompiling an
-    unchanged page produces the same hash and reuses the existing row instead of
-    adding a near-duplicate that lookup would then have to tiebreak between.
+    ``evidence`` is excluded, and that is the whole point. It names the snapshot and
+    the elements a particular inspection saw, both minted fresh every time, so a
+    hash including it changed on every recompile and the deduplication it exists for
+    never once fired. The first version of this test passed only because it reused
+    one hand-written evidence list.
+
+    ``provenance`` is included, for the opposite reason. An imported template and a
+    locally compiled one may describe the same capability, and collapsing them would
+    silently relabel imported work as our own — specification 17 requires imported
+    templates to keep their provenance.
     """
     payload = template.model_dump(
         mode="json",
-        exclude={"template_id", "created_at", "provenance"},
+        exclude={"template_id", "created_at", "evidence"},
     )
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
@@ -116,9 +123,18 @@ class Store:
     def save_session(self, session: SessionInfo) -> None:
         payload_json, _ = _dump(session, "a session")
         self._connection.execute(
-            "INSERT OR REPLACE INTO sessions "
+            # ``INSERT OR REPLACE`` would DELETE the existing row and insert a new
+            # one, and ``ON DELETE CASCADE`` follows that delete: re-saving a
+            # session to update its status silently removed its documents,
+            # snapshots, IRs, and bindings. Upserting touches only the columns
+            # named, so nothing downstream is disturbed.
+            "INSERT INTO sessions "
             "(session_id, initial_url, created_at, status, schema_version, payload_json) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(session_id) DO UPDATE SET "
+            "initial_url = excluded.initial_url, created_at = excluded.created_at, "
+            "status = excluded.status, schema_version = excluded.schema_version, "
+            "payload_json = excluded.payload_json",
             (
                 session.session_id,
                 session.initial_url,
@@ -145,10 +161,16 @@ class Store:
                 ),
             )
             self._connection.execute(
-                "INSERT OR REPLACE INTO page_snapshots "
+                "INSERT INTO page_snapshots "
                 "(snapshot_id, session_id, document_id, origin, normalized_route_pattern, "
                 " page_signature, structural_hash, captured_at, schema_version, payload_json) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(snapshot_id) DO UPDATE SET "
+                "page_signature = excluded.page_signature, "
+                "structural_hash = excluded.structural_hash, "
+                "captured_at = excluded.captured_at, "
+                "schema_version = excluded.schema_version, "
+                "payload_json = excluded.payload_json",
                 (
                     snapshot.snapshot_id,
                     snapshot.session_id,
@@ -174,10 +196,13 @@ class Store:
     def save_ir(self, ir: PageIR) -> None:
         payload_json, _ = _dump(ir, f"IR {ir.ir_id}")
         self._connection.execute(
-            "INSERT OR REPLACE INTO page_irs "
+            "INSERT INTO page_irs "
             "(ir_id, session_id, snapshot_id, origin, normalized_route_pattern, "
             " page_signature, built_at, schema_version, payload_json) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(ir_id) DO UPDATE SET "
+            "page_signature = excluded.page_signature, built_at = excluded.built_at, "
+            "schema_version = excluded.schema_version, payload_json = excluded.payload_json",
             (
                 ir.ir_id,
                 ir.session_id,
@@ -212,6 +237,15 @@ class Store:
         payload_json, _ = _dump(template, f"template {template.name}")
         digest = content_hash(template)
 
+        # Inside one transaction: a bare SELECT-then-INSERT lets two sessions both
+        # find nothing and both insert, and the loser gets a constraint error
+        # instead of the "returns the equivalent stored template" contract.
+        with transaction(self._connection):
+            return self._insert_or_reuse(template, digest, payload_json)
+
+    def _insert_or_reuse(
+        self, template: CapabilityTemplate, digest: str, payload_json: str
+    ) -> CapabilityTemplate:
         existing = self._connection.execute(
             "SELECT * FROM capability_templates WHERE origin = ? AND "
             "normalized_route_pattern = ? AND page_signature = ? AND content_hash = ?",
@@ -305,10 +339,13 @@ class Store:
     def save_binding(self, binding: BoundCapability) -> None:
         payload_json, _ = _dump(binding, f"binding {binding.capability_id}")
         self._connection.execute(
-            "INSERT OR REPLACE INTO bound_capabilities "
+            "INSERT INTO bound_capabilities "
             "(capability_id, template_id, session_id, document_id, bound_snapshot_id, "
             " status, bound_at, schema_version, payload_json) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(capability_id) DO UPDATE SET "
+            "status = excluded.status, bound_at = excluded.bound_at, "
+            "schema_version = excluded.schema_version, payload_json = excluded.payload_json",
             (
                 binding.capability_id,
                 binding.template_id,
