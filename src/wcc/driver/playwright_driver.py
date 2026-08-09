@@ -15,6 +15,7 @@ left for the runtime policy layer to judge; the driver never decides policy
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Coroutine
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -356,18 +357,58 @@ class PlaywrightDriver:
         """
         for _ in range(2):
             await asyncio.sleep(0)
-        await self.drain_cleanups()
+        if not await self.drain_cleanups():
+            # An audit that never answered is an unverified peer, and specification
+            # 10.2 does not treat "could not tell" as permission. The session is
+            # torn down by the caller's error path either way; the error names a
+            # timeout rather than a block because that is what actually happened,
+            # and the two differ in whether retrying is sensible.
+            raise DriverTimeoutError(
+                f"a navigation audit did not finish within "
+                f"{self._limits.settle_timeout_ms} ms, so the address this page "
+                "was served from is unverified"
+            )
         if session.failure is not None:
             raise NavigationBlockedError(session.failure)
 
-    async def drain_cleanups(self) -> None:
-        """Wait for every scheduled refusal to finish."""
+    async def drain_cleanups(self, timeout_ms: int | None = None) -> bool:
+        """Wait for every scheduled refusal to finish. Returns whether they all did.
+
+        Bounded, and the bound is the point. This used to loop until the set
+        emptied, which cannot terminate on two ordinary shapes of page: one whose
+        ``server_addr()`` never answers, and one that keeps issuing requests so a
+        new audit is spawned for every one that completes. Both presented as
+        ``open_session`` never returning — no error, no log line, nothing to
+        attribute it to. A wait on the critical path needs a deadline for the same
+        reason every other wait in specification 10.5 has one.
+
+        Reporting the outcome rather than raising leaves the decision with the
+        caller: the navigation boundary must fail closed, while shutdown only needs
+        to stop waiting.
+        """
+        budget = self._limits.settle_timeout_ms if timeout_ms is None else timeout_ms
+        deadline = time.monotonic() + budget / 1000
         while self._cleanups:
-            await asyncio.gather(*list(self._cleanups), return_exceptions=True)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            await asyncio.wait(list(self._cleanups), timeout=remaining)
+        return True
+
+    def _abandon_cleanups(self) -> None:
+        """Cancel refusals that outlived their deadline, so nothing is left running.
+
+        A cancelled audit still counts as unfinished; this only stops the task, it
+        does not decide that the page was acceptable.
+        """
+        for task in list(self._cleanups):
+            task.cancel()
+        self._cleanups.clear()
 
     async def shutdown(self) -> None:
         """Close every session and release the browser processes."""
-        await self.drain_cleanups()
+        if not await self.drain_cleanups():
+            self._abandon_cleanups()
         for session_id in list(self._sessions):
             await self.close_session(session_id)
         for browser in self._browsers.values():

@@ -201,6 +201,36 @@ async def test_a_reload_replaces_the_document(
     assert after.url == before.url
 
 
+async def test_an_audit_that_never_answers_does_not_hang_the_drain(
+    driver: PlaywrightDriver,
+) -> None:
+    """A wait on the critical path needs a deadline, or it is not a wait but a stop.
+
+    ``drain_cleanups`` used to loop until the set emptied. Two ordinary pages break
+    that: one whose ``server_addr()`` never answers, and one issuing requests fast
+    enough that a new audit replaces every one that finishes. Both showed up as
+    ``open_session`` returning nothing, ever, with no error to attribute it to.
+    """
+    forever = asyncio.Event()
+    driver._spawn(forever.wait())  # noqa: SLF001 - stands in for a stuck peer audit
+    try:
+        assert await driver.drain_cleanups(timeout_ms=50) is False
+    finally:
+        forever.set()
+        assert await driver.drain_cleanups(timeout_ms=1000) is True
+
+
+async def test_an_abandoned_audit_is_cancelled_rather_than_left_running(
+    driver: PlaywrightDriver,
+) -> None:
+    """Giving up on a refusal must not leave it running behind the caller's back."""
+    forever = asyncio.Event()
+    driver._spawn(forever.wait())  # noqa: SLF001
+    assert await driver.drain_cleanups(timeout_ms=50) is False
+    driver._abandon_cleanups()  # noqa: SLF001
+    assert await driver.drain_cleanups(timeout_ms=50) is True
+
+
 async def test_a_popup_is_refused_and_closed(driver: PlaywrightDriver, fixture_server: str) -> None:
     """Specification 10.2 rejects popups, tabs, and windows by default."""
     session_id = await _open(driver, f"{fixture_server}/search-page/")
