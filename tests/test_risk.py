@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import pytest
-from factories import a_chain
 
+from factories import a_chain
 from wcc.compiler.risk import classify_plan
 from wcc.models.capability import CapabilityCategory, PlanStep, RiskLevel, SideEffect
 from wcc.models.common import ActionType, ControlType, FormActionKind
