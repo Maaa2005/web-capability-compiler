@@ -50,7 +50,7 @@ class FixedRisk:
 
 _HIGH = Risk(
     level=RiskLevel.HIGH,
-    side_effect=SideEffect.IRREVERSIBLE,
+    side_effect=SideEffect.PERSISTENT,
     reversible=False,
     requires_confirmation=True,
 )

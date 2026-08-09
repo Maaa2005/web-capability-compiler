@@ -20,7 +20,7 @@ from typing import Protocol, runtime_checkable
 
 from wcc.driver.base import DriverError, ElementNotResolvedError
 from wcc.identifiers import new_id
-from wcc.models.capability import BoundCapability, CapabilityTemplate, Risk, RiskLevel
+from wcc.models.capability import BoundCapability, CapabilityTemplate, Risk, risk_order
 from wcc.models.locator import LocatorChain
 from wcc.models.session import PageSnapshot
 
@@ -70,9 +70,6 @@ class RiskClassifier(Protocol):
     def classify(self, template: CapabilityTemplate, snapshot: PageSnapshot) -> Risk: ...
 
 
-_RISK_ORDER = {RiskLevel.LOW: 0, RiskLevel.MEDIUM: 1, RiskLevel.HIGH: 2}
-
-
 def risk_increased(before: Risk, after: Risk) -> bool:
     """Whether re-classification made the capability more dangerous.
 
@@ -80,7 +77,7 @@ def risk_increased(before: Risk, after: Risk) -> bool:
     and a template whose side effect is newly irreversible will have moved level
     too — if it has not, the classifier disagrees with itself and Phase 3 owns that.
     """
-    return _RISK_ORDER[after.level] > _RISK_ORDER[before.level]
+    return risk_order(after.level) > risk_order(before.level)
 
 
 def order_candidates(

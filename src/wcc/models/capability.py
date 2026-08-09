@@ -35,17 +35,71 @@ class CapabilityCategory(StrEnum):
 
 
 class RiskLevel(StrEnum):
-    """Specification 10.1. Only ``LOW`` is ever executable."""
+    """Specification 10.1. Only ``LOW`` is ever executable.
+
+    ``CRITICAL`` exists even though nothing may run at that level, and the reason
+    is that a level nobody can name cannot be reported. An agent asking what a page
+    offers deserves to be told that the delete button was seen and refused, rather
+    than to find it silently absent.
+    """
 
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
+    CRITICAL = "critical"
 
 
 class SideEffect(StrEnum):
+    """What running a capability does to the world (specification 10.1).
+
+    The five values are the specification's, and the ordering between them is the
+    whole risk model: risk is decided by consequence, never by mechanism. The same
+    click is ``NONE`` on a search form and ``DESTRUCTIVE_OR_FINANCIAL`` on a
+    "close account" button, so the click tells you nothing.
+    """
+
     NONE = "none"
-    STATE_CHANGE = "state_change"
-    IRREVERSIBLE = "irreversible"
+    """Idempotent and read-only on the server."""
+
+    LOCAL = "local"
+    """Client-local or trivially reversible view state."""
+
+    REVERSIBLE_ACCOUNT = "reversible_account"
+    """Reversible account state: a cart, a saved preference."""
+
+    PERSISTENT = "persistent"
+    """Persistent server state: a message, a registration, an order."""
+
+    DESTRUCTIVE_OR_FINANCIAL = "destructive_or_financial"
+    """Payment, deletion, transfer, or a legal or security consequence."""
+
+
+#: Specification 10.1's table, as the single mapping everything else defers to.
+#: Written here rather than in the classifier so that a capability constructed by
+#: hand, imported from a file, or read from an old database is checked against the
+#: same table the classifier uses.
+RISK_OF_SIDE_EFFECT: dict[SideEffect, RiskLevel] = {
+    SideEffect.NONE: RiskLevel.LOW,
+    SideEffect.LOCAL: RiskLevel.LOW,
+    SideEffect.REVERSIBLE_ACCOUNT: RiskLevel.MEDIUM,
+    SideEffect.PERSISTENT: RiskLevel.HIGH,
+    SideEffect.DESTRUCTIVE_OR_FINANCIAL: RiskLevel.CRITICAL,
+}
+
+
+#: Comparable order for the levels. Defined once; the binder's "did risk increase"
+#: check and the model's own floor check must not disagree about what higher means.
+_RISK_ORDER: dict[RiskLevel, int] = {
+    RiskLevel.LOW: 0,
+    RiskLevel.MEDIUM: 1,
+    RiskLevel.HIGH: 2,
+    RiskLevel.CRITICAL: 3,
+}
+
+
+def risk_order(level: RiskLevel) -> int:
+    """Where ``level`` sits, for comparisons that must agree everywhere."""
+    return _RISK_ORDER[level]
 
 
 class Risk(WCCModel):
@@ -60,6 +114,24 @@ class Risk(WCCModel):
     side_effect: SideEffect
     reversible: bool
     requires_confirmation: bool
+
+    @model_validator(mode="after")
+    def _level_is_never_below_the_side_effect(self) -> Risk:
+        """Let a level be raised above its side effect, never lowered below it.
+
+        Specification 10.1 says uncertainty always raises and never lowers. A
+        classifier that has a further reason for concern may return a higher level
+        than the table alone implies; one that returns a lower level has talked
+        itself out of the consequence it just named, which is the exact move the
+        rule exists to forbid.
+        """
+        floor = RISK_OF_SIDE_EFFECT[self.side_effect]
+        if _RISK_ORDER[self.level] < _RISK_ORDER[floor]:
+            raise ValueError(
+                f"a {self.side_effect} side effect is at least {floor} risk, "
+                f"but this capability claims {self.level}"
+            )
+        return self
 
 
 class ExpectedEffect(WCCModel):
