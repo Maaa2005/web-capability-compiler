@@ -7,6 +7,14 @@ from pydantic import ValidationError
 
 from factories import a_collection, a_snapshot, a_template, an_ir
 from wcc.ir import build_page_ir, canonical_projection, semantically_equivalent
+from wcc.models.capability import (
+    CapabilityCategory,
+    CapabilityTemplate,
+    Risk,
+    RiskLevel,
+    SideEffect,
+)
+from wcc.models.common import Confidence
 from wcc.models.ir import Entity, Evidence
 
 _RECORDS = [
@@ -194,3 +202,53 @@ def test_a_warning_reworded_is_still_the_same_warning() -> None:
         snapshot, warnings=[IRWarning(code="collection_truncated", message="1 of 9 records kept")]
     )
     assert semantically_equivalent(one, other)
+
+
+# -- what the counter-review found ---------------------------------------------
+
+
+def test_only_the_three_categories_the_specification_defines_are_accepted() -> None:
+    """Specification 3.1: search, filter, navigate. Paging is navigate, not its own."""
+    from pydantic import ValidationError as _VE
+
+    assert {c.value for c in CapabilityCategory} == {"search", "filter", "navigate"}
+    with pytest.raises(_VE):
+        a_template(category="paginate")
+
+
+def test_a_low_confidence_candidate_never_becomes_a_template() -> None:
+    """Specification 7.4: low means placeholder-only or positional inference."""
+    with pytest.raises(ValidationError) as refused:
+        a_template(confidence=Confidence.LOW)
+    assert "specification 7.4" in str(refused.value)
+
+
+def test_confidence_has_no_default_on_a_template() -> None:
+    """Inheriting a claim about evidence is how a guess becomes a stored fact."""
+    fields = dict(a_template().model_dump(mode="python"))
+    fields.pop("confidence")
+    with pytest.raises(ValidationError):
+        CapabilityTemplate(**fields)
+
+
+def test_a_risk_level_below_its_side_effect_is_refused() -> None:
+    """Specification 10.1: uncertainty raises the level and never lowers it."""
+    with pytest.raises(ValidationError) as refused:
+        Risk(
+            level=RiskLevel.LOW,
+            side_effect=SideEffect.DESTRUCTIVE_OR_FINANCIAL,
+            reversible=False,
+            requires_confirmation=True,
+        )
+    assert "at least critical risk" in str(refused.value)
+
+
+def test_a_risk_level_above_its_side_effect_is_allowed() -> None:
+    """A classifier with a further reason for concern may raise; it may not lower."""
+    cautious = Risk(
+        level=RiskLevel.HIGH,
+        side_effect=SideEffect.LOCAL,
+        reversible=True,
+        requires_confirmation=True,
+    )
+    assert cautious.level is RiskLevel.HIGH

@@ -26,7 +26,31 @@
       <input type="hidden" name="session_id" value="SENTINEL-SESSION-ID">
 
       <button type="submit">Pay</button>
-    </form>
+    
+    <!-- Payment fields whose names the first denylist did not recognise. Every one
+         of these had its value collected until the counter-review found them. -->
+    <fieldset>
+      <legend>Card details the old rules missed</legend>
+      <label for="pan">Card number</label>
+      <input type="text" id="pan" name="pan" value="SENTINEL-PAN-4111111111111111">
+
+      <label for="security_code">Security code</label>
+      <input type="text" id="security_code" name="security_code" value="SENTINEL-CSC-737">
+
+      <label for="cc_num">Card</label>
+      <input type="text" id="cc_num" name="cc_num" value="SENTINEL-CCNUM">
+
+      <label for="creditcard">Credit card</label>
+      <input type="text" id="creditcard" name="creditcard" value="SENTINEL-CREDITCARD">
+
+      <label for="holder">Name on card</label>
+      <input type="text" id="holder" name="holder" autocomplete="cc-given-name"
+             value="SENTINEL-CC-GIVEN-NAME">
+
+      <label for="q1">Card number</label>
+      <input type="text" id="q1" name="q1" aria-label="card number" value="SENTINEL-BY-LABEL">
+    </fieldset>
+</form>
   </main>
 </body>
 </html>

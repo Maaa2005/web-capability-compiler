@@ -960,3 +960,27 @@ async def test_the_page_cannot_substitute_the_target_after_resolution(
 
     assert await page.evaluate("() => document.getElementById('keyword-moved').value") == "earbuds"
     assert await page.evaluate("() => document.getElementById('keyword').value") == ""
+
+
+async def test_payment_fields_the_old_rules_missed_are_still_never_read(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """The counter-review's finding, as a sentinel test over the whole snapshot.
+
+    ``pan``, ``security_code``, ``cc_num``, ``creditcard``, and a field labelled
+    only by ``aria-label`` all read as ordinary inputs to the first denylist, and
+    their values were collected. Asserting over the serialized snapshot rather than
+    over the elements is deliberate: the value could otherwise reappear in a label,
+    a locator key, or a collection field, which is exactly how the earlier check
+    was too narrow.
+    """
+    session_id = await _open(driver, f"{fixture_server}/sensitive-form/")
+    snapshot = await driver.snapshot(session_id)
+    serialized = snapshot.model_dump_json()
+
+    assert "SENTINEL" not in serialized
+
+    omitted = {
+        element.resolved_label for element in snapshot.elements if element.value_omitted_for_safety
+    }
+    assert "Card number" in omitted

@@ -17,20 +17,46 @@ from __future__ import annotations
 EXTRACT_ELEMENTS = r"""
 () => {
   const SENSITIVE_TYPES = new Set(['password', 'file', 'hidden']);
+
+  // Any `cc-*` autocomplete token is payment data. Matched by prefix rather than
+  // by listing the members: the earlier list named six of them and let
+  // `cc-given-name` and `cc-family-name` through, which is how an enumeration
+  // fails — silently, on whatever it did not think of.
   const SENSITIVE_AUTOCOMPLETE = new RegExp(
-    '(^|\\s)(cc-(number|csc|exp|exp-month|exp-year|name)' +
-    '|current-password|new-password|one-time-code)(\\s|$)', 'i');
+    '(^|\\s)(cc-[a-z-]+|current-password|new-password|one-time-code)(\\s|$)', 'i');
+
+  // A denylist cannot be inverted the same way — a name is free text — so it is
+  // widened instead, and the cases that got through are named. `pan`,
+  // `security_code`, `cc_num`, and `creditcard` all read as ordinary fields to the
+  // previous pattern and their values were collected.
+  //
+  // The separator class includes whitespace, and getting that wrong is instructive:
+  // the attributes are joined with spaces before matching, so a rule anchored on
+  // `[-_]` alone could not see `pan` in "pan pan", nor "card number" in an
+  // aria-label. The pattern read as if it covered them and did not.
+  const SEP = '[-_\\s]';
   const SENSITIVE_NAME = new RegExp(
-    '(csrf|xsrf|token|secret|auth|session|api[-_]?key' +
-    '|password|passwd|cvv|cvc|card[-_]?number)', 'i');
+    '(csrf|xsrf|token|secret|auth|session|api' + SEP + '?key|passwd|password'
+    + '|cvv|cvc|cvn|csc|security' + SEP + '?(code|number)'
+    + '|card' + SEP + '?(number|num|no)|credit' + SEP + '?card|debit' + SEP + '?card'
+    + '|(^|' + SEP + ')cc(' + SEP + '|$)|(^|' + SEP + ')pan(' + SEP + '|$)'
+    + '|iban|routing' + SEP + '?number|account' + SEP + '?number'
+    + '|ssn|social' + SEP + '?security|tax' + SEP + '?id|passport'
+    + '|(^|' + SEP + ')pin(' + SEP + '|$)|(^|' + SEP + ')otp(' + SEP + '|$)'
+    + '|mfa|2fa)', 'i');
 
   const isSensitive = (el) => {
     const type = (el.getAttribute('type') || '').toLowerCase();
     if (SENSITIVE_TYPES.has(type)) return true;
     const autocomplete = el.getAttribute('autocomplete') || '';
     if (SENSITIVE_AUTOCOMPLETE.test(autocomplete)) return true;
-    const name = (el.getAttribute('name') || '') + ' ' + (el.getAttribute('id') || '');
-    return SENSITIVE_NAME.test(name);
+    // The label is read too. A field named `q1` sitting under "Card number" is the
+    // card number, and the name attribute says nothing about it.
+    const described = [
+      el.getAttribute('name'), el.getAttribute('id'), el.getAttribute('placeholder'),
+      el.getAttribute('aria-label'),
+    ].filter(Boolean).join(' ');
+    return SENSITIVE_NAME.test(described);
   };
 
   const text = (node) => (node && node.textContent

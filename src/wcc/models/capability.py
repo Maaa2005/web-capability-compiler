@@ -25,13 +25,18 @@ from wcc.models.locator import LocatorChain
 
 
 class CapabilityCategory(StrEnum):
-    """The categories v0.1 compiles (specification 3.1)."""
+    """The only categories v0.1 compiles (specification 3.1).
+
+    Three, not five. Paging is not its own category — specification 3.1 puts
+    pagination and opening a detail link both under ``navigate`` — and reading is
+    not a capability at all, it is what a snapshot already provides. Accepting
+    names the specification does not define would let a compiler invent a category
+    that no downstream risk rule or MCP client knows how to treat.
+    """
 
     SEARCH = "search"
     FILTER = "filter"
     NAVIGATE = "navigate"
-    PAGINATE = "paginate"
-    READ = "read"
 
 
 class RiskLevel(StrEnum):
@@ -184,10 +189,31 @@ class CapabilityTemplate(WCCModel):
     expected_effect: ExpectedEffect
     risk: Risk
     evidence: list[Evidence] = Field(min_length=1)
-    confidence: Confidence = Confidence.LOW
+    confidence: Confidence
     created_at: datetime
     provenance: str = "compiled"
     """``compiled`` locally, or ``imported`` (specification 17)."""
+
+    @model_validator(mode="after")
+    def _confidence_is_high_enough_to_be_a_template(self) -> CapabilityTemplate:
+        """Refuse a template built on positional inference (specification 7.4).
+
+        Only ``medium`` and ``high`` candidates may become templates; ``low`` means
+        the evidence was a placeholder or a guess from position. Such a candidate
+        belongs in IR warnings, where a reader can see it was noticed and rejected.
+        Persisting it would make the weakest reading of a page as reusable as the
+        strongest, and nothing later in the pipeline re-examines that.
+
+        There is also no default. A template whose confidence was never stated
+        would inherit one, and inheriting a claim about evidence is how an
+        unexamined guess becomes a stored fact.
+        """
+        if self.confidence is Confidence.LOW:
+            raise ValueError(
+                "a low-confidence candidate is never a template (specification 7.4); "
+                "report it as an IR warning instead"
+            )
+        return self
 
     @model_validator(mode="after")
     def _evidence_outlives_its_snapshot(self) -> CapabilityTemplate:
