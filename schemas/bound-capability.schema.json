@@ -1,0 +1,70 @@
+{
+  "$defs": {
+    "BindingStatus": {
+      "enum": [
+        "active",
+        "stale",
+        "closed"
+      ],
+      "title": "BindingStatus",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "A template resolved against one live document (specification 7.9).\n\nHolding this model is not permission to execute. It records that every target\nresolved uniquely at ``bound_at`` in ``session_id``; whether that is still true\nis a question about the live session, and :mod:`wcc.binding.registry` answers\nit. A row read back from SQLite is a record of a binding that happened, not a\nbinding that holds.",
+  "properties": {
+    "bound_at": {
+      "format": "date-time",
+      "title": "Bound At",
+      "type": "string"
+    },
+    "bound_snapshot_id": {
+      "title": "Bound Snapshot Id",
+      "type": "string"
+    },
+    "capability_id": {
+      "title": "Capability Id",
+      "type": "string"
+    },
+    "document_id": {
+      "title": "Document Id",
+      "type": "string"
+    },
+    "resolved_targets": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "minProperties": 1,
+      "title": "Resolved Targets",
+      "type": "object"
+    },
+    "schema_version": {
+      "default": "0.2.1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "session_id": {
+      "title": "Session Id",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/BindingStatus",
+      "default": "active"
+    },
+    "template_id": {
+      "title": "Template Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "capability_id",
+    "template_id",
+    "session_id",
+    "document_id",
+    "bound_snapshot_id",
+    "resolved_targets",
+    "bound_at"
+  ],
+  "title": "BoundCapability",
+  "type": "object"
+}

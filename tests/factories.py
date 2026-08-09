@@ -20,8 +20,16 @@ from wcc.models.capability import (
     RiskLevel,
     SideEffect,
 )
-from wcc.models.common import ActionType, CollectionKind, Confidence, SessionStatus
-from wcc.models.element import CollectionRecord, CollectionSnapshot
+from wcc.models.common import (
+    ActionType,
+    CollectionKind,
+    Confidence,
+    ControlType,
+    FormActionKind,
+    LabelSource,
+    SessionStatus,
+)
+from wcc.models.element import CollectionRecord, CollectionSnapshot, NormalizedElement
 from wcc.models.ir import Entity, Evidence, PageIR
 from wcc.models.locator import LocatorCandidate, LocatorChain, LocatorKind
 from wcc.models.session import PageSnapshot, SessionInfo
@@ -34,6 +42,52 @@ SIGNATURE = "sha256:page-class-one"
 def a_chain(key: str, kind: LocatorKind = LocatorKind.ID_ATTRIBUTE) -> LocatorChain:
     candidate = LocatorCandidate(kind=kind, key=key)
     return LocatorChain(primary=candidate, candidates=[candidate])
+
+
+def a_path_chain(path: str) -> LocatorChain:
+    """A chain whose only candidate is a structural path.
+
+    Repeated-structure detection reads that candidate, so a test about containers
+    needs elements whose paths are the point rather than incidental.
+    """
+    return a_chain(path, LocatorKind.STRUCTURAL_PATH)
+
+
+def an_element(element_id: str = "el_1", **overrides: Any) -> NormalizedElement:
+    """A plain visible text control in a GET form, as the starting point."""
+    fields: dict[str, Any] = {
+        "element_id": element_id,
+        "tag_name": "input",
+        "control_type": ControlType.TEXT,
+        "resolved_label": "Keyword",
+        "label_source": LabelSource.LABEL_FOR,
+        "control_name": "keyword",
+        "form_id": "f",
+        "form_key": "f",
+        "form_method": "get",
+        "form_action_route": "/results",
+        "form_action_kind": FormActionKind.SAME_ORIGIN,
+        "locator_chain": a_chain(element_id),
+        "confidence": Confidence.HIGH,
+    }
+    fields.update(overrides)
+    return NormalizedElement(**fields)
+
+
+def a_submit(
+    element_id: str = "el_submit", label: str = "Search", **overrides: Any
+) -> NormalizedElement:
+    """The activation mechanism of a form, which decides its category and its risk."""
+    fields: dict[str, Any] = {
+        "tag_name": "button",
+        "control_type": ControlType.BUTTON,
+        "resolved_label": label,
+        "label_source": LabelSource.BUTTON_TEXT,
+        "control_name": None,
+        "submits_form": True,
+    }
+    fields.update(overrides)
+    return an_element(element_id, **fields)
 
 
 def a_session(session_id: str = "sess_1", **overrides: Any) -> SessionInfo:

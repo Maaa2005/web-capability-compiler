@@ -1,0 +1,32 @@
+{
+  "additionalProperties": false,
+  "description": "Input for opening a session.\n\nDeliberately narrow. Specification 12.1 gives the MCP caller a URL and nothing\nelse, and the private-network allowance of specification 10.2 is a\n*developer-only* flag: an external agent that could set it per request would be\nable to switch off the SSRF boundary at will. That allowance lives in\n``DriverSettings``, which comes from trusted local configuration.",
+  "properties": {
+    "headless": {
+      "default": true,
+      "title": "Headless",
+      "type": "boolean"
+    },
+    "locale": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Locale"
+    },
+    "url": {
+      "title": "Url",
+      "type": "string"
+    }
+  },
+  "required": [
+    "url"
+  ],
+  "title": "OpenSessionRequest",
+  "type": "object"
+}

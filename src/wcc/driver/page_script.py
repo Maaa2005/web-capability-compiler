@@ -151,12 +151,36 @@ EXTRACT_ELEMENTS = r"""
       id: el.id || null,
       name: el.getAttribute('name'),
       form_id: form ? (form.id || null) : null,
+      // Which form, as opposed to which *named* form. Two unnamed forms on one page
+      // share `form_id: null`, and grouping controls by that would compile one
+      // capability whose plan fills a field in one form and submits the other.
+      form_key: form
+        ? (form.id || ('form:' + Array.prototype.indexOf.call(document.forms, form)))
+        : null,
       form_present: Boolean(form),
-      form_method: form ? (form.getAttribute('method') || 'get').toLowerCase() : null,
-      form_action: formAction(form),
+      // A submitter overrides its form. `formmethod="post"` on a button inside a
+      // GET form means the submission is a POST, and reading the form alone would
+      // classify that as a low-risk read — the one direction specification 10.1
+      // says uncertainty must never move. The override is reported per element
+      // because only a submitter may carry it.
+      form_method: form
+        ? (el.getAttribute('formmethod') || form.getAttribute('method') || 'get').toLowerCase()
+        : null,
+      form_action: el.getAttribute('formaction')
+        ? (() => {
+            try {
+              return new URL(el.getAttribute('formaction'), document.baseURI).href;
+            } catch (e) {
+              return null;
+            }
+          })()
+        : formAction(form),
+      // `input[type=image]` is a submit button that happens to be drawn as a
+      // picture. Omitting it made a form with no other submit look unsubmittable,
+      // which reads as "nothing here to compile" rather than as "not understood".
       submits_form: Boolean(form) && (
         (tag === 'button' && (type === '' || type === 'submit'))
-        || (tag === 'input' && type === 'submit')),
+        || (tag === 'input' && (type === 'submit' || type === 'image'))),
       rel: el.getAttribute('rel'),
       in_navigation: Boolean(el.closest('nav, [role="navigation"]')),
       label_for: labelFor(el),
@@ -183,6 +207,10 @@ EXTRACT_ELEMENTS = r"""
       search_signal: type === 'search'
         || el.getAttribute('role') === 'searchbox'
         || (form ? form.getAttribute('role') === 'search' : false),
+      // Reported separately from `search_signal` because form compilation asks a
+      // different question than label confidence does: not "is this control a
+      // search box" but "does the page declare this region to be a search".
+      in_search_landmark: Boolean(el.closest('[role="search"]')),
     });
   }
   return records;

@@ -1,0 +1,51 @@
+name: CI
+
+# Specification 5.1 requires this file by Phase 3, and the acceptance criterion is
+# that it passes "from a clean checkout" — so nothing here depends on state a
+# developer machine happens to have. The browser is installed as an explicit step
+# rather than assumed, and the schema check runs against the committed files
+# rather than regenerating them, because a job that fixes the drift it is meant to
+# detect reports success on a broken commit.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked --all-extras --dev
+
+      - name: Lint
+        run: uv run ruff check src tests scripts
+
+      - name: Format
+        run: uv run ruff format --check src tests scripts
+
+      - name: Types
+        run: uv run pyright
+
+      - name: Schemas match the models
+        run: uv run python scripts/gen_schemas.py --check
+
+      - name: Install Chromium
+        run: uv run wcc install-browser
+
+      - name: Tests
+        run: uv run pytest

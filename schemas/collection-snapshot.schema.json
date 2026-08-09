@@ -1,0 +1,131 @@
+{
+  "$defs": {
+    "CollectionKind": {
+      "description": "Specification 8.4 repeated-structure categories.",
+      "enum": [
+        "list",
+        "table",
+        "cards",
+        "search_results"
+      ],
+      "title": "CollectionKind",
+      "type": "string"
+    },
+    "CollectionRecord": {
+      "additionalProperties": false,
+      "description": "One extracted record inside a collection.\n\n``identity`` is the deterministic per-record projection that feeds\n``collection_hash`` (specification 8.4). ``evidence_element_ids`` preserves the\nmapping back to the DOM elements that produced the record.",
+      "properties": {
+        "entity_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Entity Id"
+        },
+        "evidence_element_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence Element Ids",
+          "type": "array"
+        },
+        "fields": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Fields",
+          "type": "object"
+        },
+        "identity": {
+          "title": "Identity",
+          "type": "string"
+        },
+        "record_id": {
+          "title": "Record Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "record_id",
+        "identity"
+      ],
+      "title": "CollectionRecord",
+      "type": "object"
+    },
+    "Confidence": {
+      "description": "Specification 7.4. Only ``medium`` and ``high`` may become templates.",
+      "enum": [
+        "high",
+        "medium",
+        "low"
+      ],
+      "title": "Confidence",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "A repeated structure detected on the page (specification 8.4).\n\n``order_is_meaningful`` tells the verifier whether ``collection_hash`` must be\nsensitive to record order.",
+  "properties": {
+    "collection_hash": {
+      "title": "Collection Hash",
+      "type": "string"
+    },
+    "collection_id": {
+      "title": "Collection Id",
+      "type": "string"
+    },
+    "confidence": {
+      "$ref": "#/$defs/Confidence",
+      "default": "low"
+    },
+    "kind": {
+      "$ref": "#/$defs/CollectionKind"
+    },
+    "label": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Label"
+    },
+    "order_is_meaningful": {
+      "default": true,
+      "title": "Order Is Meaningful",
+      "type": "boolean"
+    },
+    "record_count": {
+      "default": 0,
+      "title": "Record Count",
+      "type": "integer"
+    },
+    "records": {
+      "items": {
+        "$ref": "#/$defs/CollectionRecord"
+      },
+      "title": "Records",
+      "type": "array"
+    },
+    "truncated": {
+      "default": false,
+      "title": "Truncated",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "collection_id",
+    "kind",
+    "collection_hash"
+  ],
+  "title": "CollectionSnapshot",
+  "type": "object"
+}

@@ -1,0 +1,290 @@
+{
+  "$defs": {
+    "Confidence": {
+      "description": "Specification 7.4. Only ``medium`` and ``high`` may become templates.",
+      "enum": [
+        "high",
+        "medium",
+        "low"
+      ],
+      "title": "Confidence",
+      "type": "string"
+    },
+    "Entity": {
+      "additionalProperties": false,
+      "description": "Something the page is about (specification 7.5).\n\n``available_actions`` stays empty until Phase 4 binds capabilities to\nentities. It is declared now because specification 7.11 makes entity\nreferences the way result items are addressed, and a model that gains the\nfield later would change the persisted shape after templates exist.",
+      "properties": {
+        "available_actions": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Available Actions",
+          "type": "array"
+        },
+        "confidence": {
+          "$ref": "#/$defs/Confidence",
+          "default": "low"
+        },
+        "entity_id": {
+          "title": "Entity Id",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          },
+          "minItems": 1,
+          "title": "Evidence",
+          "type": "array"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        },
+        "properties": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Properties",
+          "type": "object"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "entity_id",
+        "type",
+        "evidence"
+      ],
+      "title": "Entity",
+      "type": "object"
+    },
+    "Evidence": {
+      "additionalProperties": false,
+      "description": "One recorded observation supporting a claim.\n\n``element_id`` and ``collection_id`` are snapshot-scoped: they name something\nin the snapshot this IR was built from, not something in the live page. A\nreader that wants the live element must re-resolve it, which is exactly the\nboundary specification 7.7 draws.",
+      "properties": {
+        "attribute": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Attribute"
+        },
+        "collection_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Collection Id"
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Detail"
+        },
+        "element_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Element Id"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "snapshot_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Snapshot Id"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "Evidence",
+      "type": "object"
+    },
+    "IRWarning": {
+      "additionalProperties": false,
+      "description": "Something the reading could not do, reported rather than swallowed.\n\n``code`` is stable and machine-readable; ``message`` is for a person. An agent\nbranching on prose would break the first time the wording improved.",
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "collection_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Collection Id"
+        },
+        "element_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Element Id"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "IRWarning",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "The interpreted page (specification 7.2, Phase 2).\n\n``snapshot_id`` ties the reading to the observation it came from. Two IRs of\nthe same page class built from different snapshots have different IDs and\ndifferent snapshot references while meaning the same thing — which is why\nsemantic comparison goes through\n:func:`wcc.ir.canonical.canonical_projection` rather than through equality.",
+  "properties": {
+    "built_at": {
+      "format": "date-time",
+      "title": "Built At",
+      "type": "string"
+    },
+    "document_id": {
+      "title": "Document Id",
+      "type": "string"
+    },
+    "entities": {
+      "items": {
+        "$ref": "#/$defs/Entity"
+      },
+      "title": "Entities",
+      "type": "array"
+    },
+    "ir_id": {
+      "title": "Ir Id",
+      "type": "string"
+    },
+    "language": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Language"
+    },
+    "normalized_route_pattern": {
+      "title": "Normalized Route Pattern",
+      "type": "string"
+    },
+    "origin": {
+      "title": "Origin",
+      "type": "string"
+    },
+    "page_signature": {
+      "title": "Page Signature",
+      "type": "string"
+    },
+    "schema_version": {
+      "default": "0.2.1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "session_id": {
+      "title": "Session Id",
+      "type": "string"
+    },
+    "snapshot_id": {
+      "title": "Snapshot Id",
+      "type": "string"
+    },
+    "structural_hash": {
+      "title": "Structural Hash",
+      "type": "string"
+    },
+    "title": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Title"
+    },
+    "warnings": {
+      "items": {
+        "$ref": "#/$defs/IRWarning"
+      },
+      "title": "Warnings",
+      "type": "array"
+    }
+  },
+  "required": [
+    "ir_id",
+    "session_id",
+    "document_id",
+    "snapshot_id",
+    "built_at",
+    "origin",
+    "normalized_route_pattern",
+    "page_signature",
+    "structural_hash"
+  ],
+  "title": "PageIR",
+  "type": "object"
+}

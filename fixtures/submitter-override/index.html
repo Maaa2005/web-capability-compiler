@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Fixture: Submitter Override</title></head>
+<body>
+  <header><nav aria-label="Main"><a href="/">Home</a></nav></header>
+  <main>
+    <h1>Search with an overriding submitter</h1>
+
+    <!-- The form declares GET; the button declares POST and wins. A classifier that
+         reads only the form would call this a low-risk read and let it execute,
+         which is the one direction specification 10.1 says uncertainty must never
+         move. The page looks exactly like a harmless search on purpose. -->
+    <form id="override-search" role="search" action="/results" method="get">
+      <label for="ov-q">Search products</label>
+      <input type="search" id="ov-q" name="q">
+      <button type="submit" formmethod="post" formaction="/results">Search</button>
+    </form>
+  </main>
+</body>
+</html>

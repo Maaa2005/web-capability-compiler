@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Fixture: Paginated Results</title>
+</head>
+<body>
+  <header>
+    <nav aria-label="Main"><a href="/">Home</a><a href="/product-list/">Products</a></nav>
+  </header>
+
+  <main>
+    <h1>Audio products, page 2</h1>
+
+    <!-- Result items. Specification 7.11 forbids one capability per item, so these
+         must compile into a single entity-parameterized navigation capability. -->
+    <ul class="results">
+      <li class="product" data-product-id="4">
+        <a href="/products/4">Studio Monitor</a>
+        <span class="price">32,000 yen</span>
+      </li>
+      <li class="product" data-product-id="5">
+        <a href="/products/5">USB Microphone</a>
+        <span class="price">11,400 yen</span>
+      </li>
+    </ul>
+
+    <!-- Pagination. `rel` is the definitive signal; the bare numbers are page
+         numbers only because they sit inside a navigation landmark. -->
+    <nav aria-label="Pagination">
+      <a href="/pagination-page/?page=1" rel="prev">Previous</a>
+      <a href="/product-list/?page=1">1</a>
+      <a href="/pagination-page/?page=2" aria-current="page">2</a>
+      <a href="/pagination-page/?page=3">3</a>
+      <a href="/pagination-page/?page=3" rel="next">Next</a>
+    </nav>
+  </main>
+</body>
+</html>

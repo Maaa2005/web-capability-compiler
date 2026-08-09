@@ -1,0 +1,418 @@
+{
+  "$defs": {
+    "BoundingBox": {
+      "additionalProperties": false,
+      "properties": {
+        "height": {
+          "title": "Height",
+          "type": "number"
+        },
+        "width": {
+          "title": "Width",
+          "type": "number"
+        },
+        "x": {
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "title": "Y",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height"
+      ],
+      "title": "BoundingBox",
+      "type": "object"
+    },
+    "Confidence": {
+      "description": "Specification 7.4. Only ``medium`` and ``high`` may become templates.",
+      "enum": [
+        "high",
+        "medium",
+        "low"
+      ],
+      "title": "Confidence",
+      "type": "string"
+    },
+    "ControlType": {
+      "description": "Additive since schema 0.2.1: ``PASSWORD``, ``FILE``, and ``HIDDEN``.\n\nSpecification 7.2 forbids capturing the values of these controls, and a type\nthat cannot be named cannot be checked. A reader written against the earlier\nmember list must treat an unknown control type as ``other``.",
+      "enum": [
+        "text",
+        "search",
+        "number",
+        "checkbox",
+        "radio",
+        "select",
+        "textarea",
+        "button",
+        "link",
+        "password",
+        "file",
+        "hidden",
+        "other"
+      ],
+      "title": "ControlType",
+      "type": "string"
+    },
+    "FormActionKind": {
+      "description": "Where a form submits, expressed without the content of where.\n\n``page_signature`` needs to tell a search form from a delete form, and the two\ndiffer in where they submit. It must not learn the search term, so only the\norigin relationship is recorded here; the path arrives separately as a\nnormalized route pattern, which drops query values by construction.",
+      "enum": [
+        "same-origin",
+        "cross-origin",
+        "unknown"
+      ],
+      "title": "FormActionKind",
+      "type": "string"
+    },
+    "LabelSource": {
+      "description": "Specification 8.1 accessible-name priority, highest first.\n\nThe order is the specification's, not the DOM's convenience: a wrapping\n``<label>`` outranks ``aria-labelledby``. Phase 0 had these two transposed and\nended with ``title``, which specification 8.1 does not list at all; the eighth\nsource is a nearby heading or fieldset legend.",
+      "enum": [
+        "label_for",
+        "wrapping_label",
+        "aria_labelledby",
+        "aria_label",
+        "button_text",
+        "name_attribute",
+        "placeholder",
+        "legend_or_heading"
+      ],
+      "title": "LabelSource",
+      "type": "string"
+    },
+    "LocatorCandidate": {
+      "additionalProperties": false,
+      "description": "One way to find an element again.\n\n``key`` holds the matching value for the candidate kind: the ``id`` value, the\ncontrol ``name``, the accessible name, the label text, or a structural path\nrooted at the nearest landmark or form ancestor. A structural path may carry\ntag-index information, but execution must never fall back to a global\nnth-child-only path, a bounding box, a screenshot coordinate, or a selector\nsupplied by an external agent.",
+      "properties": {
+        "form_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Form Id"
+        },
+        "key": {
+          "title": "Key",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/LocatorKind"
+        },
+        "landmark_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Landmark Id"
+        },
+        "role": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Role"
+        }
+      },
+      "required": [
+        "kind",
+        "key"
+      ],
+      "title": "LocatorCandidate",
+      "type": "object"
+    },
+    "LocatorChain": {
+      "additionalProperties": false,
+      "description": "All applicable candidates for one element, plus the primary candidate.\n\nRe-resolution (specification 7.7) walks ``candidates`` in priority order and\naccepts only an exactly-one match. Zero matches and ambiguous matches both\ncontinue to the next candidate; the closest element is never chosen.",
+      "properties": {
+        "candidates": {
+          "items": {
+            "$ref": "#/$defs/LocatorCandidate"
+          },
+          "minItems": 1,
+          "title": "Candidates",
+          "type": "array"
+        },
+        "primary": {
+          "$ref": "#/$defs/LocatorCandidate"
+        }
+      },
+      "required": [
+        "primary",
+        "candidates"
+      ],
+      "title": "LocatorChain",
+      "type": "object"
+    },
+    "LocatorKind": {
+      "description": "Candidate kinds in priority order (specification 7.6).\n\nLower value means higher priority, so a chain sorts by ``kind`` directly.",
+      "enum": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "title": "LocatorKind",
+      "type": "integer"
+    }
+  },
+  "additionalProperties": false,
+  "description": "One interactive element eligible under specification 8.2.\n\n``value`` carries a current control value only when it is safe to record.\nPassword values, payment-card values, security codes, hidden authentication\ntokens, and file-input paths are never captured (specification 7.2), so the\nextractor leaves ``value`` as ``None`` for those controls rather than storing\na redacted placeholder.\n\nThe ``form_*`` fields describe where a submit sends the page, not what it\nsends. They exist because unique re-resolution is not semantic equivalence: a\nsubmit replaced by a different-purpose button keeping the same id, accessible\nname, and in-form structure still re-resolves to exactly one element, and only\nthe destination separates the two. ``form_action_route`` is already normalized\nwhen it arrives, so no query value is ever held here.",
+  "properties": {
+    "accessible_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Accessible Name"
+    },
+    "bounding_box": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/BoundingBox"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "checked": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Checked"
+    },
+    "confidence": {
+      "$ref": "#/$defs/Confidence",
+      "default": "low"
+    },
+    "control_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Control Name"
+    },
+    "control_type": {
+      "$ref": "#/$defs/ControlType",
+      "default": "other"
+    },
+    "disabled": {
+      "default": false,
+      "title": "Disabled",
+      "type": "boolean"
+    },
+    "element_id": {
+      "title": "Element Id",
+      "type": "string"
+    },
+    "form_action_kind": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/FormActionKind"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "form_action_route": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Form Action Route"
+    },
+    "form_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Form Id"
+    },
+    "form_key": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Form Key"
+    },
+    "form_method": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Form Method"
+    },
+    "in_navigation": {
+      "default": false,
+      "title": "In Navigation",
+      "type": "boolean"
+    },
+    "in_search_landmark": {
+      "default": false,
+      "title": "In Search Landmark",
+      "type": "boolean"
+    },
+    "is_pagination_control": {
+      "default": false,
+      "title": "Is Pagination Control",
+      "type": "boolean"
+    },
+    "label_source": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/LabelSource"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "locator_chain": {
+      "$ref": "#/$defs/LocatorChain"
+    },
+    "pagination_rel": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Pagination Rel"
+    },
+    "readonly": {
+      "default": false,
+      "title": "Readonly",
+      "type": "boolean"
+    },
+    "required": {
+      "default": false,
+      "title": "Required",
+      "type": "boolean"
+    },
+    "resolved_label": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Resolved Label"
+    },
+    "role": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Role"
+    },
+    "submits_form": {
+      "default": false,
+      "title": "Submits Form",
+      "type": "boolean"
+    },
+    "tag_name": {
+      "title": "Tag Name",
+      "type": "string"
+    },
+    "value": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Value"
+    },
+    "value_omitted_for_safety": {
+      "default": false,
+      "title": "Value Omitted For Safety",
+      "type": "boolean"
+    },
+    "visible": {
+      "default": true,
+      "title": "Visible",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "element_id",
+    "tag_name",
+    "locator_chain"
+  ],
+  "title": "NormalizedElement",
+  "type": "object"
+}

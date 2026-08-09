@@ -77,11 +77,18 @@ def _reason(text: str) -> str:
 
 
 def classify_plan(
-    category: CapabilityCategory,
+    category: CapabilityCategory | None,
     plan: list[PlanStep],
     targets: dict[str, NormalizedElement],
 ) -> tuple[Risk, str]:
     """Classify a capability candidate, returning the risk and why.
+
+    ``category`` may be ``None``, and that case is not a gap. A form the compiler
+    declined to categorize still deserves a classification — specification 8.3 has
+    it reported rather than compiled, and a refusal without a reason invites the
+    agent to find another route to the same button. An uncategorized candidate
+    simply never reaches the read-only reading below, because the deterministic
+    low signals of 10.1 are all statements about a known category.
 
     The reason is returned rather than logged because a refusal an agent cannot
     explain is a refusal a user will work around. Specification 16 asks for the
@@ -131,14 +138,13 @@ def classify_plan(
                 _reason("the form submits to another origin, so its effect cannot be observed"),
             )
 
-    if category not in {
-        CapabilityCategory.SEARCH,
-        CapabilityCategory.FILTER,
-        CapabilityCategory.NAVIGATE,
-    }:  # pragma: no cover - the enum is closed and every member is listed above
+    if category is None:
         return (
             _risk(SideEffect.PERSISTENT),
-            _reason(f"{category} has no deterministic read-only reading"),
+            _reason(
+                "the candidate resolved to no category, and every deterministic "
+                "read-only signal in specification 10.1 presupposes one"
+            ),
         )
 
     for submit in submits:

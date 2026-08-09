@@ -705,3 +705,129 @@ Carried forward: the Codex counter-review of the Phase 1 code is still unrun. It
 was launched in the background here and stalled with no output — `codex exec` waits
 on stdin when detached, and neither `timeout` nor `gtimeout` exists on this machine,
 so the script's own limit never fired. It needs a foreground run.
+
+---
+
+## Phase 3: Deterministic compiler, risk, schemas, and CI — complete (2026-08-09)
+
+All seven tasks and all six acceptance criteria. The compiler now reads a snapshot
+and says what the page offers, why it thinks so, and what running it would do.
+
+### What a form is for, decided in a fixed order
+
+`compiler/forms.py` resolves a form's purpose from the submit control's own label
+first, then the form's identity, then where it submits, then its shape. The order
+carries the design: the submit's accessible name is the one piece of text that
+describes *what happens when the capability runs*, and everything after it is a
+weaker proxy for the same question.
+
+This is why a `role="search"` panel whose button says "Filter" compiles as a
+filter. The landmark describes the region; the button describes the act. Reading
+the landmark first would label every such panel a search and hand agents two
+capabilities claiming the same thing.
+
+Keyword lists are deliberately short and the ASCII words are bounded, so
+"Research this topic" is not a search. Japanese is in the list because
+specification 8.3 asks for it, not as an afterthought — `検索` and `絞り込み` are
+tested alongside the English.
+
+A form that resolves to nothing is a generic data-entry form. Specification 8.3
+reports those and does not compile them.
+
+### Refusals carry their classification
+
+Specification 8.3 says report the generic form; the Phase 3 acceptance says the
+POST contact form must be "high, listed, and not executable". Both hold only if a
+refusal is a first-class result rather than a line in a log, so `CompilationReport`
+has three lists: templates, rejected candidates, and warnings.
+
+A rejected candidate carries a risk wherever one can be computed. "Not compiled"
+invites an agent to find another route to the same button; "high, because it
+submits by POST" is an answer. `classify_plan` therefore accepts no category at
+all — naming one to obtain a classification would assert the reading the compiler
+just declined to make.
+
+Three more refusals were built rather than compiled around: a form with two
+submits (choosing one is a guess, and 7.7's rule against picking the closest
+applies before binding too), a required control that cannot become a typed
+parameter (any plan would submit the form incomplete and call that success), and a
+required control whose value 7.2 forbids WCC to supply.
+
+### One capability per page, not one per row
+
+Specification 7.11 opens with a prohibition, and honouring it needs a target the
+argument can select *within*. So `open_result_item` and `navigate_to_page` locate
+the container and let `entity_id` or `page` choose the member; only `rel`-declared
+next and previous links are single elements needing no parameter.
+
+Containers are found as repeated structure: two or more links outside any
+navigation landmark whose structural paths differ only in a sibling index, with
+the container as their longest common prefix. The landmark exclusion is load
+bearing — a header nav holding "Home" and "Products" has exactly the shape of a
+two-item result list. Two equally sized candidate lists produce nothing rather
+than a guess.
+
+`navigate_to_page` deliberately has no `maximum`. The pages visible in one
+snapshot are evidence of what existed then, and freezing that count into a
+portable template would make the schema wrong for the same page tomorrow.
+
+### Names stay generic on purpose
+
+Specification 9.2 prefers `search_products` over `submit_search_form`, and only
+the fallback is used here. Deriving a domain noun from a heading or a route would
+invent a capability name from evidence that does not establish it, which the same
+paragraph forbids. Phase 6's enricher is where a domain noun may legitimately come
+from.
+
+### Five observations the extractor was discarding
+
+Detection needed values the page already had and the model dropped: `form_key`
+(two unnamed forms share `form_id: null`, and grouping by that alone builds a plan
+that fills one form and submits the other), `control_name`, `in_search_landmark`,
+`in_navigation`, and `pagination_rel`. Each has one named consumer. The
+alternative was inferring them, which is how a compiler ends up confident about
+the page it was developed on.
+
+### Schemas and CI
+
+`scripts/gen_schemas.py` writes ten schemas from the Pydantic models with sorted
+keys, and `--check` fails instead of writing. A job that regenerated the artifact
+it is meant to police would report success on a broken commit. CI runs lint,
+format, types, the schema check, a Chromium install, and the tests — the browser
+installed explicitly so the run does not depend on state a developer machine
+happens to have.
+
+### Acceptance
+
+All six criteria, driven through a real browser against the fixtures. The two
+fixtures the repository layout named but never had — `pagination-page/` and
+`post-contact-form/` — now exist, the second carrying a GET search form beside the
+POST one so a test can show the refusal does not suppress its neighbour.
+
+Determinism is asserted on everything an agent reads: two compilations of one
+unchanged page produce identical names, categories, confidences, risks, parameter
+schemas, plans, and target sets, while template IDs differ because they record
+when the compilation happened.
+
+### A wait with no deadline, found by the full suite
+
+Phase 3's acceptance passed on every file run on its own and the full suite
+intermittently stopped, which is the shape of a defect that only appears under
+contention. A faulthandler dump named it: `open_session` was inside
+`drain_cleanups`, waiting on the peer audit of specification 10.2.
+
+The wait had no bound, and two ordinary pages cannot terminate it — one whose
+`server_addr()` never answers, and one issuing requests fast enough that a new
+audit replaces every one that completes, so the set the loop drains never empties.
+Load did not cause this; load exposed it. The loop was already unable to finish.
+
+It now has a deadline, and exceeding it fails closed: an audit that never answered
+is an unverified peer, and specification 10.2 does not read "could not tell" as
+permission. `drain_cleanups` reports whether it drained rather than raising,
+because the two callers want different things — the navigation boundary must
+refuse, while shutdown only needs to stop waiting.
+
+Worth keeping: the symptom was silence. No error, no log line, nothing to
+attribute it to, which is why three runs were spent deciding whether the machine
+was slow or the code was stuck. Every wait on a critical path is given a bound in
+specification 10.5 for this reason, and this one had been written without one.

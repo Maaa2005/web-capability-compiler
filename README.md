@@ -17,9 +17,15 @@ The headline metric is **token reduction on repeated tasks**, not task success r
 
 ## Status
 
-MVP v0.1 is under construction against spec v0.2.1. **Phase 0 of 7 is complete**:
-repository skeleton, packaging, tooling, fixtures, and the models the driver
-interface needs. There is no browser driver yet, so no site can be compiled today.
+MVP v0.1 is under construction against spec v0.2.1. **Phases 0–3 of 7 are
+complete.** A page can now be opened, observed, and compiled: WCC reads a live
+document into a snapshot, builds an Agent Page IR from it, and produces typed
+search, filter, and navigation capabilities with evidence, confidence, and a
+deterministic risk classification, persisting them as reusable templates.
+
+Nothing executes yet. A capability is compiled and bound, but running one — argument
+validation, stepwise allowlisted actions, and post-action verification — is Phase 4,
+and the MCP server that would expose all of this to an agent is Phase 5.
 
 See [`docs/progress.md`](docs/progress.md) for the phase log.
 

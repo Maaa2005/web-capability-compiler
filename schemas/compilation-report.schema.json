@@ -1,0 +1,561 @@
+{
+  "$defs": {
+    "ActionType": {
+      "description": "Specification 10.4. State-relative ``toggle`` is deliberately absent.",
+      "enum": [
+        "focus",
+        "set_value",
+        "select_option",
+        "set_checked",
+        "activate",
+        "scroll_into_view"
+      ],
+      "title": "ActionType",
+      "type": "string"
+    },
+    "CapabilityCategory": {
+      "description": "The only categories v0.1 compiles (specification 3.1).\n\nThree, not five. Paging is not its own category — specification 3.1 puts\npagination and opening a detail link both under ``navigate`` — and reading is\nnot a capability at all, it is what a snapshot already provides. Accepting\nnames the specification does not define would let a compiler invent a category\nthat no downstream risk rule or MCP client knows how to treat.",
+      "enum": [
+        "search",
+        "filter",
+        "navigate"
+      ],
+      "title": "CapabilityCategory",
+      "type": "string"
+    },
+    "CapabilityTemplate": {
+      "additionalProperties": false,
+      "description": "A reusable, portable, non-executable capability (specification 7.8).\n\nTwo invariants are enforced here rather than left to the compiler, because a\ntemplate violating either would be persisted, exported, and only fail much\nlater at binding time:\n\nEvery step's ``target_ref`` has a locator chain. A plan referring to a target\nthe template cannot locate is a plan that cannot run, and discovering that at\nexecution time would mean a partially performed sequence.\n\nEvery locator chain is referred to by a step. An unused chain is either a\ncompiler mistake or a step that went missing, and both are worth failing on\nwhile the template is still being built.",
+      "properties": {
+        "category": {
+          "$ref": "#/$defs/CapabilityCategory"
+        },
+        "confidence": {
+          "$ref": "#/$defs/Confidence"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          },
+          "minItems": 1,
+          "title": "Evidence",
+          "type": "array"
+        },
+        "execution_plan_template": {
+          "items": {
+            "$ref": "#/$defs/PlanStep"
+          },
+          "minItems": 1,
+          "title": "Execution Plan Template",
+          "type": "array"
+        },
+        "expected_effect": {
+          "$ref": "#/$defs/ExpectedEffect"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "normalized_route_pattern": {
+          "title": "Normalized Route Pattern",
+          "type": "string"
+        },
+        "origin": {
+          "title": "Origin",
+          "type": "string"
+        },
+        "page_signature": {
+          "title": "Page Signature",
+          "type": "string"
+        },
+        "parameters": {
+          "additionalProperties": true,
+          "title": "Parameters",
+          "type": "object"
+        },
+        "provenance": {
+          "default": "compiled",
+          "title": "Provenance",
+          "type": "string"
+        },
+        "risk": {
+          "$ref": "#/$defs/Risk"
+        },
+        "schema_version": {
+          "default": "0.2.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "target_locators": {
+          "additionalProperties": {
+            "$ref": "#/$defs/LocatorChain"
+          },
+          "minProperties": 1,
+          "title": "Target Locators",
+          "type": "object"
+        },
+        "template_id": {
+          "title": "Template Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "template_id",
+        "origin",
+        "normalized_route_pattern",
+        "page_signature",
+        "name",
+        "category",
+        "description",
+        "execution_plan_template",
+        "target_locators",
+        "expected_effect",
+        "risk",
+        "evidence",
+        "confidence",
+        "created_at"
+      ],
+      "title": "CapabilityTemplate",
+      "type": "object"
+    },
+    "Confidence": {
+      "description": "Specification 7.4. Only ``medium`` and ``high`` may become templates.",
+      "enum": [
+        "high",
+        "medium",
+        "low"
+      ],
+      "title": "Confidence",
+      "type": "string"
+    },
+    "Evidence": {
+      "additionalProperties": false,
+      "description": "One recorded observation supporting a claim.\n\n``element_id`` and ``collection_id`` are snapshot-scoped: they name something\nin the snapshot this IR was built from, not something in the live page. A\nreader that wants the live element must re-resolve it, which is exactly the\nboundary specification 7.7 draws.",
+      "properties": {
+        "attribute": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Attribute"
+        },
+        "collection_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Collection Id"
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Detail"
+        },
+        "element_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Element Id"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "snapshot_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Snapshot Id"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "Evidence",
+      "type": "object"
+    },
+    "ExpectedEffect": {
+      "additionalProperties": false,
+      "description": "What must be observed for an execution to count as success (11.3).",
+      "properties": {
+        "signals": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Signals",
+          "type": "array"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "signals"
+      ],
+      "title": "ExpectedEffect",
+      "type": "object"
+    },
+    "IRWarning": {
+      "additionalProperties": false,
+      "description": "Something the reading could not do, reported rather than swallowed.\n\n``code`` is stable and machine-readable; ``message`` is for a person. An agent\nbranching on prose would break the first time the wording improved.",
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "collection_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Collection Id"
+        },
+        "element_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Element Id"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "IRWarning",
+      "type": "object"
+    },
+    "LocatorCandidate": {
+      "additionalProperties": false,
+      "description": "One way to find an element again.\n\n``key`` holds the matching value for the candidate kind: the ``id`` value, the\ncontrol ``name``, the accessible name, the label text, or a structural path\nrooted at the nearest landmark or form ancestor. A structural path may carry\ntag-index information, but execution must never fall back to a global\nnth-child-only path, a bounding box, a screenshot coordinate, or a selector\nsupplied by an external agent.",
+      "properties": {
+        "form_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Form Id"
+        },
+        "key": {
+          "title": "Key",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/LocatorKind"
+        },
+        "landmark_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Landmark Id"
+        },
+        "role": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Role"
+        }
+      },
+      "required": [
+        "kind",
+        "key"
+      ],
+      "title": "LocatorCandidate",
+      "type": "object"
+    },
+    "LocatorChain": {
+      "additionalProperties": false,
+      "description": "All applicable candidates for one element, plus the primary candidate.\n\nRe-resolution (specification 7.7) walks ``candidates`` in priority order and\naccepts only an exactly-one match. Zero matches and ambiguous matches both\ncontinue to the next candidate; the closest element is never chosen.",
+      "properties": {
+        "candidates": {
+          "items": {
+            "$ref": "#/$defs/LocatorCandidate"
+          },
+          "minItems": 1,
+          "title": "Candidates",
+          "type": "array"
+        },
+        "primary": {
+          "$ref": "#/$defs/LocatorCandidate"
+        }
+      },
+      "required": [
+        "primary",
+        "candidates"
+      ],
+      "title": "LocatorChain",
+      "type": "object"
+    },
+    "LocatorKind": {
+      "description": "Candidate kinds in priority order (specification 7.6).\n\nLower value means higher priority, so a chain sorts by ``kind`` directly.",
+      "enum": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "title": "LocatorKind",
+      "type": "integer"
+    },
+    "PlanStep": {
+      "additionalProperties": false,
+      "description": "One step of an execution plan, written against a target name.\n\n``target_ref`` is a name inside the template, never an element ID. Element IDs\nbelong to one snapshot of one session; a template outlives both.",
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/ActionType"
+        },
+        "parameter": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parameter"
+        },
+        "target_ref": {
+          "title": "Target Ref",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "required": [
+        "action",
+        "target_ref"
+      ],
+      "title": "PlanStep",
+      "type": "object"
+    },
+    "RejectedCandidate": {
+      "additionalProperties": false,
+      "description": "Something compilable-looking that was deliberately not compiled.\n\n``risk`` is present whenever it could be classified, and classifying the risk\nof something being refused is not wasted work: an agent told only that a form\nwas skipped will try to reach it another way, while one told the form is a\nhigh-risk POST has been given the reason.",
+      "properties": {
+        "candidate_key": {
+          "title": "Candidate Key",
+          "type": "string"
+        },
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "confidence": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Confidence"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "risk": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Risk"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "candidate_key",
+        "code",
+        "message"
+      ],
+      "title": "RejectedCandidate",
+      "type": "object"
+    },
+    "Risk": {
+      "additionalProperties": false,
+      "description": "Why a capability is or is not safe to run (specification 10.1).\n\nClassified by side effect rather than by mechanism: the same click is harmless\non a search form and irreversible on a delete button, so the button is not\nwhat decides.",
+      "properties": {
+        "level": {
+          "$ref": "#/$defs/RiskLevel"
+        },
+        "requires_confirmation": {
+          "title": "Requires Confirmation",
+          "type": "boolean"
+        },
+        "reversible": {
+          "title": "Reversible",
+          "type": "boolean"
+        },
+        "side_effect": {
+          "$ref": "#/$defs/SideEffect"
+        }
+      },
+      "required": [
+        "level",
+        "side_effect",
+        "reversible",
+        "requires_confirmation"
+      ],
+      "title": "Risk",
+      "type": "object"
+    },
+    "RiskLevel": {
+      "description": "Specification 10.1. Only ``LOW`` is ever executable.\n\n``CRITICAL`` exists even though nothing may run at that level, and the reason\nis that a level nobody can name cannot be reported. An agent asking what a page\noffers deserves to be told that the delete button was seen and refused, rather\nthan to find it silently absent.",
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ],
+      "title": "RiskLevel",
+      "type": "string"
+    },
+    "SideEffect": {
+      "description": "What running a capability does to the world (specification 10.1).\n\nThe five values are the specification's, and the ordering between them is the\nwhole risk model: risk is decided by consequence, never by mechanism. The same\nclick is ``NONE`` on a search form and ``DESTRUCTIVE_OR_FINANCIAL`` on a\n\"close account\" button, so the click tells you nothing.",
+      "enum": [
+        "none",
+        "local",
+        "reversible_account",
+        "persistent",
+        "destructive_or_financial"
+      ],
+      "title": "SideEffect",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Everything one snapshot compiled to.\n\nCarries ``snapshot_id`` because every claim in it is about one observation.\nTwo reports of the same page class are comparable only through their\ntemplates' page signatures, never by equality.",
+  "properties": {
+    "rejected": {
+      "items": {
+        "$ref": "#/$defs/RejectedCandidate"
+      },
+      "title": "Rejected",
+      "type": "array"
+    },
+    "schema_version": {
+      "default": "0.2.1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "snapshot_id": {
+      "title": "Snapshot Id",
+      "type": "string"
+    },
+    "templates": {
+      "items": {
+        "$ref": "#/$defs/CapabilityTemplate"
+      },
+      "title": "Templates",
+      "type": "array"
+    },
+    "warnings": {
+      "items": {
+        "$ref": "#/$defs/IRWarning"
+      },
+      "title": "Warnings",
+      "type": "array"
+    }
+  },
+  "required": [
+    "snapshot_id"
+  ],
+  "title": "CompilationReport",
+  "type": "object"
+}

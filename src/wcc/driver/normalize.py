@@ -52,6 +52,9 @@ _INPUT_TYPES: dict[str, ControlType] = {
     "submit": ControlType.BUTTON,
     "button": ControlType.BUTTON,
     "reset": ControlType.BUTTON,
+    # A submit button drawn as a picture is still a button. Falling through to the
+    # text default made it look like a control a capability could type into.
+    "image": ControlType.BUTTON,
 }
 
 #: Roles that make an element interactive even without a native tag (8.2).
@@ -177,6 +180,18 @@ def form_destination(
     )
 
 
+def pagination_rel(record: dict[str, Any]) -> str | None:
+    """Return the paging ``rel`` this control declares, if it declares one.
+
+    Only the first recognised value is reported. A control claiming both ``next``
+    and ``prev`` is contradicting itself, and picking one by sort order at least
+    makes the choice the same on every run.
+    """
+    rels = [part.lower() for part in str(record.get("rel") or "").split() if part]
+    recognised = sorted(set(rels) & _PAGINATION_RELS)
+    return recognised[0] if recognised else None
+
+
 def is_pagination_control(
     record: dict[str, Any], control_type: ControlType, label: str | None
 ) -> bool:
@@ -278,11 +293,16 @@ def normalize_element(
         visible=bool(record.get("visible")),
         bounding_box=BoundingBox(**box) if isinstance(box, dict) else None,
         form_id=record.get("form_id"),
+        form_key=record.get("form_key"),
+        control_name=record.get("name") or None,
         form_method=method,
         form_action_route=action_route,
         form_action_kind=action_kind,
         submits_form=bool(record.get("submits_form")),
+        in_search_landmark=bool(record.get("in_search_landmark")),
+        in_navigation=bool(record.get("in_navigation")),
         is_pagination_control=is_pagination_control(record, control_type, label),
+        pagination_rel=pagination_rel(record),
         locator_chain=build_locator_chain(record, label),
         confidence=assess_confidence(record, source),
     )

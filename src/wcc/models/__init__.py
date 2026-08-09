@@ -27,6 +27,7 @@ from wcc.models.common import (
     SessionStatus,
     WCCModel,
 )
+from wcc.models.compilation import CompilationReport, RejectedCandidate
 from wcc.models.element import CollectionRecord, CollectionSnapshot, NormalizedElement
 from wcc.models.ir import Entity, Evidence, IRWarning, PageIR
 from wcc.models.locator import LocatorCandidate, LocatorChain, LocatorKind
@@ -48,6 +49,7 @@ __all__ = [
     "CollectionKind",
     "CollectionRecord",
     "CollectionSnapshot",
+    "CompilationReport",
     "Confidence",
     "ControlType",
     "Entity",
@@ -65,6 +67,7 @@ __all__ = [
     "PageSnapshot",
     "PlanStep",
     "PlannedAction",
+    "RejectedCandidate",
     "Risk",
     "RiskLevel",
     "SCHEMA_VERSION",

@@ -1,0 +1,65 @@
+{
+  "$defs": {
+    "SessionStatus": {
+      "enum": [
+        "active",
+        "closed",
+        "failed"
+      ],
+      "title": "SessionStatus",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "One session equals one browser context with one active page.\n\n``current_document_id`` changes only after a committed navigation to a new\ndocument; ``current_snapshot_id`` changes on every observation, including\nsame-document updates (specification 7.2).",
+  "properties": {
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "current_document_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Current Document Id"
+    },
+    "current_snapshot_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Current Snapshot Id"
+    },
+    "initial_url": {
+      "title": "Initial Url",
+      "type": "string"
+    },
+    "session_id": {
+      "title": "Session Id",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/SessionStatus",
+      "default": "active"
+    }
+  },
+  "required": [
+    "session_id",
+    "created_at",
+    "initial_url"
+  ],
+  "title": "SessionInfo",
+  "type": "object"
+}

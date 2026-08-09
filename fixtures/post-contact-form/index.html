@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Fixture: Contact Form</title>
+</head>
+<body>
+  <header><nav aria-label="Main"><a href="/">Home</a></nav></header>
+
+  <main>
+    <h1>Contact us</h1>
+
+    <!-- A generic data-entry form submitted by POST. Specification 8.3 says such a
+         form is detected and reported but not compiled in v0.1, and 10.1 makes every
+         POST submission high risk with no read-only exception. Phase 3 must show
+         both at once: seen, classified, listed, and not executable. -->
+    <form id="contact" action="/contact" method="post">
+      <label for="contact-name">Your name</label>
+      <input type="text" id="contact-name" name="name" required>
+
+      <label for="contact-email">Email address</label>
+      <input type="email" id="contact-email" name="email" required>
+
+      <label for="contact-message">Message</label>
+      <textarea id="contact-message" name="message" required></textarea>
+
+      <button type="submit">Send message</button>
+    </form>
+
+    <!-- A GET search form on the same page, so a test can show that the POST form
+         being refused does not suppress the compilable one beside it. -->
+    <form id="help-search" role="search" action="/help" method="get">
+      <label for="help-query">Search help articles</label>
+      <input type="search" id="help-query" name="q">
+      <button type="submit">Search</button>
+    </form>
+  </main>
+</body>
+</html>
