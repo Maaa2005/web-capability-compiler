@@ -17,3 +17,6 @@ benchmarks/results/*.tmp
 
 .DS_Store
 .reviews/
+
+# Loop-harness state, which is a scratch file rather than a fact about the repo.
+loop_status.md

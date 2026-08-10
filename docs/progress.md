@@ -969,9 +969,11 @@ compilation report at all.
 - The Codex counter-review of the Phase 1 code is still unrun; `codex exec` waits
   on stdin when detached and this machine has no `timeout`. It needs a foreground
   run, and the Phase 4 runtime is now worth including in it.
-- `loop_status.md` at the repository root still describes a Phase 1 loop from
-  2026-08-02 and has not been updated since. It is stale, not wrong about anything
-  current.
+- ~~`loop_status.md` at the repository root still describes a Phase 1 loop from
+  2026-08-02.~~ Removed on 2026-08-10. It was a loop harness's scratch state that
+  arrived inside a feature commit, nothing in the repository read it, and a
+  checked-in file that says "iteration 7 of 12" invites a reader to believe it. It
+  is in `.gitignore` now, and in git history if it is ever wanted.
 
 ---
 
