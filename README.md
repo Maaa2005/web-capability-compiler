@@ -17,17 +17,26 @@ The headline metric is **token reduction on repeated tasks**, not task success r
 
 ## Status
 
-MVP v0.1 is under construction against spec v0.2.1. **Phases 0–3 of 7 are
-complete.** A page can now be opened, observed, and compiled: WCC reads a live
-document into a snapshot, builds an Agent Page IR from it, and produces typed
-search, filter, and navigation capabilities with evidence, confidence, and a
-deterministic risk classification, persisting them as reusable templates.
+MVP v0.1 is under construction against spec v0.2.1. **Phases 0–4 of 7 are
+complete.** The loop closes: WCC reads a live document into a snapshot, builds an
+Agent Page IR, compiles typed search, filter, and navigation capabilities with
+evidence and a deterministic risk classification, persists them as reusable
+templates, binds a stored template on a later session without recompiling, and
+executes one — validating arguments against its schema, re-resolving every target,
+re-checking risk against the page in front of it, running the plan one allowlisted
+action at a time, and verifying afterwards that the intended effect actually
+happened.
 
-Nothing executes yet. A capability is compiled and bound, but running one — argument
-validation, stepwise allowlisted actions, and post-action verification — is Phase 4,
-and the MCP server that would expose all of this to an agent is Phase 5.
+What is missing is the interface. Everything above is reachable from Python and not
+yet from an MCP client; the six stable MCP tools, template export and import, and
+the operational CLI are Phase 5.
 
-See [`docs/progress.md`](docs/progress.md) for the phase log.
+Two properties are worth stating plainly, because they are what the design is for:
+only `low`-risk capabilities ever execute, and an execution is reported as
+successful only when its effect was observed.
+
+See [`docs/progress.md`](docs/progress.md) for the phase log, which records the
+reasoning behind each decision and the defects found along the way.
 
 ## Requirements
 
