@@ -972,3 +972,63 @@ compilation report at all.
 - `loop_status.md` at the repository root still describes a Phase 1 loop from
   2026-08-02 and has not been updated since. It is stale, not wrong about anything
   current.
+
+---
+
+## Codex counter-review of Phase 4, processed (2026-08-10)
+
+The review debt carried since 2026-08-02 is closed, and the reason it kept failing
+turned out to be smaller than the workarounds built around it. `codex exec` was not
+hanging *because* it ran in the background: it hangs whenever stdin is not
+redirected, and `codex --version` hangs the same way. `< /dev/null` fixes it. The
+missing `timeout` binary was a second, unrelated problem, and a foreground run under
+the caller's own time limit covers it.
+
+Twelve findings: 2 Critical, 4 High, 5 Medium, 1 Low. Every claim was checked
+against the code before it was accepted, and two were reproduced by running them.
+
+### Accepted and fixed
+
+| Finding | Verification | Fix |
+|---|---|---|
+| **Critical.** The risk classifier and the resolver can pick different elements. The classifier matched a saved chain against the snapshot by candidate equality — including `role` — while the resolver runs the specification 7.7 rule in the page and ignores `role` for an id | Confirmed by reading both: on a document with a duplicated `id`, the classifier finds one element uniquely while the resolver rejects the id as ambiguous and falls through to the structural path. The safe element is classified; the other is clicked | `page_script.py` is split into shared helpers plus two entry points, and the new `DESCRIBE_ELEMENT` describes one element by the extractor's own rules. The execution gate now classifies the elements the resolver actually returned, so there is no second opinion to disagree with |
+| **Critical.** A page's own handlers can issue a POST during an execution classified as low; the URL policy judges addresses, not methods | Real, and not fully preventable from outside the page | Detected and reported rather than claimed impossible: a non-GET request during an execution is recorded and surfaced in `ExecutionResult.warnings`. See the open decision below |
+| **High.** No per-session serialization. Two concurrent executions can both pass their gates against one observation | Confirmed: nothing serialized `inspect`/`execute`/`close` | One `asyncio.Lock` per session around all three |
+| **High.** Within one plan, a fill can change what the submit does; the handle still points at the same element | Confirmed: `formmethod` is one attribute, and nothing re-read it | The activation target is re-described immediately before every `activate` step and refused if its risk signature moved |
+| **High.** A stale entity locator points at whatever moved into that slot after a reorder | Confirmed: the saved path is a position, and `contains` cannot see the difference because the wrong record is in the right place | The record is looked up again in the fresh snapshot by its specification 8.4 identity, and *its* current locator is used. Two records sharing an identity are refused rather than chosen between |
+| **High.** Execution arguments were persisted in plain text; a search keyword can be an email address | Confirmed against specification 16 and 18 | `ExecutionResult.redacted()` replaces typed values with `[redacted: N characters]` before the store writes. The caller still sees what it supplied; the database never does |
+| **Medium.** An unsupported keyword on an *optional* parameter was never reached, so the schema was accepted | Reproduced: `{"x": {"type": "string", "maxLength": 3}}` accepted `{}` | Every declared property's schema is checked up front, before any value is |
+| **Medium.** `enum` used Python equality, where `1 == True` | Reproduced: an integer parameter with `enum: [true]` accepted `1` | Compared as JSON, where a boolean is never a number |
+| **Medium.** An exception after the click left no result and no record | Confirmed: only `ExecutionRefused` was caught | Anything raised after the first step ran becomes a complete `failed` result with `effect_unknown`. Before the first step, it still raises — nothing happened, and inventing a record would be worse |
+| **Medium.** A refusal for an unknown session tried to insert against a foreign key and raised instead of returning the refusal | Confirmed | The refusal is the answer; failing to file it must not replace it |
+| **Medium.** Resolutions leaked: every bind and execution added an `ElementHandle` that nothing disposed | Confirmed | `release()` disposes them, and every execution releases in a `finally` |
+| **Low.** Specification 17 names `execution_steps` and revision 2 had only `executions` | Confirmed in the specification text | Revision 3 adds it. Steps live in the payload *and* in a table, because "which step fails most often" cannot be asked of a JSON blob |
+
+### Accepted, not fixed, and why
+
+- **Verification can pass on an unrelated change.** The verifier compares every
+  collection on the page and accepts any one expected signal, so a broken search
+  beside a live "recently viewed" strip can read as a result change, and a search
+  that lands on an error page reads as a URL change. This is real. Fixing it
+  properly means per-capability postconditions — the destination a navigation
+  should reach, the collection a search should alter — which is a change to what a
+  template *declares*, not to how it is checked. It is recorded here as the first
+  candidate for Phase 6/7 rather than improvised now. The entity path is already
+  narrower after the identity fix above.
+- **`session.chains` grows for the life of a session.** One entry per element per
+  snapshot, never dropped. Unlike the handles, these are plain values rather than
+  live DOM references, and dropping older generations would break `resolve()` for
+  any element ID an agent still holds — which is a decision about how long an
+  element ID stays valid, not a leak fix. Left for the Phase 5 MCP surface, where
+  the lifetime of an ID handed to an external client has to be stated anyway.
+
+### An open decision for Phase 5
+
+Whether to **block** non-GET requests during a low-risk execution rather than only
+report them. Blocking makes "low means read-only" true rather than aspirational;
+it also breaks ordinary pages that beacon analytics or refresh a CSRF token on
+input. The detection landed now because a claim of "no unauthorized execution above
+low" is only checkable if the runtime measures it. The block/allow choice is a
+product decision and is deliberately not made here.
+
+447 tests green, ruff and pyright clean.

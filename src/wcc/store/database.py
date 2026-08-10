@@ -21,7 +21,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 #: The DDL below. Bump when a table or column changes, and add a migration.
-SCHEMA_REVISION = 2
+SCHEMA_REVISION = 3
 
 _EXECUTIONS_DDL = """
 CREATE TABLE IF NOT EXISTS executions (
@@ -45,17 +45,48 @@ CREATE INDEX IF NOT EXISTS idx_executions_owner
 """
 
 
-def _add_executions(connection: sqlite3.Connection) -> None:
-    """Revision 2: record every execution (specification 11.1 step 9, 16)."""
-    for statement in (part.strip() for part in _EXECUTIONS_DDL.split(";")):
+_EXECUTION_STEPS_DDL = """
+CREATE TABLE IF NOT EXISTS execution_steps (
+    execution_id    TEXT NOT NULL REFERENCES executions(execution_id) ON DELETE CASCADE,
+    step_index      INTEGER NOT NULL,
+    action          TEXT NOT NULL,
+    target_ref      TEXT NOT NULL,
+    parameter       TEXT,
+    ran             INTEGER NOT NULL,
+    error_code      TEXT,
+    PRIMARY KEY (execution_id, step_index)
+);
+
+-- What a step table is for: asking about steps. "Which step fails most often on
+-- this template" is unanswerable while the steps live only inside a JSON payload.
+CREATE INDEX IF NOT EXISTS idx_steps_failures
+    ON execution_steps (error_code);
+"""
+
+
+def _run(connection: sqlite3.Connection, ddl: str) -> None:
+    for statement in (part.strip() for part in ddl.split(";")):
         if statement:
             connection.execute(statement)
+
+
+def _add_executions(connection: sqlite3.Connection) -> None:
+    """Revision 2: record every execution (specification 11.1 step 9, 16)."""
+    _run(connection, _EXECUTIONS_DDL)
+
+
+def _add_execution_steps(connection: sqlite3.Connection) -> None:
+    """Revision 3: the per-step table specification 17 names."""
+    _run(connection, _EXECUTION_STEPS_DDL)
 
 
 #: ``revision -> migration``. The mechanism was built empty at revision 1 rather
 #: than added later, under pressure, next to real user data — which is how
 #: migrations get skipped. This is its first use.
-MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {2: _add_executions}
+MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
+    2: _add_executions,
+    3: _add_execution_steps,
+}
 
 # Column choices follow one rule: SQL holds what is searched, owned, counted, or
 # related; the JSON payload holds the model. Specification 17 names the template
@@ -149,7 +180,7 @@ CREATE INDEX IF NOT EXISTS idx_bindings_session
     ON bound_capabilities (session_id, status);
 """
 
-_DDL += _EXECUTIONS_DDL
+_DDL += _EXECUTIONS_DDL + _EXECUTION_STEPS_DDL
 
 
 class SchemaVersionError(Exception):

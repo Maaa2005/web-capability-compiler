@@ -25,6 +25,7 @@ rather than four.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -35,11 +36,12 @@ from wcc.binding.binder import Binder, BindingRefused
 from wcc.binding.registry import SessionRegistry
 from wcc.compiler.deterministic import compile_snapshot
 from wcc.compiler.reclassify import SnapshotRiskClassifier
+from wcc.compiler.risk import classify_plan
 from wcc.driver.base import DriverError
 from wcc.identifiers import new_id
 from wcc.ir.builder import build_page_ir
 from wcc.limits import ResourceLimits
-from wcc.models.action import ActionObservation, PlannedAction
+from wcc.models.action import ActionObservation, NavigationEvent, PlannedAction
 from wcc.models.capability import (
     BindingStatus,
     BoundCapability,
@@ -49,6 +51,7 @@ from wcc.models.capability import (
 )
 from wcc.models.common import ActionType
 from wcc.models.compilation import CompilationReport
+from wcc.models.element import NormalizedElement
 from wcc.models.execution import (
     ExecutedStep,
     ExecutionError,
@@ -64,6 +67,7 @@ from wcc.runtime.targets import (
     ENTITY_PARAMETER,
     PAGE_PARAMETER,
     TargetUnavailable,
+    current_record,
     entity_of,
     page_link_chain,
     record_of,
@@ -96,6 +100,12 @@ class RuntimeDriver(Protocol):
     ) -> str: ...
 
     async def contains(self, session_id: str, container_id: str, member_id: str) -> bool: ...
+
+    def drain_navigation_events(self, session_id: str) -> list[NavigationEvent]: ...
+
+    async def describe_resolved(self, session_id: str, handle_id: str) -> NormalizedElement: ...
+
+    def release(self, session_id: str, handle_id: str) -> None: ...
 
     async def execute_resolved_action(
         self, session_id: str, handle_id: str, action: PlannedAction
@@ -167,10 +177,23 @@ class Coordinator:
         self._binder = binder or Binder(driver, SnapshotRiskClassifier())
         self._limits = limits or ResourceLimits()
         self._states: dict[str, _SessionState] = {}
+        self._locks: dict[str, asyncio.Lock] = {}
 
     @property
     def registry(self) -> SessionRegistry:
         return self._registry
+
+    def _lock(self, session_id: str) -> asyncio.Lock:
+        """One session, one thing happening to it at a time.
+
+        Every gate of specification 11.1 reads the page and then acts on what it
+        read. Two concurrent executions on one session can both pass their gates
+        against the same observation, and then the first one to run changes the
+        page the second was cleared for — the second is now acting on a judgement
+        about a page that no longer exists. Inspection and closing take the same
+        lock, because both move the state the gates consult.
+        """
+        return self._locks.setdefault(session_id, asyncio.Lock())
 
     # -- session lifecycle -------------------------------------------------
 
@@ -182,6 +205,11 @@ class Coordinator:
         return session
 
     async def close_session(self, session_id: str) -> None:
+        async with self._lock(session_id):
+            await self._close_session(session_id)
+        self._locks.pop(session_id, None)
+
+    async def _close_session(self, session_id: str) -> None:
         """Close the page and retire every binding that named it.
 
         The registry alone would answer "stale" for these, and the records are
@@ -201,6 +229,10 @@ class Coordinator:
     # -- inspection: the warm path first, the cold path only if it fails ---
 
     async def inspect_page(self, session_id: str) -> Inspection:
+        async with self._lock(session_id):
+            return await self._inspect_page(session_id)
+
+    async def _inspect_page(self, session_id: str) -> Inspection:
         """Observe the page and offer capabilities for it (specification 7.10).
 
         Lookup comes first and compilation is the fallback, which is the whole
@@ -295,9 +327,14 @@ class Coordinator:
         arguments were wrong is a caller reading two different report formats for
         one question.
         """
+        async with self._lock(session_id):
+            return await self._execute(session_id, capability_id, dict(arguments or {}))
+
+    async def _execute(
+        self, session_id: str, capability_id: str, arguments: dict[str, Any]
+    ) -> ExecutionResult:
         started = datetime.now(UTC)
         execution_id = new_id("exec")
-        arguments = dict(arguments or {})
 
         try:
             state, binding, template = self._bound(session_id, capability_id)
@@ -332,17 +369,34 @@ class Coordinator:
         handles |= await self._resolve_members(
             session_id, state, template, before, arguments, handles
         )
-        self._check_risk(template, before)
+        described = await self._describe(session_id, handles)
+        self._check_risk(template, described)
 
-        steps, observations = await self._run_plan(session_id, template, handles, arguments)
-
-        await self._settle(session_id)
-        after = await self._driver.snapshot(session_id)
-        self._store.save_snapshot(after)
-        result_ir = build_page_ir(after)
-        self._store.save_ir(result_ir)
+        steps: list[ExecutedStep] = []
+        try:
+            steps, observations = await self._run_plan(
+                session_id, template, handles, arguments, described
+            )
+            after, result_ir = await self._observe_result(session_id)
+        except ExecutionRefused:
+            raise
+        except Exception as broke:
+            # Once a step has run, the page has already been acted on. An exception
+            # escaping from here would give the caller no result at all, which reads
+            # as "it did not happen" and invites a retry of something that did.
+            # Anything raised after the first action becomes a complete failed
+            # result instead, saying which steps ran and that the effect is unknown.
+            if not any(step.ran for step in steps):
+                raise
+            return self._unknown_effect(
+                execution_id, started, session_id, binding, template, steps, broke
+            )
+        finally:
+            for handle_id in handles.values():
+                self._driver.release(session_id, handle_id)
 
         verification, observed = verify(template.expected_effect, before, after, observations)
+        warnings = _state_changing_warnings(self._driver.drain_navigation_events(session_id))
         failed = next((step for step in steps if step.error is not None), None)
 
         status, error = self._verdict(failed, verification)
@@ -360,12 +414,54 @@ class Coordinator:
             document_id_after=after.document_id,
             snapshot_id_after=after.snapshot_id,
             result_entities=result_ir.entities,
+            warnings=warnings,
             error=error,
         )
         self._store.save_execution(result)
         if status is ExecutionStatus.SUCCEEDED:
             self._store.record_successful_use(template.template_id)
         return result
+
+    def _unknown_effect(
+        self,
+        execution_id: str,
+        started: datetime,
+        session_id: str,
+        binding: BoundCapability,
+        template: CapabilityTemplate,
+        steps: list[ExecutedStep],
+        broke: Exception,
+    ) -> ExecutionResult:
+        """A result for an execution that acted and then could not be observed."""
+        result = ExecutionResult(
+            execution_id=execution_id,
+            session_id=session_id,
+            capability_id=binding.capability_id,
+            template_id=template.template_id,
+            status=ExecutionStatus.FAILED,
+            started_at=started,
+            completed_at=datetime.now(UTC),
+            steps=steps,
+            error=ExecutionError(
+                code="effect_unknown",
+                message=(
+                    f"{sum(1 for step in steps if step.ran)} step(s) ran and the page "
+                    f"could not be observed afterwards ({broke}); whether the effect "
+                    "happened is not known"
+                ),
+            ),
+        )
+        self._store.save_execution(result)
+        return result
+
+    async def _observe_result(self, session_id: str) -> tuple[PageSnapshot, PageIR]:
+        """Steps 7-8's observation: settle, look again, and read what is there."""
+        await self._settle(session_id)
+        after = await self._driver.snapshot(session_id)
+        self._store.save_snapshot(after)
+        result_ir = build_page_ir(after)
+        self._store.save_ir(result_ir)
+        return after, result_ir
 
     @staticmethod
     def _verdict(
@@ -444,9 +540,27 @@ class Coordinator:
         except ArgumentError as invalid:
             raise ExecutionRefused(ExecutionStatus.REFUSED, invalid.code, str(invalid)) from invalid
 
-    def _check_risk(self, template: CapabilityTemplate, before: PageSnapshot) -> None:
-        """Step 5: only ``low`` may run, judged against the page as it is now."""
-        current = SnapshotRiskClassifier().classify(template, before)
+    async def _describe(
+        self, session_id: str, handles: dict[str, str]
+    ) -> dict[str, NormalizedElement]:
+        """What each resolved target actually is, read back from the element itself.
+
+        Not from the snapshot. The snapshot says what the page held a moment ago and
+        has to be matched to the template by a second rule, which can disagree with
+        the resolver — and when the two disagree it is the safe element that gets
+        classified and the other one that gets clicked.
+        """
+        with self._as_stale():
+            return {
+                ref: await self._driver.describe_resolved(session_id, handle_id)
+                for ref, handle_id in handles.items()
+            }
+
+    def _check_risk(
+        self, template: CapabilityTemplate, targets: dict[str, NormalizedElement]
+    ) -> None:
+        """Step 5: only ``low`` may run, judged on the elements that will be acted on."""
+        current, _ = classify_plan(template.category, template.execution_plan_template, targets)
         if current.level is not RiskLevel.LOW:
             raise ExecutionRefused(
                 ExecutionStatus.REFUSED,
@@ -533,10 +647,11 @@ class Coordinator:
             if state.ir is None:
                 raise TargetUnavailable("no inspection has issued entities for this session")
             entity = entity_of(state.ir, str(arguments[ENTITY_PARAMETER]))
-            record = record_of(state.snapshot or before, entity)
+            observed = record_of(state.snapshot or before, entity)
+            record = current_record(before, observed.identity)
             if record.activation_locator is None:
                 raise TargetUnavailable(
-                    f"{entity.entity_id} was read from a record with no link of its own, "
+                    f"{entity.entity_id} names a record with no link of its own, "
                     "so there is nothing this capability could open"
                 )
             chain = record.activation_locator
@@ -554,6 +669,7 @@ class Coordinator:
         template: CapabilityTemplate,
         handles: dict[str, str],
         arguments: dict[str, Any],
+        described: dict[str, NormalizedElement],
     ) -> tuple[list[ExecutedStep], list[ActionObservation]]:
         """Step 6: one allowlisted action at a time, stopping at the first failure.
 
@@ -581,6 +697,9 @@ class Coordinator:
                 )
                 continue
 
+            if step.action is ActionType.ACTIVATE:
+                await self._still_the_same_act(session_id, step, handles, described)
+
             action = _planned(step, handles[step.target_ref], arguments)
             observation = await self._driver.execute_resolved_action(
                 session_id, handles[step.target_ref], action
@@ -607,6 +726,33 @@ class Coordinator:
             stopped = error is not None
 
         return steps, observations
+
+    async def _still_the_same_act(
+        self,
+        session_id: str,
+        step: PlanStep,
+        handles: dict[str, str],
+        described: dict[str, NormalizedElement],
+    ) -> None:
+        """Re-read an activation target immediately before activating it.
+
+        The gate ran before the first step, and a plan has more than one. Filling a
+        field fires the page's own event handlers, and one of them may change what
+        the submit does — ``formmethod`` from GET to POST is a single attribute. The
+        handle would still point at the same element, so nothing else would notice.
+
+        Only the risk-relevant signals are compared, and only before an activation:
+        that is the step whose consequence the classification described.
+        """
+        now = await self._driver.describe_resolved(session_id, handles[step.target_ref])
+        before = described[step.target_ref]
+        if _risk_signature(now) != _risk_signature(before):
+            raise ExecutionRefused(
+                ExecutionStatus.REFUSED,
+                "target_changed_mid_plan",
+                f"{step.target_ref} changed what it does while the plan was running; "
+                "the risk this capability was cleared for no longer describes it",
+            )
 
     async def _settle(self, session_id: str) -> None:
         """Step 7's settle, which a busy page must not turn into a failed execution.
@@ -707,3 +853,39 @@ def _as_text(value: Any) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
     return str(value)
+
+
+def _state_changing_warnings(events: list[NavigationEvent]) -> list[str]:
+    """Name every state-changing request the page made while the plan ran.
+
+    One line per distinct URL rather than one per request: a handler firing on each
+    keystroke would otherwise bury the result in its own repetition.
+    """
+    seen = {
+        event.url or "an unnamed address"
+        for event in events
+        if event.kind == "state_changing_request"
+    }
+    return [
+        f"the page issued a state-changing request to {url} during an execution "
+        "classified as low risk"
+        for url in sorted(seen)
+    ]
+
+
+def _risk_signature(element: NormalizedElement) -> tuple[object, ...]:
+    """Everything :func:`classify_plan` reads off one element.
+
+    Kept next to the mid-plan check rather than imported from the classifier,
+    because the two are answering different questions: the classifier asks what the
+    risk *is*, and this asks whether the answer it gave is still about the same
+    thing.
+    """
+    return (
+        element.control_type,
+        element.submits_form,
+        element.form_method,
+        element.form_action_kind,
+        element.form_action_route,
+        element.resolved_label,
+    )

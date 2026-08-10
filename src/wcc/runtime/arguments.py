@@ -68,6 +68,14 @@ def validate_arguments(schema: dict[str, Any], arguments: dict[str, Any]) -> dic
     properties = dict(schema.get("properties") or {})
     required = list(schema.get("required") or [])
 
+    # Every declared property, not only the ones the caller supplied. Checking a
+    # property's schema lazily meant an unsupported keyword on an optional
+    # parameter was never reached: a capability declaring
+    # ``{"x": {"type": "string", "maxLength": 3}}`` accepted ``{}`` and ran, which
+    # is the fail-open this module exists to refuse.
+    for name, property_schema in properties.items():
+        _check_property_schema(name, property_schema)
+
     unexpected = sorted(set(arguments) - set(properties))
     if unexpected:
         raise ArgumentError(
@@ -113,28 +121,50 @@ def _check_root(schema: dict[str, Any]) -> None:
             )
 
 
-def _check_value(name: str, property_schema: Any, value: Any) -> None:
+def _check_property_schema(name: str, property_schema: Any) -> None:
+    """Whether this build can check the constraint at all, said before any value is."""
     if not isinstance(property_schema, dict):
         raise SchemaUnsupported(f"the schema for {name} is not an object")
     unknown = sorted(set(property_schema) - _PROPERTY_KEYWORDS)
     if unknown:
         raise SchemaUnsupported(f"the schema for {name} uses unsupported keywords {unknown}")
+    if property_schema.get("type") not in _SCALAR_TYPES:
+        raise SchemaUnsupported(
+            f"the schema for {name} has unsupported type {property_schema.get('type')!r}"
+        )
+    allowed = property_schema.get("enum")
+    if allowed is not None and not isinstance(allowed, list):
+        raise SchemaUnsupported(f"the enum for {name} is not a list")
+    for keyword in ("minimum", "maximum"):
+        bound = property_schema.get(keyword)
+        if bound is None:
+            continue
+        if not isinstance(bound, int | float) or isinstance(bound, bool):
+            raise SchemaUnsupported(f"the {keyword} for {name} is not a number")
 
+
+def _check_value(name: str, property_schema: Any, value: Any) -> None:
+    _check_property_schema(name, property_schema)
     declared = property_schema.get("type")
-    if declared not in _SCALAR_TYPES:
-        raise SchemaUnsupported(f"the schema for {name} has unsupported type {declared!r}")
 
     if not _matches(declared, value):
         raise ArgumentError(f"{name} must be {declared}, and {type(value).__name__} was supplied")
 
     allowed = property_schema.get("enum")
-    if allowed is not None:
-        if not isinstance(allowed, list):
-            raise SchemaUnsupported(f"the enum for {name} is not a list")
-        if value not in allowed:
-            raise ArgumentError(f"{name} must be one of {allowed}")
+    if allowed is not None and not any(_same_json_value(value, option) for option in allowed):
+        # ``in`` would use Python equality, where ``1 == True``. An enum of
+        # ``[true]`` on an integer parameter has no satisfying value in JSON, and
+        # accepting ``1`` for it would be this validator inventing one.
+        raise ArgumentError(f"{name} must be one of {allowed}")
 
     _check_bounds(name, property_schema, value)
+
+
+def _same_json_value(value: Any, option: Any) -> bool:
+    """Equality as JSON means it: a boolean is never a number."""
+    if isinstance(value, bool) != isinstance(option, bool):
+        return False
+    return value == option
 
 
 def _check_bounds(name: str, property_schema: dict[str, Any], value: Any) -> None:
@@ -145,8 +175,6 @@ def _check_bounds(name: str, property_schema: dict[str, Any], value: Any) -> Non
         bound = property_schema.get(keyword)
         if bound is None:
             continue
-        if not isinstance(bound, int | float) or isinstance(bound, bool):
-            raise SchemaUnsupported(f"the {keyword} for {name} is not a number")
         if not isinstance(value, int | float) or isinstance(value, bool):
             raise SchemaUnsupported(f"{keyword} does not apply to the type of {name}")
         if not ok(bound):

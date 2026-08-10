@@ -9,6 +9,7 @@ first one's work on disk.
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 
@@ -169,8 +170,20 @@ async def test_every_action_and_observation_is_recorded_and_retrievable(
 
     stored = store.load_execution(result.execution_id, session_id=session.session_id)
     assert stored is not None
-    assert stored.steps == result.steps
+    assert [step.index for step in stored.steps] == [step.index for step in result.steps]
     assert store.load_execution(result.execution_id, session_id="sess_other") is None
+
+    # Specification 16 and 18: the searched-for value is in the returned result,
+    # which the caller supplied and needs to see, and is not in the database.
+    typed = [
+        step.observation.action.value
+        for step in result.steps
+        if step.observation is not None and step.observation.action.value is not None
+    ]
+    assert "earbuds" in typed
+    persisted = json.dumps(stored.model_dump(mode="json"), ensure_ascii=False)
+    assert "earbuds" not in persisted
+    assert "[redacted:" in persisted
     await coordinator.close_session(session.session_id)
 
 

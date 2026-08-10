@@ -14,8 +14,7 @@ such a value independently as the second barrier.
 
 from __future__ import annotations
 
-EXTRACT_ELEMENTS = r"""
-() => {
+_SHARED = r"""
   const SENSITIVE_TYPES = new Set(['password', 'file', 'hidden']);
 
   // Any `cc-*` autocomplete token is payment data. Matched by prefix rather than
@@ -133,17 +132,14 @@ EXTRACT_ELEMENTS = r"""
     '[role="combobox"]', '[role="searchbox"]', '[role="textbox"]',
   ].join(',');
 
-  const records = [];
-  let ordinal = 0;
-  for (const el of document.querySelectorAll(SELECTOR)) {
-    ordinal += 1;
+  const describe = (el, ordinal) => {
     const tag = el.tagName.toLowerCase();
     const type = (el.getAttribute('type') || '').toLowerCase();
     const sensitive = isSensitive(el);
     const box = el.getBoundingClientRect();
     const form = el.form || el.closest('form');
 
-    records.push({
+    return {
       ordinal,
       tag,
       type,
@@ -211,11 +207,43 @@ EXTRACT_ELEMENTS = r"""
       // different question than label confidence does: not "is this control a
       // search box" but "does the page declare this region to be a search".
       in_search_landmark: Boolean(el.closest('[role="search"]')),
-    });
+    };
+  };
+"""
+
+#: Every eligible control on the page, as the compiler's input.
+EXTRACT_ELEMENTS = (
+    "() => {\n"
+    + _SHARED
+    + """
+  const records = [];
+  let ordinal = 0;
+  for (const el of document.querySelectorAll(SELECTOR)) {
+    ordinal += 1;
+    records.push(describe(el, ordinal));
   }
   return records;
 }
 """
+)
+
+#: One element, described by exactly the same rules.
+#:
+#: This exists because the risk classifier and the resolver were answering
+#: "which element is this?" in two different ways: the classifier matched a saved
+#: locator chain against the snapshot by candidate equality, while the resolver ran
+#: the specification 7.7 rule in the page. On a document with a duplicated ``id``
+#: the two could land on different elements, and the safe one would then be the one
+#: that got classified while the other was the one that got clicked. Describing the
+#: handle the resolver actually returned removes the second opinion entirely.
+DESCRIBE_ELEMENT = (
+    "(el) => {\n"
+    + _SHARED
+    + """
+  return describe(el, 0);
+}
+"""
+)
 
 
 EXTRACT_LANDMARKS = r"""

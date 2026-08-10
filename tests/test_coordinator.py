@@ -15,9 +15,10 @@ import pytest
 
 from factories import ORIGIN, ROUTE, a_chain, a_snapshot, a_submit, a_template, an_element
 from wcc.driver.base import ElementNotResolvedError
-from wcc.models.action import ActionObservation, PlannedAction
+from wcc.models.action import ActionObservation, NavigationEvent, PlannedAction
 from wcc.models.capability import CapabilityTemplate, ExpectedEffect
 from wcc.models.common import ActionType, ControlType
+from wcc.models.element import NormalizedElement
 from wcc.models.execution import ExecutionStatus
 from wcc.models.locator import LocatorChain
 from wcc.models.session import OpenSessionRequest, PageSnapshot, SessionInfo
@@ -34,6 +35,13 @@ class FakeDriver:
         self.unresolvable: set[str] = set()
         self.failing: set[str] = set()
         self.settled = True
+        self.described: list[str] = []
+        self.events: list[NavigationEvent] = []
+        self.released: list[str] = []
+        self.elements: dict[str, NormalizedElement] = {
+            "res_keyword": an_element("el_input", locator_chain=a_chain("keyword")),
+            "res_search-button": a_submit("el_submit", locator_chain=a_chain("search-button")),
+        }
 
     async def open_session(self, request: OpenSessionRequest) -> SessionInfo:
         from datetime import UTC, datetime
@@ -71,6 +79,23 @@ class FakeDriver:
 
     async def contains(self, session_id: str, container_id: str, member_id: str) -> bool:
         return True
+
+    async def describe_resolved(self, session_id: str, handle_id: str) -> NormalizedElement:
+        """What the element behind a handle is, as this fake page says it is.
+
+        Keyed by handle so a test can make one target change mid-plan without
+        touching the others, which is the only way to drive the check that runs
+        immediately before an activation.
+        """
+        self.described.append(handle_id)
+        return self.elements[handle_id]
+
+    def release(self, session_id: str, handle_id: str) -> None:
+        self.released.append(handle_id)
+
+    def drain_navigation_events(self, session_id: str) -> list[NavigationEvent]:
+        events, self.events = self.events, []
+        return events
 
     async def execute_resolved_action(
         self, session_id: str, handle_id: str, action: PlannedAction
@@ -179,18 +204,20 @@ async def test_a_stale_execution_retires_the_binding_so_a_retry_asks_for_inspect
 async def test_a_page_that_has_become_a_post_blocks_execution(store: Store) -> None:
     """Phase 4 acceptance: a risk increase blocks execution.
 
-    The template was compiled against a GET form and rated low. The page in front
-    of the runtime now submits by POST, which specification 10.1 makes high with no
-    exception, so the gate refuses before the first field is filled.
+    The template was compiled against a GET form and rated low. The submit the
+    resolver now returns submits by POST, which specification 10.1 makes high with
+    no exception, so the gate refuses before the first field is filled.
+
+    The change is made to the *element the resolver returns*, not to the snapshot,
+    because that is what the gate reads. Classifying the snapshot instead would let
+    the two disagree, and the safe element would be the one classified while the
+    other was the one clicked.
     """
-    risen = a_snapshot(
-        elements=[
-            an_element("el_input", locator_chain=a_chain("keyword"), form_method="post"),
-            a_submit("el_submit", locator_chain=a_chain("search-button"), form_method="post"),
-        ]
-    )
-    driver = FakeDriver([a_page(), risen])
+    driver = FakeDriver([a_page()])
     coordinator, capability_id = await _prepared(store, driver)
+    driver.elements["res_search-button"] = a_submit(
+        "el_submit", locator_chain=a_chain("search-button"), form_method="post"
+    )
 
     result = await coordinator.execute("sess_1", capability_id, {"keyword": "earbuds"})
 
@@ -329,3 +356,45 @@ async def test_a_template_naming_an_uncomputable_signal_never_verifies(store: St
     assert result.status is ExecutionStatus.FAILED
     assert result.verification is not None
     assert result.verification.missing == ["telepathy"]
+
+
+async def test_a_submit_that_becomes_a_post_mid_plan_is_caught_before_it_is_clicked(
+    store: Store,
+) -> None:
+    """The gate runs before step one, and a plan has more than one step.
+
+    Filling a field fires the page's own handlers, and one attribute — ``formmethod``
+    — turns the submit into a POST. The handle still points at the same element, so
+    nothing else would notice.
+    """
+    driver = FakeDriver([a_page()])
+    coordinator, capability_id = await _prepared(store, driver)
+    changed = a_submit("el_submit", locator_chain=a_chain("search-button"), form_method="post")
+    original = driver.describe_resolved
+
+    async def describe(session_id: str, handle_id: str) -> NormalizedElement:
+        described = await original(session_id, handle_id)
+        if handle_id == "res_search-button" and driver.performed:
+            return changed
+        return described
+
+    driver.describe_resolved = describe  # type: ignore[method-assign]
+
+    result = await coordinator.execute("sess_1", capability_id, {"keyword": "earbuds"})
+
+    assert result.status is ExecutionStatus.REFUSED
+    assert result.error is not None
+    assert result.error.code == "target_changed_mid_plan"
+    assert [action.action for action in driver.performed] == [ActionType.SET_VALUE], (
+        "the submit must not have been clicked"
+    )
+
+
+async def test_every_resolution_is_released_when_the_execution_ends(store: Store) -> None:
+    """A handle keeps a DOM node alive in the browser until it is disposed."""
+    driver = FakeDriver([a_page()])
+    coordinator, capability_id = await _prepared(store, driver)
+
+    await coordinator.execute("sess_1", capability_id, {"keyword": "earbuds"})
+
+    assert sorted(driver.released) == ["res_keyword", "res_search-button"]

@@ -89,6 +89,35 @@ def record_of(snapshot: PageSnapshot, entity: Entity) -> CollectionRecord:
     )
 
 
+def current_record(snapshot: PageSnapshot, identity: str) -> CollectionRecord:
+    """Where the record with this identity is *now*, in a fresh observation.
+
+    The locator stored at inspection time is a position, and a position is not an
+    identity. A list that reordered between inspection and execution leaves the
+    entity's saved path pointing at whatever moved into that slot — it still
+    resolves, it is still inside the container, and it is a different product. The
+    ``contains`` check cannot see this, because the wrong record is in the right
+    place.
+
+    So the record is looked up again by the deterministic identity of
+    specification 8.4, and its *current* locator is used. Two records sharing an
+    identity are indistinguishable by definition, and choosing between them is the
+    guess specification 7.7 forbids.
+    """
+    matches = [
+        record
+        for collection in snapshot.collections
+        for record in collection.records
+        if record.identity == identity
+    ]
+    if len(matches) != 1:
+        raise TargetUnavailable(
+            f"the record this entity names appears {len(matches)} times in the page as it is "
+            "now; it cannot be told apart from its neighbours, so nothing is activated"
+        )
+    return matches[0]
+
+
 def page_link_chain(snapshot: PageSnapshot, page: int) -> LocatorChain:
     """The pagination control for one page number.
 

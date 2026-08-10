@@ -62,7 +62,7 @@ from wcc.driver.base import (
 )
 from wcc.driver.collection_script import EXTRACT_COLLECTIONS
 from wcc.driver.normalize import classify_control, is_eligible, normalize_element
-from wcc.driver.page_script import EXTRACT_ELEMENTS, EXTRACT_LANDMARKS
+from wcc.driver.page_script import DESCRIBE_ELEMENT, EXTRACT_ELEMENTS, EXTRACT_LANDMARKS
 from wcc.driver.resolve import RESOLVE_CANDIDATE
 from wcc.identifiers import new_id
 from wcc.models.action import ActionObservation, NavigationEvent, PlannedAction
@@ -746,6 +746,43 @@ class PlaywrightDriver:
             f"{described_as} is stale: no candidate matched exactly once ({', '.join(attempts)})"
         )
 
+    async def describe_resolved(self, session_id: str, handle_id: str) -> NormalizedElement:
+        """Describe the element a resolution produced, by the extractor's own rules.
+
+        The risk classifier needs a :class:`NormalizedElement`, and the only one it
+        could previously get came from matching a saved locator chain against the
+        snapshot. That is a second opinion about "which element is this?", and two
+        opinions can differ: on a page with a duplicated ``id`` the chain matcher
+        can find one element unique while the specification 7.7 resolver rejects it
+        as ambiguous and falls through to another. The safe one is then the one
+        that gets classified and the other is the one that gets clicked.
+
+        Describing the handle removes the second opinion. What is classified is
+        what will be acted on, because it is the same element object.
+        """
+        session = self._session(session_id)
+        element = self._handle(session, handle_id)
+        record = await session.page.evaluate(DESCRIBE_ELEMENT, element)
+        if not isinstance(record, dict):
+            raise ElementNotResolvedError(f"{handle_id} could not be described")
+        return normalize_element(record, new_id("el"), session.page.url)
+
+    def release(self, session_id: str, handle_id: str) -> None:
+        """Forget a resolution, disposing the browser-side handle behind it.
+
+        Resolutions are per action, so without this the map grows for the life of
+        the session and every handle keeps a DOM node alive in the browser. The
+        disposal is fired and not awaited: it is a best-effort cleanup on a page
+        that may already be gone, and an execution must not fail because tidying up
+        did not.
+        """
+        session = self._sessions.get(session_id)
+        if session is None:
+            return
+        element = session.handles.pop(handle_id, None)
+        if element is not None:
+            self._spawn(element.dispose())
+
     async def contains(self, session_id: str, container_id: str, member_id: str) -> bool:
         """Whether one resolved element encloses another.
 
@@ -965,8 +1002,25 @@ class PlaywrightDriver:
         await session.context.add_init_script(_MUTATION_CLOCK_SCRIPT)
 
         def on_request(request: Request) -> None:
-            del request
             session.in_flight += 1
+            # A capability rated low is one whose *own* act reads without changing
+            # state. It says nothing about what the page does in response: an
+            # `oninput` handler is free to POST, and the URL policy judges addresses
+            # rather than methods, so nothing else would notice. This does not stop
+            # it — blocking every non-GET would break ordinary pages, and by the
+            # time the request is seen it has been made — but an unobserved
+            # state-changing request is one nobody can report as not having
+            # happened, and specification 16 asks for the signals behind a decision
+            # to be observable.
+            if request.method.upper() != "GET":
+                session.events.append(
+                    NavigationEvent(
+                        kind="state_changing_request",
+                        url=request.url,
+                        blocked=False,
+                        reason=f"the page issued a {request.method.upper()} request",
+                    )
+                )
 
         def on_request_done(request: Request) -> None:
             del request

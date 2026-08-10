@@ -72,6 +72,14 @@ class ExecutedStep(WCCModel):
     def ran(self) -> bool:
         return self.observation is not None
 
+    def redacted(self) -> ExecutedStep:
+        """This step with the value it typed replaced by a description of it."""
+        if self.observation is None:
+            return self
+        return self.model_copy(
+            update={"observation": self.observation.redacted()},
+        )
+
 
 class Verification(WCCModel):
     """Whether the expected effect was observed (specification 11.3).
@@ -108,7 +116,33 @@ class ExecutionResult(WCCModel):
     document_id_after: str | None = None
     snapshot_id_after: str | None = None
     result_entities: list[Entity] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    """What the runtime noticed but did not refuse.
+
+    A capability rated low describes what *WCC* does, not what the page does in
+    response. A page whose input handler issues a POST has changed server state
+    during an execution that was cleared as read-only, and the runtime cannot
+    prevent that from outside the page. Reporting it is what makes "no unauthorized
+    execution above low" a claim someone can check rather than assume.
+    """
+
     error: ExecutionError | None = None
+
+    def redacted(self) -> ExecutionResult:
+        """The same result with the values that were typed into the page removed.
+
+        Specification 16 forbids logging full sensitive form values and 18 requires
+        redaction before persistence, and a search term is exactly the field that
+        looks harmless until it is an email address, an order number, or a name.
+        The values are in the result because the caller supplied them and needs to
+        see what ran; they are not in the database, because nobody needs them
+        there tomorrow.
+
+        What survives is what an audit actually asks: which parameter, what type of
+        value, and how long it was. "The keyword parameter received 24 characters"
+        answers "did this execution carry personal data" without carrying it.
+        """
+        return self.model_copy(update={"steps": [step.redacted() for step in self.steps]})
 
     @model_validator(mode="after")
     def _an_unsuccessful_result_says_why(self) -> ExecutionResult:

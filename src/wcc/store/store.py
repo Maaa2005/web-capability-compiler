@@ -398,7 +398,27 @@ class Store:
         because the risk had risen" is the line an operator needs, and it is
         exactly the line a store that only kept successes would not have.
         """
-        payload_json, _ = _dump(result, f"execution {result.execution_id}")
+        stored = result.redacted()
+        payload_json, _ = _dump(stored, f"execution {stored.execution_id}")
+        if not self._session_exists(stored.session_id):
+            # A refusal aimed at a session this process never opened has nowhere to
+            # go: ``executions.session_id`` references ``sessions``, and the insert
+            # would raise an IntegrityError *instead of* returning the refusal the
+            # caller asked for. The refusal is the answer; failing to file it must
+            # not replace it.
+            return
+        with transaction(self._connection):
+            self._save_execution(stored, payload_json)
+
+    def _session_exists(self, session_id: str) -> bool:
+        return (
+            self._connection.execute(
+                "SELECT 1 FROM sessions WHERE session_id = ?", (session_id,)
+            ).fetchone()
+            is not None
+        )
+
+    def _save_execution(self, result: ExecutionResult, payload_json: str) -> None:
         self._connection.execute(
             "INSERT INTO executions "
             "(execution_id, session_id, capability_id, template_id, status, "
@@ -418,6 +438,30 @@ class Store:
                 SCHEMA_VERSION,
                 payload_json,
             ),
+        )
+        # Specification 17 names ``execution_steps`` beside ``executions``. The
+        # steps are in the payload too, and that is not the same thing: a payload
+        # cannot be queried for "every step that failed this week" without reading
+        # and parsing every execution ever recorded.
+        self._connection.execute(
+            "DELETE FROM execution_steps WHERE execution_id = ?", (result.execution_id,)
+        )
+        self._connection.executemany(
+            "INSERT INTO execution_steps "
+            "(execution_id, step_index, action, target_ref, parameter, ran, error_code) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    result.execution_id,
+                    step.index,
+                    str(step.action),
+                    step.target_ref,
+                    step.parameter,
+                    1 if step.ran else 0,
+                    step.error.code if step.error else None,
+                )
+                for step in result.steps
+            ],
         )
 
     def load_execution(self, execution_id: str, *, session_id: str) -> ExecutionResult | None:

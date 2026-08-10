@@ -44,6 +44,24 @@ class PlannedAction(WCCModel):
                 raise ValueError(f"{self.action} does not accept {field}")
         return self
 
+    def redacted(self) -> PlannedAction:
+        """This action with its value replaced by a description of the value.
+
+        Specification 18 requires redaction before persistence. The marker keeps
+        the two facts an audit needs — that a value was supplied, and how much of
+        one — while the value itself stops at the process boundary.
+        """
+        return self.model_copy(
+            update={
+                "value": _described(self.value),
+                "option": _described(self.option),
+            }
+        )
+
+
+def _described(value: str | None) -> str | None:
+    return None if value is None else f"[redacted: {len(value)} characters]"
+
 
 class NavigationEvent(WCCModel):
     """A navigation-adjacent effect the driver must surface to the policy layer.
@@ -71,3 +89,7 @@ class ActionObservation(WCCModel):
     navigation_events: list[NavigationEvent] = Field(default_factory=list)
     error_code: str | None = None
     error_message: str | None = None
+
+    def redacted(self) -> ActionObservation:
+        """This observation with the action's typed value removed."""
+        return self.model_copy(update={"action": self.action.redacted()})
