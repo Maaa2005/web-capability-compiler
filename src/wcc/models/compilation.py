@@ -33,7 +33,12 @@ class RejectedCandidate(WCCModel):
     """
 
     candidate_key: str
-    """Which candidate: a form key, or a synthetic key for a non-form group."""
+    """Which candidate, by position on the page.
+
+    Never the form's ``id``. That is a working CSS selector, and specification
+    10.3 keeps selectors away from agents — including the ones that would travel
+    inside an identifier or a sentence.
+    """
 
     code: str
     """Stable and machine-readable. ``message`` is the prose version."""

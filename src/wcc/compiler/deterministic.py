@@ -63,7 +63,7 @@ def compile_snapshot(snapshot: PageSnapshot) -> CompilationReport:
                 IRWarning(
                     code=GENERIC_DATA_ENTRY,
                     message=(
-                        f"form {group.key} is a generic data-entry form; "
+                        f"{group.display} is a generic data-entry form; "
                         "specification 8.3 reports these and does not compile them"
                     ),
                 )
@@ -75,7 +75,7 @@ def compile_snapshot(snapshot: PageSnapshot) -> CompilationReport:
                 _reject(
                     group,
                     LOW_CONFIDENCE,
-                    f"form {group.key} reads as {reading.category} only by "
+                    f"{group.display} reads as {reading.category} only by "
                     f"{reading.reason}, which specification 7.4 rates low",
                     confidence=Confidence.LOW,
                 )
@@ -83,7 +83,7 @@ def compile_snapshot(snapshot: PageSnapshot) -> CompilationReport:
             warnings.append(
                 IRWarning(
                     code=LOW_CONFIDENCE,
-                    message=f"form {group.key} was not compiled: {reading.reason} is low",
+                    message=f"{group.display} was not compiled: {reading.reason} is low",
                 )
             )
             continue
@@ -120,7 +120,7 @@ def _navigation_templates(elements: list[NormalizedElement]) -> list[NavigationT
 
 def _generic_message(group: FormGroup) -> str:
     return (
-        f"form {group.key} submits by {group.method.upper()} and resolves to no "
+        f"{group.display} submits by {group.method.upper()} and resolves to no "
         "deterministic search or filter reading, so it is reported and not compiled"
     )
 
@@ -147,7 +147,7 @@ def _reject(
         risk, _ = classify_plan(None, plan, targets)
 
     return RejectedCandidate(
-        candidate_key=group.key,
+        candidate_key=group.display,
         code=code,
         message=message,
         risk=risk,
@@ -199,7 +199,7 @@ def _form_template(
         name=_unique(compiled.name, used_names),
         category=compiled.category,
         description=(
-            f"{compiled.category.capitalize()} using form {reading.group.key}, "
+            f"{compiled.category.capitalize()} using {reading.group.display}, "
             f"detected by {reading.reason}. Risk: {compiled.risk_reason}."
         ),
         parameters=compiled.parameters,

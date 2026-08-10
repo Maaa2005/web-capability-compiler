@@ -388,6 +388,43 @@ class Store:
             return None
         return _load(BoundCapability, row, columns=("template_id", "session_id", "document_id"))
 
+    def last_page_of(self, session_id: str) -> tuple[str, str] | None:
+        """The page class a session last observed, as origin and route.
+
+        Read from the snapshots table rather than from a live session, because
+        exporting is something you do *after* the browsing: specification 7.13
+        exports templates, and templates outlive the session that compiled them.
+        """
+        row = self._connection.execute(
+            "SELECT origin, normalized_route_pattern FROM page_snapshots "
+            "WHERE session_id = ? ORDER BY captured_at DESC LIMIT 1",
+            (session_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return row["origin"], row["normalized_route_pattern"]
+
+    def counts(self) -> dict[str, int]:
+        """How many of each thing is stored — for diagnostics, never content.
+
+        Specification 16 requires diagnostics not to reveal page content, and a
+        function that only ever runs ``COUNT(*)`` cannot, whatever a later edit
+        adds to the payloads.
+        """
+        tables = (
+            "sessions",
+            "documents",
+            "page_snapshots",
+            "page_irs",
+            "capability_templates",
+            "bound_capabilities",
+            "executions",
+        )
+        return {
+            table: int(self._connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
+            for table in tables
+        }
+
     # -- executions --------------------------------------------------------
 
     def save_execution(self, result: ExecutionResult) -> None:

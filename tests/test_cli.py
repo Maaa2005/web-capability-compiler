@@ -47,13 +47,15 @@ def test_no_command_is_both_pending_and_implemented() -> None:
     assert not set(PENDING_COMMANDS) & set(IMPLEMENTED_COMMANDS)
 
 
-@pytest.mark.parametrize("command", ["serve", "clear-data", "diagnostics"])
-def test_unimplemented_commands_report_their_phase(
-    command: str, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """An unimplemented command must fail loudly rather than appear to succeed."""
-    assert main([command]) == 3
-    assert PENDING_COMMANDS[command] in capsys.readouterr().err
+def test_every_command_the_specification_names_is_implemented() -> None:
+    """Phase 5 completes the surface specification 5.1 fixes.
+
+    The pending-command mechanism stays even though it is now empty: the
+    convention it encodes — unimplemented surface names the phase that will
+    implement it, rather than failing vaguely — is what kept the CLI honest for
+    five phases, and the next specification version will need it again.
+    """
+    assert PENDING_COMMANDS == {}
 
 
 # -- T9: install-browser and doctor -------------------------------------------

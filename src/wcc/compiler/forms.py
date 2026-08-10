@@ -89,9 +89,26 @@ _NON_IDENTIFIER = re.compile(r"[^0-9a-z]+")
 class FormGroup:
     """The eligible controls of one form, in document order."""
 
-    def __init__(self, key: str, elements: list[NormalizedElement]) -> None:
+    def __init__(self, key: str, elements: list[NormalizedElement], ordinal: int = 1) -> None:
         self.key = key
         self.elements = elements
+        self.ordinal = ordinal
+
+    @property
+    def display(self) -> str:
+        """How to name this form to an agent, without naming it to the DOM.
+
+        ``key`` is usually the form's ``id``, which makes it a working CSS
+        selector — and specification 10.3 says an agent never receives one. It
+        travelled anyway, in prose: a generated description read "Search using
+        form product-search", and the refusal list reported the same key as its
+        candidate identifier.
+
+        Position is the honest substitute. It distinguishes one form from another
+        within a page, which is all a description or a refusal needs, and it says
+        nothing about how to find either.
+        """
+        return f"form {self.ordinal}"
 
     @property
     def submits(self) -> list[NormalizedElement]:
@@ -123,7 +140,10 @@ def group_forms(elements: list[NormalizedElement]) -> list[FormGroup]:
         if element.form_key is None:
             continue
         grouped.setdefault(element.form_key, []).append(element)
-    return [FormGroup(key, members) for key, members in grouped.items()]
+    return [
+        FormGroup(key, members, ordinal)
+        for ordinal, (key, members) in enumerate(grouped.items(), start=1)
+    ]
 
 
 class FormReading:

@@ -112,11 +112,14 @@ async def test_the_post_contact_form_is_high_listed_and_not_executable(
 ) -> None:
     report = await _compile(driver, fixture_server, "post-contact-form")
 
-    listed = [r for r in report.rejected if r.candidate_key == "contact"]
+    # Identified by position, not by the form's id: an id is a working CSS
+    # selector, and specification 10.3 keeps those away from agents — including
+    # when one would travel inside an identifier.
+    listed = [r for r in report.rejected if r.risk is not None and r.risk.level is RiskLevel.HIGH]
     assert len(listed) == 1
+    assert listed[0].candidate_key.startswith("form ")
     assert listed[0].code == GENERIC_DATA_ENTRY
     assert listed[0].risk is not None
-    assert listed[0].risk.level is RiskLevel.HIGH
     assert listed[0].risk.side_effect is SideEffect.PERSISTENT
 
     # Not executable: it is not a template at all, so nothing can bind it.
