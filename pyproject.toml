@@ -11,6 +11,11 @@ dependencies = [
     "pydantic>=2.7",
 ]
 
+[project.optional-dependencies]
+# Phase 6 only. The core pipeline never calls a model, so this stays out of the
+# default install rather than being pulled in for everyone who wanted a compiler.
+llm = ["anthropic>=0.69"]
+
 [project.scripts]
 wcc = "wcc.main:main"
 
@@ -23,6 +28,9 @@ packages = ["src/wcc"]
 
 [dependency-groups]
 dev = [
+    # The optional extra, installed for development so the provider is type-checked
+    # and its construction is testable. It stays out of the runtime dependencies.
+    "anthropic>=0.69",
     "pytest>=8.0",
     "ruff>=0.6",
     "pyright>=1.1.380",

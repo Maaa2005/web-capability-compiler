@@ -1142,3 +1142,104 @@ the scaffolding was.
 - The two findings deferred from the Phase 4 review remain: postcondition
   specificity, and `session.chains` lifetime — the latter now has a deadline,
   since an MCP client holds element IDs across calls.
+
+---
+
+## Phase 6: Optional semantic enrichment — complete (2026-08-10)
+
+An LLM may now improve capability names and descriptions. It is off by default,
+and the interesting work was not in calling a model but in bounding what a model
+is allowed to change.
+
+### The feature is small; the blast radius is not
+
+Enrichment rewrites prose. Nothing downstream reads a name to decide anything —
+execution goes by capability ID, risk by the deterministic classifier, arguments
+by the JSON Schema — so the value on offer is that a page reads as
+`search_products` rather than `submit_search_form`. Against that: a model that
+could reach an execution plan, a locator chain, or a risk level would be a model
+that decides what a browser does on the strength of text a web page wrote.
+
+That asymmetry decided the whole design. The permitted output is three fields, and
+everything else is enforced twice — once by constructing the new template from a
+named list of fields, and once by comparing the result against the original on the
+fields that must not have moved. The second check cannot fail today. It is aimed at
+the edit that adds a fourth field a year from now, because a rule that lives only
+in a docstring stops being a rule.
+
+### Parameter renaming is refused, and the specification allows it
+
+Section 9.3 lists "mapping ambiguous labels to parameter names" among the
+permitted uses. This implementation declines the literal reading. A parameter's
+name is simultaneously the JSON Schema property, the `target_ref` of a plan step,
+and the key of a locator chain, so renaming one rewrites the execution plan and
+the locator map — which Phase 6's own acceptance forbids. A provider may say what
+a parameter *means*; it may not say what it is called. The narrower reading is the
+one that leaves both sentences true.
+
+### A risk hint only ever raises
+
+`risk_hint` is applied when it is higher than the deterministic level and ignored
+when it is lower — ignored rather than rejected, because a model guessing low on a
+form the compiler rated high is the expected failure and is exactly what the
+deterministic classifier exists for. `side_effect` is never touched, so `Risk`'s
+own floor still applies and the level can never be argued below its consequence.
+
+### Untrusted input, in both directions
+
+The payload sent to a provider is constructed from a positive list of fields:
+compiled names, categories, risk levels, parameter names and their labels. No DOM,
+no selectors, no page text, no form values. A model that never sees a selector
+cannot return one — but the description validator rejects selector punctuation
+anyway, because Phase 3 shipped exactly that leak and the payload being clean is a
+property of today's code rather than of the boundary.
+
+The response is untrusted in the other direction. The labels in the payload were
+written by the page, so a malformed field is as likely to be the page talking as
+the model slipping. Nothing is repaired: no fence stripping, no locating the first
+brace, no retry with a sterner prompt. Invalid output is rejected, and the
+deterministic result stands.
+
+One test asserts that `RESPONSE_SCHEMA` and `PageEnrichment` describe the same
+contract. They are two statements of one thing in two files, and drift between
+them fails in a way neither file shows: a permitted-but-forbidden field rejects
+every response after paying for it.
+
+### The enricher is the only thing that swallows
+
+Every layer below raises. `Enricher.enrich` catches everything, records it on
+`last_error`, logs it, and returns the templates it was given. Broad exception
+handling is right here for a stated reason rather than an assumed one: enrichment
+is cosmetic, so no failure of it should become a failure of inspection.
+
+### Acceptance
+
+All three criteria, driven through the real pipeline against live Chromium rather
+than against the enricher alone — the criteria are about the system. The
+capabilities an agent ends up with are asserted identical across three runs: no
+provider, an unreachable provider, and a provider answering about a page it was
+not sent.
+
+531 tests green, ruff and pyright clean. Database revision 4 adds the enrichment
+cache, keyed by page signature; the migration was checked against a database built
+the way an earlier build left one, not only against a fresh file.
+
+### Two honest gaps
+
+The provider's request shape was verified against the installed SDK — parameter
+names, `output_config.format.type`, the structured-output schema field — but no
+live API call was made, so the round trip against the real endpoint is unproven.
+The failure mode if the schema is rejected is the designed one: the call fails,
+the deterministic output is used, and the reason is logged.
+
+`claude-opus-5` is the default model. For naming a handful of forms that is a
+generous choice, and `WCC_ENRICHMENT_MODEL` exists so a cheaper one is one variable
+away.
+
+### Carried forward
+
+Unchanged from Phase 5, and now more pressing: Phases 1–3 have still never had a
+counter-review, the two deferred Phase 4 findings remain (postcondition
+specificity, `session.chains` lifetime), and the Phase 5 question of whether to
+*block* non-GET requests during low-risk execution rather than only report them is
+still open.

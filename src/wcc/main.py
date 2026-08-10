@@ -244,12 +244,25 @@ def _diagnostics() -> int:
     "must not reveal private page content by default", and the cheapest way to
     keep that true is to have nothing here that reads a payload.
     """
+    from wcc.config import build_enricher, enrichment_enabled, enrichment_model
     from wcc.store.database import SCHEMA_REVISION
     from wcc.store.paths import DataDirectoryError, resolve_data_dir
     from wcc.store.store import Store
 
     print(f"wcc {__version__}")
     print(f"database revision  {SCHEMA_REVISION}")
+    # Whether page structure leaves this machine is the single most important
+    # thing an operator can learn from diagnostics, so it is printed either way
+    # rather than only when it is on.
+    # Asked of a real enricher rather than of the variable that requests one, so
+    # that "on" means a provider was actually built. Configured-but-broken is the
+    # state worth naming: it is the one where someone believes it is working.
+    if not enrichment_enabled():
+        print("semantic enrichment  off (set WCC_ENRICHMENT=1 to enable)")
+    elif build_enricher().enabled:
+        print(f"semantic enrichment  on, via {enrichment_model()}")
+    else:
+        print("semantic enrichment  requested but unavailable; see the warning above")
     try:
         print(f"data directory     {resolve_data_dir()}")
         with Store() as store:

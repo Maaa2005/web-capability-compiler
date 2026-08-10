@@ -17,7 +17,7 @@ The headline metric is **token reduction on repeated tasks**, not task success r
 
 ## Status
 
-MVP v0.1 is under construction against spec v0.2.1. **Phases 0–5 of 7 are
+MVP v0.1 is under construction against spec v0.2.1. **Phases 0–6 of 7 are
 complete, and it runs as an MCP server today.** The loop closes: WCC reads a live document into a snapshot, builds an
 Agent Page IR, compiles typed search, filter, and navigation capabilities with
 evidence and a deterministic risk classification, persists them as reusable
@@ -28,8 +28,9 @@ action at a time, and verifying afterwards that the intended effect actually
 happened.
 
 All of that is reachable from any MCP client over stdio, through six stable tools.
-What remains is Phase 6 (optional LLM enrichment, which the system works without)
-and Phase 7 (the token-reduction benchmark).
+An optional LLM pass can improve the names and descriptions, and is off by default —
+nothing in the loop above depends on it. What remains is Phase 7, the
+token-reduction benchmark.
 
 Three properties are worth stating plainly, because they are what the design is
 for: only `low`-risk capabilities ever execute; an execution is reported as
@@ -108,6 +109,21 @@ Set by whoever launches the server, never by an agent over the wire.
 |---|---|
 | `WCC_DATA_DIR` | Where templates and history are stored. Absolute paths only; defaults to the OS per-user data directory. |
 | `WCC_ALLOW_PRIVATE_NETWORK` | Set to `1` to allow loopback and private addresses. **Development only** — it switches off the SSRF boundary of specification 10.2. |
+| `WCC_ENRICHMENT` | Set to `1` to let an LLM improve capability names and descriptions. Off by default; needs `pip install 'wcc[llm]'` and `ANTHROPIC_API_KEY`. |
+| `WCC_ENRICHMENT_MODEL` | Which model does that naming. Defaults to `claude-opus-5`. |
+
+### Optional semantic enrichment
+
+Off unless you turn it on, and the compiler is the product either way — enrichment
+only rewrites names and descriptions. What it is given is a reduced structured
+summary: the compiled capability names, categories, risk levels, and parameter
+names. It is never given the DOM, a selector, a page's text, or a form value. What
+it gets back is validated before use and **cannot** change a locator, an execution
+plan, or lower a risk classification; a risk hint is only ever applied upward. If
+the provider is unreachable or answers with something invalid, the deterministic
+result is used unchanged and the reason is logged.
+
+Responses are cached by page signature, so one page class costs one call.
 
 ## Operating it
 

@@ -27,7 +27,7 @@ from wcc.store import (
     owned_paths,
     resolve_data_dir,
 )
-from wcc.store.database import connect, migrate
+from wcc.store.database import BASE_DDL, connect, migrate
 
 
 @pytest.fixture
@@ -89,6 +89,32 @@ def test_a_database_from_a_newer_build_is_refused_with_a_way_out(tmp_path: Path)
     assert "newer WCC" in message
     assert DATA_DIR_ENV in message
     connection.close()
+
+
+def test_an_existing_database_is_migrated_rather_than_rebuilt(tmp_path: Path) -> None:
+    """Every revision below the current one has a path forward, and it is taken.
+
+    Written against the real chain rather than one step of it: a build that adds a
+    revision and forgets its migration passes every other test in this file, and
+    fails here the moment someone opens a data directory they already had.
+    """
+    path = tmp_path / "old.sqlite3"
+    connection = connect(path)
+    # A revision-1 database as that build actually left one: the base tables, and
+    # none of the tables later revisions added. Stamping an empty file would run
+    # the same migrations over nothing and prove less than it appears to.
+    for statement in (part.strip() for part in BASE_DDL.split(";")):
+        if statement:
+            connection.execute(statement)
+    connection.execute("PRAGMA user_version = 1")
+    connection.close()
+
+    with Store(path) as store:
+        with connect(path) as opened:
+            assert int(opened.execute("PRAGMA user_version").fetchone()[0]) == SCHEMA_REVISION
+        # Reachable rather than merely present: a table created by a migration is
+        # only migrated if the code that reads it can.
+        assert store.load_enrichment("sha256:nothing-stored-yet") is None
 
 
 def test_foreign_keys_are_enforced(store: Store) -> None:

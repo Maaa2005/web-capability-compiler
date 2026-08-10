@@ -38,6 +38,7 @@ from wcc.compiler.deterministic import compile_snapshot
 from wcc.compiler.reclassify import SnapshotRiskClassifier
 from wcc.compiler.risk import classify_plan
 from wcc.driver.base import DriverError
+from wcc.enrich.enricher import Enricher
 from wcc.identifiers import new_id
 from wcc.ir.builder import build_page_ir
 from wcc.limits import ResourceLimits
@@ -170,12 +171,17 @@ class Coordinator:
         registry: SessionRegistry | None = None,
         binder: Binder | None = None,
         limits: ResourceLimits | None = None,
+        enricher: Enricher | None = None,
     ) -> None:
         self._driver = driver
         self._store = store
         self._registry = registry or SessionRegistry()
         self._binder = binder or Binder(driver, SnapshotRiskClassifier())
         self._limits = limits or ResourceLimits()
+        #: Inert by default. A coordinator built without one behaves exactly as it
+        #: did before Phase 6, which is what "the full system works with the LLM
+        #: disabled" has to mean at the level of the code rather than the config.
+        self._enricher = enricher or Enricher()
         self._states: dict[str, _SessionState] = {}
         self._locks: dict[str, asyncio.Lock] = {}
 
@@ -266,7 +272,12 @@ class Coordinator:
             )
 
         report = compile_snapshot(snapshot)
-        saved = [self._store.save_template(template) for template in report.templates]
+        # Specification 9.1 places semantic naming inside the pipeline, before
+        # persistence — so the warm path serves enriched names without a second
+        # model call, and an export carries the name a client actually saw.
+        enriched = await self._enricher.enrich(snapshot, report.templates)
+        report = report.model_copy(update={"templates": enriched})
+        saved = [self._store.save_template(template) for template in enriched]
         bindings = await self._bind_all(session_id, snapshot, saved)
         self._remember(state, bindings)
         return Inspection(

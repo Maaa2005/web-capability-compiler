@@ -24,6 +24,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from wcc.enrich.models import PageEnrichment
 from wcc.models.capability import BindingStatus, BoundCapability, CapabilityTemplate
 from wcc.models.common import SCHEMA_VERSION, WCCModel
 from wcc.models.execution import ExecutionResult
@@ -525,6 +526,46 @@ class Store:
             _load(ExecutionResult, row, columns=("session_id", "capability_id", "status"))
             for row in rows
         ]
+
+    # -- enrichment cache --------------------------------------------------
+
+    def load_enrichment(self, page_signature: str) -> PageEnrichment | None:
+        """A provider response already obtained for this page class (Phase 6).
+
+        A row written by an older build is discarded rather than migrated. The
+        cached value is an optimisation whose entire cost of being wrong is one
+        model call, and guessing at how a previous schema's fields map onto this
+        one would trade that trivial cost for a subtle one.
+        """
+        row = self._connection.execute(
+            "SELECT payload_json, schema_version FROM enrichments WHERE page_signature = ?",
+            (page_signature,),
+        ).fetchone()
+        if row is None or row["schema_version"] != SCHEMA_VERSION:
+            return None
+        try:
+            return PageEnrichment.model_validate_json(row["payload_json"])
+        except ValidationError:
+            return None
+
+    def save_enrichment(self, page_signature: str, enrichment: PageEnrichment) -> None:
+        payload_json, _ = _dump(enrichment, f"enrichment for {page_signature}")
+        with transaction(self._connection):
+            self._connection.execute(
+                "INSERT INTO enrichments "
+                "(page_signature, page_type, created_at, schema_version, payload_json) "
+                "VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(page_signature) DO UPDATE SET "
+                "page_type = excluded.page_type, created_at = excluded.created_at, "
+                "schema_version = excluded.schema_version, payload_json = excluded.payload_json",
+                (
+                    page_signature,
+                    enrichment.page_type,
+                    datetime.now(UTC).isoformat(),
+                    SCHEMA_VERSION,
+                    payload_json,
+                ),
+            )
 
     def expire_bindings_from_previous_runs(self) -> int:
         """Mark every binding left active by a dead process as stale.

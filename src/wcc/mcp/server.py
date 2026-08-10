@@ -31,7 +31,7 @@ from typing import Any
 from mcp.server.mcpserver import MCPServer
 
 from wcc import __version__
-from wcc.config import driver_settings
+from wcc.config import build_enricher, driver_settings
 from wcc.driver.base import DriverError
 from wcc.driver.playwright_driver import PlaywrightDriver
 from wcc.mcp.views import (
@@ -101,7 +101,14 @@ def build_service(store: Store | None = None) -> Service:
     opened = store or Store()
     opened.expire_bindings_from_previous_runs()
     driver = PlaywrightDriver(UrlPolicy(), driver_settings())
-    return Service(driver=driver, store=opened, coordinator=Coordinator(driver, opened))
+    # The store is the enrichment cache: a page class outlives the process, and so
+    # should the model call that named it.
+    enricher = build_enricher(opened)
+    return Service(
+        driver=driver,
+        store=opened,
+        coordinator=Coordinator(driver, opened, enricher=enricher),
+    )
 
 
 def build_server(service: Service) -> MCPServer:

@@ -21,7 +21,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 #: The DDL below. Bump when a table or column changes, and add a migration.
-SCHEMA_REVISION = 3
+SCHEMA_REVISION = 4
 
 _EXECUTIONS_DDL = """
 CREATE TABLE IF NOT EXISTS executions (
@@ -64,6 +64,17 @@ CREATE INDEX IF NOT EXISTS idx_steps_failures
 """
 
 
+_ENRICHMENTS_DDL = """
+CREATE TABLE IF NOT EXISTS enrichments (
+    page_signature  TEXT PRIMARY KEY,
+    page_type       TEXT NOT NULL,
+    created_at      TEXT NOT NULL,
+    schema_version  TEXT NOT NULL,
+    payload_json    TEXT NOT NULL
+);
+"""
+
+
 def _run(connection: sqlite3.Connection, ddl: str) -> None:
     for statement in (part.strip() for part in ddl.split(";")):
         if statement:
@@ -80,12 +91,23 @@ def _add_execution_steps(connection: sqlite3.Connection) -> None:
     _run(connection, _EXECUTION_STEPS_DDL)
 
 
+def _add_enrichments(connection: sqlite3.Connection) -> None:
+    """Revision 4: cache optional semantic enrichment by page signature (Phase 6).
+
+    A cache in the durable store rather than in memory, because the cost being
+    avoided is a paid network call and the thing it is keyed by — a page class —
+    outlives any one process by design.
+    """
+    _run(connection, _ENRICHMENTS_DDL)
+
+
 #: ``revision -> migration``. The mechanism was built empty at revision 1 rather
 #: than added later, under pressure, next to real user data — which is how
 #: migrations get skipped. This is its first use.
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     2: _add_executions,
     3: _add_execution_steps,
+    4: _add_enrichments,
 }
 
 # Column choices follow one rule: SQL holds what is searched, owned, counted, or
@@ -94,7 +116,7 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
 # than JSON fields precisely because they are updated on their own — rewriting a
 # whole template document to increment a counter would make every successful bind
 # a chance to corrupt the template.
-_DDL = """
+BASE_DDL = """
 CREATE TABLE IF NOT EXISTS sessions (
     session_id      TEXT PRIMARY KEY,
     initial_url     TEXT NOT NULL,
@@ -180,7 +202,9 @@ CREATE INDEX IF NOT EXISTS idx_bindings_session
     ON bound_capabilities (session_id, status);
 """
 
-_DDL += _EXECUTIONS_DDL + _EXECUTION_STEPS_DDL
+#: Revision 1's tables, kept separately nameable so a test can build a database
+#: the way an earlier build left one and check that it still upgrades.
+_DDL = BASE_DDL + _EXECUTIONS_DDL + _EXECUTION_STEPS_DDL + _ENRICHMENTS_DDL
 
 
 class SchemaVersionError(Exception):
