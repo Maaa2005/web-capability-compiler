@@ -1034,3 +1034,111 @@ low" is only checkable if the runtime measures it. The block/allow choice is a
 product decision and is deliberately not made here.
 
 447 tests green, ruff and pyright clean.
+
+---
+
+## Phase 5: MCP, portability, and operational CLI — complete (2026-08-10)
+
+All six tasks and all six acceptance criteria. WCC now runs in someone else's
+environment, which is the milestone the positioning decision named as the point
+of Phases 2–5.
+
+### Capabilities are data, not tools
+
+Specification 12 fixes six stable tools, and a compiled capability is returned as
+typed data to be run through `execute_capability`. The alternative — registering
+each compiled capability as its own MCP tool — is superficially tidier and wrong
+in two ways: the client's tool list would change every time its agent navigated,
+invalidating the prompt cache on every page, and a tool list that changes under a
+model mid-conversation is exactly what the caching architecture asks you not to
+do. The six tools stay put; what they describe changes.
+
+### A boundary that is a file, not a habit
+
+`wcc/mcp/views.py` names every field that crosses to a client. Returning a
+`CapabilityTemplate` directly would have handed over `target_locators` — the
+structural paths and ids that find each target — and nothing in the code would
+have looked wrong. Naming the fields turns "did we leak a selector" from a
+question about every future edit to every model into a question about one file,
+and a test asks it from the outside by serializing every tool response and
+searching for the fixtures' own selectors.
+
+**That test found a real leak, in Phase 3 rather than in the new code.** The
+compiler wrote the form's `id` into the capability description — "Search using
+form product-search" — and reported the same id as the refusal list's
+`candidate_key`. `#product-search` is a working CSS selector, delivered in prose,
+straight through specification 10.3's boundary. It had been there since Phase 3
+and no test had reason to look, because until Phase 5 nothing sent a description
+anywhere.
+
+Forms are now named by position — "form 1", "form 2" — everywhere an agent can
+see. Position distinguishes one form from another within a page, which is all a
+description or a refusal needs, and says nothing about how to find either. The
+internal key still exists where grouping needs it.
+
+### Import is an admission decision
+
+Specification 7.13 lists six checks and then says the sentence the module is built
+around: imported JSON is never executable merely because it parsed. Four checks
+happen at read time — format, schema version, the action allowlist, and the shape
+of the origin and route. Two deliberately do not: risk re-classification and
+locator re-resolution are questions about a live page, and answering them at
+import time would mean guessing about a page nobody has opened. They happen at
+bind time, through the same binder a compiled template goes through, which is what
+makes the guarantee real rather than a promise this module makes on another
+module's behalf.
+
+Two refusals were added beyond the specification's list. A template whose origin
+carries a path or credentials is refused, because every later comparison against
+that field would be wrong. A template above `low` risk is refused at the door
+rather than stored: importable-and-never-runnable is a trap that would sit in
+lookups and fail at every execution, and saying so once, when someone can act on
+it, is better than saying it forever.
+
+### Operational CLI
+
+`clear-data` refuses to assume consent from a non-interactive shell — it deletes
+compiled templates and their history, which no amount of re-running reconstructs.
+`diagnostics` prints counts and environment checks and reads no payload, which is
+the cheapest way to keep specification 16's "must not reveal private page content"
+true against future edits. `export` identifies a page class through a session
+because templates outlive the session that compiled them; a closed session still
+names one.
+
+### Configuration comes from the launcher, never the wire
+
+`WCC_DATA_DIR` and `WCC_ALLOW_PRIVATE_NETWORK` are read from the environment. The
+private-network allowance is the case that matters: specification 10.2 calls it
+developer-only, Phase 1 removed it from `OpenSessionRequest` so an agent could not
+set it per request, and this is where it legitimately comes from instead. An
+unrecognised value means no — a boundary that opened on a typo would open on a
+mistake.
+
+### Acceptance
+
+All six criteria. The first is driven by a real external client: `wcc serve` as a
+subprocess, the official MCP client over stdio, the fixture flow end to end, and
+an assertion that no click, type, screenshot, press, goto, evaluate, or select
+tool exists. The last one — clean environment setup using the documented commands
+— was run rather than assumed: `uvx --from git+https://github.com/…` in an empty
+directory outside the project, installing 32 packages and answering `wcc doctor`
+with three passing checks.
+
+481 tests green, ruff and pyright clean.
+
+### An anyio detail worth keeping
+
+The stdio client is built on anyio task groups, and a pytest async-generator
+fixture is finalized in a different task than the one that entered it. Four
+passing tests reported four teardown errors until the client moved from a fixture
+into a context manager used inside each test body. The tests were never wrong;
+the scaffolding was.
+
+### Carried forward
+
+- Phases 1–3 (driver, URL policy, compiler) have still never had a Codex
+  counter-review. The Phase 4 review found two Critical issues in one phase's
+  worth of code, and this is now public.
+- The two findings deferred from the Phase 4 review remain: postcondition
+  specificity, and `session.chains` lifetime — the latter now has a deadline,
+  since an MCP client holds element IDs across calls.
