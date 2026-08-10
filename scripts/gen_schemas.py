@@ -26,6 +26,7 @@ from pydantic import BaseModel
 from wcc.models.capability import BoundCapability, CapabilityTemplate
 from wcc.models.compilation import CompilationReport
 from wcc.models.element import CollectionSnapshot, NormalizedElement
+from wcc.models.execution import ExecutionResult
 from wcc.models.ir import Entity, PageIR
 from wcc.models.session import OpenSessionRequest, PageSnapshot, SessionInfo
 
@@ -42,6 +43,7 @@ EXPORTED: dict[str, type[BaseModel]] = {
     "collection-snapshot": CollectionSnapshot,
     "compilation-report": CompilationReport,
     "entity": Entity,
+    "execution-result": ExecutionResult,
     "normalized-element": NormalizedElement,
     "open-session-request": OpenSessionRequest,
     "page-ir": PageIR,

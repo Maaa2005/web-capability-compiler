@@ -44,6 +44,17 @@
       "additionalProperties": false,
       "description": "One extracted record inside a collection.\n\n``identity`` is the deterministic per-record projection that feeds\n``collection_hash`` (specification 8.4). ``evidence_element_ids`` preserves the\nmapping back to the DOM elements that produced the record.",
       "properties": {
+        "activation_locator": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LocatorChain"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "entity_id": {
           "anyOf": [
             {

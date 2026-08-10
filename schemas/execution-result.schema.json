@@ -1,0 +1,612 @@
+{
+  "$defs": {
+    "ActionObservation": {
+      "additionalProperties": false,
+      "description": "What the driver saw after performing one planned action.",
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/PlannedAction"
+        },
+        "document_changed": {
+          "default": false,
+          "title": "Document Changed",
+          "type": "boolean"
+        },
+        "document_id": {
+          "title": "Document Id",
+          "type": "string"
+        },
+        "error_code": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error Code"
+        },
+        "error_message": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error Message"
+        },
+        "navigation_events": {
+          "items": {
+            "$ref": "#/$defs/NavigationEvent"
+          },
+          "title": "Navigation Events",
+          "type": "array"
+        },
+        "observed_at": {
+          "format": "date-time",
+          "title": "Observed At",
+          "type": "string"
+        },
+        "settled": {
+          "default": false,
+          "title": "Settled",
+          "type": "boolean"
+        },
+        "snapshot_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Snapshot Id"
+        },
+        "succeeded": {
+          "title": "Succeeded",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "action",
+        "succeeded",
+        "observed_at",
+        "document_id"
+      ],
+      "title": "ActionObservation",
+      "type": "object"
+    },
+    "ActionType": {
+      "description": "Specification 10.4. State-relative ``toggle`` is deliberately absent.",
+      "enum": [
+        "focus",
+        "set_value",
+        "select_option",
+        "set_checked",
+        "activate",
+        "scroll_into_view"
+      ],
+      "title": "ActionType",
+      "type": "string"
+    },
+    "Confidence": {
+      "description": "Specification 7.4. Only ``medium`` and ``high`` may become templates.",
+      "enum": [
+        "high",
+        "medium",
+        "low"
+      ],
+      "title": "Confidence",
+      "type": "string"
+    },
+    "Entity": {
+      "additionalProperties": false,
+      "description": "Something the page is about (specification 7.5).\n\n``available_actions`` stays empty until Phase 4 binds capabilities to\nentities. It is declared now because specification 7.11 makes entity\nreferences the way result items are addressed, and a model that gains the\nfield later would change the persisted shape after templates exist.",
+      "properties": {
+        "available_actions": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Available Actions",
+          "type": "array"
+        },
+        "confidence": {
+          "$ref": "#/$defs/Confidence",
+          "default": "low"
+        },
+        "entity_id": {
+          "title": "Entity Id",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          },
+          "minItems": 1,
+          "title": "Evidence",
+          "type": "array"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        },
+        "properties": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Properties",
+          "type": "object"
+        },
+        "source_collection_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Collection Id"
+        },
+        "source_record_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Record Id"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "entity_id",
+        "type",
+        "evidence"
+      ],
+      "title": "Entity",
+      "type": "object"
+    },
+    "Evidence": {
+      "additionalProperties": false,
+      "description": "One recorded observation supporting a claim.\n\n``element_id`` and ``collection_id`` are snapshot-scoped: they name something\nin the snapshot this IR was built from, not something in the live page. A\nreader that wants the live element must re-resolve it, which is exactly the\nboundary specification 7.7 draws.",
+      "properties": {
+        "attribute": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Attribute"
+        },
+        "collection_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Collection Id"
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Detail"
+        },
+        "element_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Element Id"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "snapshot_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Snapshot Id"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "Evidence",
+      "type": "object"
+    },
+    "ExecutedStep": {
+      "additionalProperties": false,
+      "description": "One step of the plan, whether or not it ran.\n\nA step that never ran is recorded with ``observation`` unset rather than\nomitted from the list. The plan is what the capability promised to do, and a\nresult that quietly listed only the steps that happened would let a partial\nexecution read like a shorter plan that completed.",
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/ActionType"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExecutionError"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "index": {
+          "title": "Index",
+          "type": "integer"
+        },
+        "observation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ActionObservation"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "parameter": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parameter"
+        },
+        "target_ref": {
+          "title": "Target Ref",
+          "type": "string"
+        }
+      },
+      "required": [
+        "index",
+        "action",
+        "target_ref"
+      ],
+      "title": "ExecutedStep",
+      "type": "object"
+    },
+    "ExecutionError": {
+      "additionalProperties": false,
+      "description": "Why an execution did not succeed, in a form an agent can branch on.\n\n``code`` is the stable half. The driver's error taxonomy already carries codes\nfor the same reason (specification 11.2), and a runtime that answered only in\nprose would make the boundary between them the one place an agent has to parse\nEnglish.",
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "ExecutionError",
+      "type": "object"
+    },
+    "ExecutionStatus": {
+      "description": "How an execution ended.\n\n``REFUSED`` and ``STALE`` are separate because they ask different things of an\nagent. Stale means the page moved and the defined next move is to inspect and\nre-bind (specification 11.2). Refused means the request itself was wrong — bad\narguments, or a risk that does not permit execution — and re-binding would\nproduce the same answer.",
+      "enum": [
+        "succeeded",
+        "failed",
+        "stale",
+        "refused"
+      ],
+      "title": "ExecutionStatus",
+      "type": "string"
+    },
+    "NavigationEvent": {
+      "additionalProperties": false,
+      "description": "A navigation-adjacent effect the driver must surface to the policy layer.\n\nAttempted redirects, downloads, popups, and new pages are reported rather than\nfollowed, so the runtime can revalidate them (specification 4.1, 10.2).",
+      "properties": {
+        "blocked": {
+          "default": false,
+          "title": "Blocked",
+          "type": "boolean"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Url"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "NavigationEvent",
+      "type": "object"
+    },
+    "PlannedAction": {
+      "additionalProperties": false,
+      "description": "One allowlisted low-level action addressed to a normalized element.\n\nThe action names an element by its internal ``element_id``; the driver resolves\nit through the locator chain. Raw selectors are never accepted from outside the\ndriver (specification 4.1).",
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/ActionType"
+        },
+        "checked": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Checked"
+        },
+        "element_id": {
+          "title": "Element Id",
+          "type": "string"
+        },
+        "option": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Option"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "required": [
+        "action",
+        "element_id"
+      ],
+      "title": "PlannedAction",
+      "type": "object"
+    },
+    "Verification": {
+      "additionalProperties": false,
+      "description": "Whether the expected effect was observed (specification 11.3).\n\n``signals_expected`` counts the signals the template named, and\n``signals_matched`` how many were seen. They are reported separately from\n``passed`` because the ratio is the evidence and ``passed`` is the reading of\nit: a capability whose effect showed through one of its two signals succeeded,\nand an operator looking at a run that keeps matching one of two deserves to see\nthat without re-deriving it.",
+      "properties": {
+        "missing": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Missing",
+          "type": "array"
+        },
+        "observed": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Observed",
+          "type": "array"
+        },
+        "passed": {
+          "title": "Passed",
+          "type": "boolean"
+        },
+        "signals_expected": {
+          "title": "Signals Expected",
+          "type": "integer"
+        },
+        "signals_matched": {
+          "title": "Signals Matched",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "passed",
+        "signals_expected",
+        "signals_matched"
+      ],
+      "title": "Verification",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "The complete, synchronous answer to one ``execute_capability`` call.",
+  "properties": {
+    "capability_id": {
+      "title": "Capability Id",
+      "type": "string"
+    },
+    "completed_at": {
+      "format": "date-time",
+      "title": "Completed At",
+      "type": "string"
+    },
+    "document_id_after": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Document Id After"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ExecutionError"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "execution_id": {
+      "title": "Execution Id",
+      "type": "string"
+    },
+    "observed_effects": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Observed Effects",
+      "type": "array"
+    },
+    "result_entities": {
+      "items": {
+        "$ref": "#/$defs/Entity"
+      },
+      "title": "Result Entities",
+      "type": "array"
+    },
+    "schema_version": {
+      "default": "0.2.1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "session_id": {
+      "title": "Session Id",
+      "type": "string"
+    },
+    "snapshot_id_after": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Snapshot Id After"
+    },
+    "started_at": {
+      "format": "date-time",
+      "title": "Started At",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/ExecutionStatus"
+    },
+    "steps": {
+      "items": {
+        "$ref": "#/$defs/ExecutedStep"
+      },
+      "title": "Steps",
+      "type": "array"
+    },
+    "template_id": {
+      "title": "Template Id",
+      "type": "string"
+    },
+    "verification": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Verification"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "execution_id",
+    "session_id",
+    "capability_id",
+    "template_id",
+    "status",
+    "started_at",
+    "completed_at"
+  ],
+  "title": "ExecutionResult",
+  "type": "object"
+}

@@ -33,7 +33,7 @@ from __future__ import annotations
 import re
 from collections import OrderedDict
 
-from wcc.compiler.risk import classify_plan
+from wcc.compiler.risk import classify_plan, names_destructive_act
 from wcc.models.capability import (
     CapabilityCategory,
     ExpectedEffect,
@@ -149,6 +149,16 @@ def find_result_links(elements: list[NormalizedElement]) -> list[NormalizedEleme
     return winners[0] if len(winners) == 1 else []
 
 
+def _worst(members: list[NormalizedElement]) -> NormalizedElement:
+    """The member whose own label names a destructive act, or the first.
+
+    One "Delete" link among thirty products decides the list's risk. Specification
+    10.1 says uncertainty raises and never lowers, and a rule that read only the
+    first member would lower it by the accident of ordering.
+    """
+    return next((m for m in members if names_destructive_act(m.resolved_label)), members[0])
+
+
 def build_result_item_template(elements: list[NormalizedElement]) -> NavigationTemplate | None:
     """The shared ``open_result_item`` capability of specification 7.11."""
     links = find_result_links(elements)
@@ -163,9 +173,13 @@ def build_result_item_template(elements: list[NormalizedElement]) -> NavigationT
     plan = [PlanStep(action=ActionType.ACTIVATE, target_ref=ref, parameter="entity_id")]
     # Risk is classified against a member link rather than against the container,
     # because activating the container is not what happens: one of these links is.
-    # The members are homogeneous by construction — every one is a non-pagination
-    # link outside any navigation landmark — so any of them describes the act.
-    risk, reason = classify_plan(CapabilityCategory.NAVIGATE, plan, {ref: links[0]})
+    # The members are homogeneous in structure by construction — every one is a
+    # non-pagination link outside any navigation landmark — but not in their text,
+    # so the member classified is the worst one rather than the first. Taking the
+    # first would rate a list by whichever product happens to head it today, and
+    # would disagree with the re-classification done at binding time, which asks
+    # the same question of every member.
+    risk, reason = classify_plan(CapabilityCategory.NAVIGATE, plan, {ref: _worst(links)})
 
     return NavigationTemplate(
         name="open_result_item",

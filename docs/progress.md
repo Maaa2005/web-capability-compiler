@@ -831,3 +831,144 @@ Worth keeping: the symptom was silence. No error, no log line, nothing to
 attribute it to, which is why three runs were spent deciding whether the machine
 was slow or the code was stuck. Every wait on a critical path is given a bound in
 specification 10.5 for this reason, and this one had been written without one.
+
+---
+
+## Phase 4: Execution, verification, and cache reuse — complete (2026-08-10)
+
+All eight tasks and all seven acceptance criteria. A compiled capability now runs,
+and the runtime says what it did, what it observed, and — when it declined — which
+gate stopped it and why.
+
+### Refusal is a result, not an exception
+
+`ExecutionResult` is returned on every path, including the ones where nothing ran.
+The reason is the shape of the interface rather than a preference: specification
+11.1 step 9 returns the result synchronously, and a caller that has to catch
+exceptions to learn its arguments were wrong is reading two report formats for one
+question. The model then enforces what the prose asks for — a failure must carry an
+error, a success must not, and a success must carry a verification that passed.
+`STALE` and `REFUSED` stay separate because they ask different things of an agent:
+inspect and re-bind, versus stop asking.
+
+### A validator that refuses what it does not understand
+
+Arguments are checked against the capability's own JSON Schema, by a validator
+whose vocabulary is closed. An unrecognised keyword fails the validation instead of
+being ignored — `{"type": "string", "maxLength": 3}` would otherwise be accepted in
+full by a validator that had never heard of `maxLength`, and the page would be what
+found out. That is also what makes ~150 lines defensible against a general JSON
+Schema library: the compiler emits a small closed vocabulary, and anything outside
+it is either an imported file or a future compiler change, both better served by a
+loud refusal. `jsonschema` remains the fallback if the vocabulary grows; it would
+add a Rust wheel to a project that installs with `uvx --from git`.
+
+### Where the specification's step order does not survive contact
+
+Specification 11.1 numbers re-resolution (3) before argument validation (4) before
+the risk recheck (5), and that order is kept — a page whose submit has been removed
+should hear "stale, inspect again" rather than "that integer should have been a
+string", because fixing the arguments will not help.
+
+One target cannot follow it. `open_result_item` and `navigate_to_page` target a
+container and let an argument choose the member inside it, so the member cannot be
+resolved before the argument that selects it has been validated. The re-resolution
+is split rather than the validation moved: containers resolve at step 3, arguments
+are validated at step 4, members resolve immediately after, and the risk gate still
+runs last with every target in hand. Nothing unvalidated is ever used, and every
+target is still resolved before any step runs.
+
+Two other deviations, both stated rather than hidden:
+
+- **One snapshot after the plan, not one per action.** Step 7 reads as though a
+  snapshot follows each action. Taking one would mean a full extraction per
+  keystroke for an answer nobody reads, since the verifier compares the state
+  before the plan with the state after it. What is lost is attributing an effect to
+  one step of a multi-step plan; what is bought is that a search costs one page
+  load rather than four.
+- **The baseline snapshot is taken at execution time, never reused from
+  inspection.** The gates ask about the page as it is now, and using the same
+  observation as the verifier's "before" makes what was checked and what was
+  compared provably the same thing.
+
+### Entity references, and the gate that keeps them narrow
+
+Specification 7.11 addresses a result by `entity_id`, which needed two things the
+extractor was not reporting. Collection records now carry an `activation_locator` —
+the structural path of the record's own link — and entities name the record they
+were read from. A record with no link of its own gets no locator: it is readable
+and not openable, and inventing a target for it would activate whichever child
+happened to sit under the cursor.
+
+The member is then required to be *inside* the container the template targets.
+Without that check every navigation capability would quietly widen to the whole
+document: an entity whose record had moved into a "recently viewed" strip, or a
+page number that also appears in a footer link, would resolve uniquely and be
+clicked with the template's own target having had no say in it.
+
+### Verification says what it saw, and never passes a check it cannot run
+
+Every signal of specification 11.3 that two snapshots can show is computed, not
+only the expected ones, because "the URL changed but the result set did not" is the
+sentence an operator needs. An expected signal this build cannot compute is
+reported as missing — treating an unimplemented check as a pass is the failure the
+phase exists to prevent. An effect counts as observed when at least one of its
+declared signals is, and the matched/expected ratio is reported so that a
+capability quietly matching one of two every time is visible without re-deriving it.
+
+Elements are compared across snapshots by their primary locator candidate rather
+than by ID, since IDs are minted per observation and comparing them would report
+every page as entirely replaced.
+
+### Two defects the real browser found
+
+Both were invisible to unit tests written from the same assumptions as the code.
+
+**`_DESTRUCTIVE_WORDS` matched inside other words.** "Noise Cancelling Headphones"
+read as "cancel", "Buyer guide" as "buy". The product list of the `product-list`
+fixture therefore classified as destructive, and `open_result_item` refused to bind
+on a page of ordinary headphones. The failure was quiet in the worst way: it let
+nothing dangerous run, refused something safe, and gave a reason that was not true.
+The ASCII alternatives are now bounded; the Japanese ones are not, because the two
+languages make a word boundary differently.
+
+**Risk was read off the first member of a container.** Compile time used
+`links[0]`; re-binding, once it asked every member, disagreed with it. Both now
+classify the *worst* member — the one whose own label names a destructive act, if
+there is one — so a "Delete" link at position twenty-nine decides the list's risk
+rather than the product above it, and the two passes agree.
+
+A third, smaller one: entity labels came out as `/products/1`. `_label_of` fell
+through to alphabetical order, where `href` sorts before `link_text`. An address is
+where a record is; a label is meant to say what it is.
+
+### Persistence
+
+Database revision 2 adds `executions`, and the migration mechanism built empty at
+revision 1 gets its first use. Ownership is part of the retrieval query rather than
+a check after it: a caller able to tell "not yours" from "no such execution" can
+enumerate another session's work. `last_successful_use_at` is updated only on a
+verified success, and stays separate from the bind counters — a template that binds
+every time and never verifies is finding its targets and doing the wrong thing with
+them, which one counter would hide.
+
+### Acceptance
+
+All seven criteria, six of them driven through Chromium against the fixtures: the
+compiled search executes and returns entities, a wrong argument type never reaches
+the page, a removed submit returns `stale` with the form unsubmitted, a form turned
+POST is refused before the first field is filled, every step is recorded and
+retrievable only by its own session, the verifier sees the result collection
+change, and a second session binds the first session's stored template with no
+compilation report at all.
+
+445 tests green, ruff and pyright clean.
+
+### Carried forward
+
+- The Codex counter-review of the Phase 1 code is still unrun; `codex exec` waits
+  on stdin when detached and this machine has no `timeout`. It needs a foreground
+  run, and the Phase 4 runtime is now worth including in it.
+- `loop_status.md` at the repository root still describes a Phase 1 loop from
+  2026-08-02 and has not been updated since. It is stale, not wrong about anything
+  current.

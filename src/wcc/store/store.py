@@ -26,6 +26,7 @@ from pydantic import ValidationError
 
 from wcc.models.capability import BindingStatus, BoundCapability, CapabilityTemplate
 from wcc.models.common import SCHEMA_VERSION, WCCModel
+from wcc.models.execution import ExecutionResult
 from wcc.models.ir import PageIR
 from wcc.models.session import PageSnapshot, SessionInfo
 from wcc.store.database import SchemaVersionError, connect, migrate, transaction
@@ -327,6 +328,19 @@ class Store:
                 (template_id,),
             )
 
+    def record_successful_use(self, template_id: str) -> None:
+        """Note that a template's capability ran and its effect was observed.
+
+        Separate from :meth:`record_bind_outcome` because specification 17 keeps
+        the two apart, and they answer different questions. A template that binds
+        every time and never verifies is finding its targets and doing the wrong
+        thing with them, and a single counter would hide exactly that.
+        """
+        self._connection.execute(
+            "UPDATE capability_templates SET last_successful_use_at = ? WHERE template_id = ?",
+            (datetime.now(UTC).isoformat(), template_id),
+        )
+
     def usage_of(self, template_id: str) -> sqlite3.Row | None:
         return self._connection.execute(
             "SELECT success_count, failure_count, last_successful_bind_at, "
@@ -373,6 +387,63 @@ class Store:
         if row is None:
             return None
         return _load(BoundCapability, row, columns=("template_id", "session_id", "document_id"))
+
+    # -- executions --------------------------------------------------------
+
+    def save_execution(self, result: ExecutionResult) -> None:
+        """Record what an execution did, including the ones that did nothing.
+
+        Specification 16 asks for every action and observation to be recorded, and
+        a refusal is an observation: "this capability was asked for and declined
+        because the risk had risen" is the line an operator needs, and it is
+        exactly the line a store that only kept successes would not have.
+        """
+        payload_json, _ = _dump(result, f"execution {result.execution_id}")
+        self._connection.execute(
+            "INSERT INTO executions "
+            "(execution_id, session_id, capability_id, template_id, status, "
+            " started_at, completed_at, schema_version, payload_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(execution_id) DO UPDATE SET "
+            "status = excluded.status, completed_at = excluded.completed_at, "
+            "schema_version = excluded.schema_version, payload_json = excluded.payload_json",
+            (
+                result.execution_id,
+                result.session_id,
+                result.capability_id,
+                result.template_id,
+                str(result.status),
+                result.started_at.isoformat(),
+                result.completed_at.isoformat(),
+                SCHEMA_VERSION,
+                payload_json,
+            ),
+        )
+
+    def load_execution(self, execution_id: str, *, session_id: str) -> ExecutionResult | None:
+        """A stored result, and only to the session that produced it.
+
+        Ownership is part of the query. Fetching first and comparing afterwards
+        gives the same answer and leaks a different one: a caller that can tell
+        "not yours" from "no such execution" can enumerate another session's work.
+        """
+        row = self._connection.execute(
+            "SELECT * FROM executions WHERE execution_id = ? AND session_id = ?",
+            (execution_id, session_id),
+        ).fetchone()
+        if row is None:
+            return None
+        return _load(ExecutionResult, row, columns=("session_id", "capability_id", "status"))
+
+    def executions_of(self, session_id: str) -> list[ExecutionResult]:
+        rows = self._connection.execute(
+            "SELECT * FROM executions WHERE session_id = ? ORDER BY started_at",
+            (session_id,),
+        ).fetchall()
+        return [
+            _load(ExecutionResult, row, columns=("session_id", "capability_id", "status"))
+            for row in rows
+        ]
 
     def expire_bindings_from_previous_runs(self) -> int:
         """Mark every binding left active by a dead process as stale.

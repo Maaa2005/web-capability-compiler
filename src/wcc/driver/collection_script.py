@@ -41,6 +41,40 @@ EXTRACT_COLLECTIONS = r"""
     return box.width > 0 && box.height > 0;
   };
 
+  // The same projection the element extractor uses, so a record's activation
+  // link and a normalized element describe their position identically. Two
+  // spellings of "where this is" would resolve differently the first time one of
+  // them was changed, and the record path is what makes an entity reference
+  // executable rather than merely readable.
+  const structuralPath = (el) => {
+    const parts = [];
+    let node = el;
+    const stop = new Set(['FORM', 'MAIN', 'NAV', 'HEADER', 'FOOTER', 'ASIDE', 'SECTION']);
+    while (node && node.nodeType === 1 && node !== document.body) {
+      const parent = node.parentElement;
+      if (!parent) break;
+      const tag = node.tagName.toLowerCase();
+      const sameTag = Array.from(parent.children).filter((c) => c.tagName === node.tagName);
+      const index = sameTag.indexOf(node) + 1;
+      parts.unshift(sameTag.length > 1 ? `${tag}[${index}]` : tag);
+      if (stop.has(parent.tagName) || parent.getAttribute('role') === 'search') {
+        parts.unshift(parent.tagName.toLowerCase());
+        break;
+      }
+      node = parent;
+    }
+    return parts.join('>');
+  };
+
+  // Where activating this record would click. A record with no link of its own is
+  // reported without one rather than with its container's: opening "the record"
+  // by clicking a block that merely contains a link is how an automation activates
+  // whichever child happens to sit under the cursor.
+  const activationPathOf = (el) => {
+    const link = el.matches('a[href]') ? el : el.querySelector('a[href]');
+    return link ? structuralPath(link) : null;
+  };
+
   const fieldsOf = (el) => {
     const fields = {};
     const heading = el.querySelector('h1,h2,h3,h4,h5,h6,[role="heading"]');
@@ -75,6 +109,7 @@ EXTRACT_COLLECTIONS = r"""
         ordinal: index,
         fields: fieldsOf(item),
         shape: shape(item),
+        activation_path: activationPathOf(item),
       })),
     });
   };
@@ -93,7 +128,12 @@ EXTRACT_COLLECTIONS = r"""
         cells.forEach((cell, i) => {
           fields[headers[i] || ('column_' + (i + 1))] = cell;
         });
-        return {ordinal: index, fields, shape: shape(row)};
+        return {
+          ordinal: index,
+          fields,
+          shape: shape(row),
+          activation_path: activationPathOf(row),
+        };
       }),
     });
   }

@@ -126,6 +126,18 @@ class CollectionRecord(WCCModel):
     fields: dict[str, str] = Field(default_factory=dict)
     evidence_element_ids: list[str] = Field(default_factory=list)
     entity_id: str | None = None
+    activation_locator: LocatorChain | None = None
+    """Where activating this record would click, when the record has a link.
+
+    Specification 7.11 addresses a result by entity reference, and an entity that
+    cannot say where it is can only be read. The chain is stored rather than an
+    element ID for the usual reason: the ID belongs to one observation, while the
+    chain is what re-resolves against the page in front of us (specification 7.7).
+
+    ``None`` is a real answer. A record whose only content is text is reportable
+    and not openable, and inventing a target for it — the container, the nearest
+    link — would activate something the record does not name.
+    """
 
 
 class CollectionSnapshot(WCCModel):

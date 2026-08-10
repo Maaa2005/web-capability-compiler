@@ -746,6 +746,26 @@ class PlaywrightDriver:
             f"{described_as} is stale: no candidate matched exactly once ({', '.join(attempts)})"
         )
 
+    async def contains(self, session_id: str, container_id: str, member_id: str) -> bool:
+        """Whether one resolved element encloses another.
+
+        Specification 7.11's shared navigation capabilities name a *container* as
+        their target and let an argument choose a member inside it. Without this
+        check the argument would be choosing from the whole document: an
+        ``entity_id`` whose record had moved out of the result list, or a page
+        number that matched a link in the footer, would resolve uniquely and be
+        activated, and the capability's own target would have had no say in it.
+        """
+        session = self._session(session_id)
+        container = self._handle(session, container_id)
+        member = self._handle(session, member_id)
+        return bool(
+            await session.page.evaluate(
+                "([container, member]) => container === member || container.contains(member)",
+                [container, member],
+            )
+        )
+
     def _handle(self, session: _Session, handle_id: str) -> ElementHandle:
         """Return the element a resolution produced, or say it is gone."""
         element = session.handles.get(handle_id)
@@ -764,9 +784,26 @@ class PlaywrightDriver:
         page may have changed since it was described, and specification 11.2 wants
         a stale target reported rather than guessed at.
         """
+        handle_id = await self.resolve(session_id, action.element_id)
+        return await self.execute_resolved_action(session_id, handle_id, action)
+
+    async def execute_resolved_action(
+        self,
+        session_id: str,
+        handle_id: str,
+        action: PlannedAction,
+    ) -> ActionObservation:
+        """Perform one action against an element that has *already* been resolved.
+
+        The coordinator of specification 11.1 needs this shape. Its plan comes from
+        a template, which holds locator chains and no element IDs at all, so it
+        re-resolves each target itself at step 3 and must then act on precisely
+        what it checked. Going back through :meth:`resolve` would resolve a second
+        time, and the element that came back the second time is not provably the
+        one the risk gate and the containment check were applied to.
+        """
         session = self._session(session_id)
         before = session.current_document_id
-        handle_id = await self.resolve(session_id, action.element_id)
         element = self._handle(session, handle_id)
         timeout = self._limits.execution_timeout_ms
 

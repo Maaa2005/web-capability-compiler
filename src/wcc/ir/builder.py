@@ -97,6 +97,8 @@ def build_page_ir(snapshot: PageSnapshot) -> PageIR:
                     properties=dict(record.fields),
                     evidence=evidence,
                     confidence=collection.confidence,
+                    source_collection_id=collection.collection_id,
+                    source_record_id=record.record_id,
                 )
             )
 
@@ -126,8 +128,13 @@ def _label_of(fields: dict[str, str]) -> str | None:
     Fixed rather than "the longest" or "the first": both of those change with the
     page's content, and an entity whose label moved between two readings of an
     unchanged page would break the determinism this phase is accepted on.
+
+    ``link_text`` is in the list and ``href`` is not, which is what the alphabetical
+    fallback got wrong: on a result card carrying only a link, ``href`` sorts first
+    and every product was labelled with its own URL. An address is where a record
+    is, and a label is meant to say what it is.
     """
-    for key in ("title", "name", "label", "heading", "text"):
+    for key in ("title", "name", "label", "heading", "link_text", "text"):
         value = fields.get(key)
         if value:
             return value

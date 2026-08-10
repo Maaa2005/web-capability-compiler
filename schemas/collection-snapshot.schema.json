@@ -15,6 +15,17 @@
       "additionalProperties": false,
       "description": "One extracted record inside a collection.\n\n``identity`` is the deterministic per-record projection that feeds\n``collection_hash`` (specification 8.4). ``evidence_element_ids`` preserves the\nmapping back to the DOM elements that produced the record.",
       "properties": {
+        "activation_locator": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LocatorChain"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "entity_id": {
           "anyOf": [
             {
@@ -66,6 +77,96 @@
       ],
       "title": "Confidence",
       "type": "string"
+    },
+    "LocatorCandidate": {
+      "additionalProperties": false,
+      "description": "One way to find an element again.\n\n``key`` holds the matching value for the candidate kind: the ``id`` value, the\ncontrol ``name``, the accessible name, the label text, or a structural path\nrooted at the nearest landmark or form ancestor. A structural path may carry\ntag-index information, but execution must never fall back to a global\nnth-child-only path, a bounding box, a screenshot coordinate, or a selector\nsupplied by an external agent.",
+      "properties": {
+        "form_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Form Id"
+        },
+        "key": {
+          "title": "Key",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/LocatorKind"
+        },
+        "landmark_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Landmark Id"
+        },
+        "role": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Role"
+        }
+      },
+      "required": [
+        "kind",
+        "key"
+      ],
+      "title": "LocatorCandidate",
+      "type": "object"
+    },
+    "LocatorChain": {
+      "additionalProperties": false,
+      "description": "All applicable candidates for one element, plus the primary candidate.\n\nRe-resolution (specification 7.7) walks ``candidates`` in priority order and\naccepts only an exactly-one match. Zero matches and ambiguous matches both\ncontinue to the next candidate; the closest element is never chosen.",
+      "properties": {
+        "candidates": {
+          "items": {
+            "$ref": "#/$defs/LocatorCandidate"
+          },
+          "minItems": 1,
+          "title": "Candidates",
+          "type": "array"
+        },
+        "primary": {
+          "$ref": "#/$defs/LocatorCandidate"
+        }
+      },
+      "required": [
+        "primary",
+        "candidates"
+      ],
+      "title": "LocatorChain",
+      "type": "object"
+    },
+    "LocatorKind": {
+      "description": "Candidate kinds in priority order (specification 7.6).\n\nLower value means higher priority, so a chain sorts by ``kind`` directly.",
+      "enum": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "title": "LocatorKind",
+      "type": "integer"
     }
   },
   "additionalProperties": false,

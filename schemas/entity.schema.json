@@ -132,6 +132,30 @@
       "title": "Properties",
       "type": "object"
     },
+    "source_collection_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Source Collection Id"
+    },
+    "source_record_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Source Record Id"
+    },
     "type": {
       "title": "Type",
       "type": "string"

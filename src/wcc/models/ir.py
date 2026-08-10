@@ -85,6 +85,22 @@ class Entity(WCCModel):
     confidence: Confidence = Confidence.LOW
     available_actions: list[dict[str, object]] = Field(default_factory=list)
 
+    source_collection_id: str | None = None
+    source_record_id: str | None = None
+    """Which observed record this entity is a reading of.
+
+    Specification 7.11 lets an agent name a result by ``entity_id``, and the
+    runtime then has to find the thing that entity is about. Going back through
+    the evidence list would work until an entity had two pieces of evidence, at
+    which point the runtime would be choosing one — the same "pick the closest"
+    move specification 7.7 forbids during resolution.
+
+    Both IDs are snapshot-scoped and neither reaches a live page. They name a
+    record inside the snapshot this IR was built from, which is exactly the
+    lineage check specification 11.2 requires before an entity argument is
+    accepted.
+    """
+
 
 class IRWarning(WCCModel):
     """Something the reading could not do, reported rather than swallowed.

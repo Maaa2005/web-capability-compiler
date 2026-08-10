@@ -1,7 +1,7 @@
 """Public WCC models.
 
-Phase 0 defined the models the driver interface needs; Phase 2 adds the Agent Page
-IR, capability templates, and bound capabilities.
+Phase 0 defined the models the driver interface needs; Phase 2 added the Agent Page
+IR, capability templates, and bound capabilities; Phase 4 adds the execution result.
 """
 
 from wcc.models.action import ActionObservation, NavigationEvent, PlannedAction
@@ -29,6 +29,13 @@ from wcc.models.common import (
 )
 from wcc.models.compilation import CompilationReport, RejectedCandidate
 from wcc.models.element import CollectionRecord, CollectionSnapshot, NormalizedElement
+from wcc.models.execution import (
+    ExecutedStep,
+    ExecutionError,
+    ExecutionResult,
+    ExecutionStatus,
+    Verification,
+)
 from wcc.models.ir import Entity, Evidence, IRWarning, PageIR
 from wcc.models.locator import LocatorCandidate, LocatorChain, LocatorKind
 from wcc.models.session import (
@@ -53,6 +60,10 @@ __all__ = [
     "Confidence",
     "ControlType",
     "Entity",
+    "ExecutedStep",
+    "ExecutionError",
+    "ExecutionResult",
+    "ExecutionStatus",
     "Evidence",
     "ExpectedEffect",
     "IRWarning",
@@ -75,5 +86,6 @@ __all__ = [
     "SessionStatus",
     "SideEffect",
     "StructuredDataBlock",
+    "Verification",
     "WCCModel",
 ]

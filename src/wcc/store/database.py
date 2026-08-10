@@ -21,12 +21,41 @@ from collections.abc import Callable
 from pathlib import Path
 
 #: The DDL below. Bump when a table or column changes, and add a migration.
-SCHEMA_REVISION = 1
+SCHEMA_REVISION = 2
 
-#: ``revision -> migration``. Empty because revision 1 is the first, and present
-#: because the alternative — adding the mechanism later, under pressure, next to
-#: real user data — is how migrations get skipped.
-MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {}
+_EXECUTIONS_DDL = """
+CREATE TABLE IF NOT EXISTS executions (
+    execution_id    TEXT PRIMARY KEY,
+    session_id      TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+    capability_id   TEXT NOT NULL,
+    template_id     TEXT NOT NULL,
+    status          TEXT NOT NULL,
+    started_at      TEXT NOT NULL,
+    completed_at    TEXT NOT NULL,
+    schema_version  TEXT NOT NULL,
+    payload_json    TEXT NOT NULL
+);
+
+-- Specification 12.5 retrieves a result by ID and enforces session ownership, so
+-- both columns are in the index the lookup uses. Checking ownership after the
+-- fetch would work and would also mean a caller learning that someone else's
+-- execution exists.
+CREATE INDEX IF NOT EXISTS idx_executions_owner
+    ON executions (session_id, execution_id);
+"""
+
+
+def _add_executions(connection: sqlite3.Connection) -> None:
+    """Revision 2: record every execution (specification 11.1 step 9, 16)."""
+    for statement in (part.strip() for part in _EXECUTIONS_DDL.split(";")):
+        if statement:
+            connection.execute(statement)
+
+
+#: ``revision -> migration``. The mechanism was built empty at revision 1 rather
+#: than added later, under pressure, next to real user data — which is how
+#: migrations get skipped. This is its first use.
+MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {2: _add_executions}
 
 # Column choices follow one rule: SQL holds what is searched, owned, counted, or
 # related; the JSON payload holds the model. Specification 17 names the template
@@ -119,6 +148,8 @@ CREATE TABLE IF NOT EXISTS bound_capabilities (
 CREATE INDEX IF NOT EXISTS idx_bindings_session
     ON bound_capabilities (session_id, status);
 """
+
+_DDL += _EXECUTIONS_DDL
 
 
 class SchemaVersionError(Exception):

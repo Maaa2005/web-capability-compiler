@@ -64,12 +64,29 @@ _READ_ONLY_ACTIONS = frozenset(
 #: than destroying anything, and the POST rule below already refuses it — naming it
 #: destructive would report the wrong reason for the right refusal, and the reason
 #: is what a person reads when deciding whether the refusal was correct.
+#: The ASCII words are bounded and the Japanese ones are not, because the two
+#: languages make the word boundary differently. Unbounded ASCII matched inside
+#: other words: "Noise Cancelling Headphones" read as "cancel", "Buyer guide" as
+#: "buy", and a product list of ordinary names classified as destructive. The
+#: failure was quiet in the worst way — it did not let anything dangerous run, it
+#: refused a safe capability and gave a reason that was not true.
 _DESTRUCTIVE_WORDS = re.compile(
-    r"(delete|remove|cancel|close\s+account|deactivate|unsubscribe|"
-    r"pay|purchase|checkout|order|buy|donate|transfer|withdraw|"
+    r"(\b(delete|remove|cancel|close\s+account|deactivate|unsubscribe|"
+    r"pay|purchase|checkout|order|buy|donate|transfer|withdraw)\b|"
     r"削除|退会|解約|購入|注文|決済|支払|送金)",
     re.IGNORECASE,
 )
+
+
+def names_destructive_act(label: str | None) -> bool:
+    """Whether a control's own label names a consequence no read-only reading survives.
+
+    Public because the rule is needed in two places and must not be spelled twice.
+    Re-binding asks it of every member of a container target: a result list whose
+    members are homogeneous in structure can still contain one link labelled
+    "Delete", and the classifier only ever sees one of them.
+    """
+    return bool(label) and bool(_DESTRUCTIVE_WORDS.search(label or ""))
 
 
 def _reason(text: str) -> str:

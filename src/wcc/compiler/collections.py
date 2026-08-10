@@ -21,6 +21,7 @@ from typing import Any
 from wcc.identifiers import new_id
 from wcc.models.common import CollectionKind, Confidence
 from wcc.models.element import CollectionRecord, CollectionSnapshot
+from wcc.models.locator import LocatorCandidate, LocatorChain, LocatorKind
 
 #: Long free text is display data, not identity. Truncating it keeps an unrelated
 #: description edit from reading as a changed result set.
@@ -60,6 +61,21 @@ def collection_hash(identities: list[str], *, order_is_meaningful: bool) -> str:
     return _digest(payload)
 
 
+def _activation_locator(path: Any) -> LocatorChain | None:
+    """The chain that re-resolves a record's own link, if the record had one.
+
+    Only the structural path, and only one candidate. The other locator kinds
+    identify a control by something it declares about itself — an id, a name, an
+    accessible name — and a result link declares none of those consistently. Its
+    text is the product's name, which is content: a chain built on it would stop
+    resolving the moment the page it came from was re-rendered with a longer title.
+    """
+    if not isinstance(path, str) or not path:
+        return None
+    candidate = LocatorCandidate(kind=LocatorKind.STRUCTURAL_PATH, key=path)
+    return LocatorChain(primary=candidate, candidates=[candidate])
+
+
 def build_collection(raw: dict[str, Any]) -> CollectionSnapshot:
     """Turn one raw container report into a :class:`CollectionSnapshot`."""
     kind = CollectionKind(raw.get("kind", CollectionKind.LIST))
@@ -80,6 +96,7 @@ def build_collection(raw: dict[str, Any]) -> CollectionSnapshot:
                 record_id=new_id("rec"),
                 identity=identity,
                 fields=fields,
+                activation_locator=_activation_locator(entry.get("activation_path")),
             )
         )
 
