@@ -1,3 +1,55 @@
+# What it finds, what it refuses, and what one observation costs
+
+Three measurements, in the order they matter. A cheaper observation of nothing is
+worth nothing, so coverage comes first.
+
+## Does it find anything on pages nobody here wrote?
+
+Twenty-two public pages, one visit each, `robots.txt` fetched and honoured per
+host. Observed **2026-08-11**.
+
+```bash
+uv run python -m benchmarks.measure_coverage
+```
+
+| | |
+|---|---|
+| pages visited | 22 |
+| skipped by `robots.txt` | 4 |
+| failed to load | 1 (`www.gnu.org`, timeout) |
+| **observed** | **17** |
+| had something a compiler could want | 16 |
+| **…and a capability was compiled** | **11 (69%)** |
+| state-changing candidates refused | **21** |
+
+The capabilities are real ones on real sites: search on `python.org`, `pypi.org`,
+`crates.io`, `djangoproject.com` and `openstreetmap.org`; result-opening on
+`arxiv.org`, `w3.org`, `debian.org`, `go.dev`; next-page on
+`news.ycombinator.com`.
+
+**The 21 refusals matter as much as the 11 successes.** Twenty of them are the
+"add to basket" forms on `books.toscrape.com` and one is a subscription form on
+`debian.org`. A low-level agent sees those as buttons and can press them. WCC
+classified them as state-changing, reported them, and did not offer them. That is
+the actual product; the token figures below are a side effect of it.
+
+### Where it found nothing
+
+Separated honestly, because a zero on `example.com` and a zero on a search page
+are not the same event.
+
+| Page | Reading |
+|---|---|
+| `example.com` | correct — one paragraph and one link |
+| `developer.mozilla.org` | correct — the HTML delivered to a headless browser contains no `<form>` or `<input>` at all |
+| `www.rust-lang.org` | probably correct — no forms |
+| `docs.python.org` | **a real miss** — two forms detected, nothing compiled |
+| `quotes.toscrape.com` | **a real miss** — 55 links in a textbook repeated structure |
+| `huggingface.co` | **unexplained** — 130 elements, client-rendered, nothing compiled |
+
+Three genuine gaps out of seventeen pages, and they are being investigated rather
+than averaged away.
+
 # What one observation costs
 
 **Status: partial.** This page reports a measurement that was made. It is not the

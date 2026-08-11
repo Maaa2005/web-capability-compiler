@@ -1636,3 +1636,42 @@ is a gap in the sample rather than evidence of absence.
 Three counter-reviews in a row have now produced a right criticism attached to a
 wrong specific, and the pattern is stable enough to plan around: take the argument
 seriously, check the fact yourself.
+
+### Coverage: the measurement that should have come first (2026-08-11)
+
+Asked directly whether this project is useful, the honest answer was that the
+thing being measured all day — payload size — is not the thing that decides. A
+cheaper observation of nothing is worth nothing. So: twenty-two public pages, one
+visit each, `robots.txt` fetched and honoured per host, no key and no cost.
+
+Seventeen pages observed. Sixteen had something a compiler could reasonably want,
+and **eleven produced a capability — 69%**. They are ordinary ones on ordinary
+sites: search on `python.org`, `pypi.org`, `crates.io`, `djangoproject.com`,
+`openstreetmap.org`; result-opening on `arxiv.org`, `w3.org`, `debian.org`,
+`go.dev`; pagination on `news.ycombinator.com`.
+
+**Twenty-one state-changing candidates were refused**, twenty of them the "add to
+basket" forms on `books.toscrape.com`. A low-level agent sees those as buttons and
+can press them. This is the first evidence outside a fixture that the safety model
+does the thing it exists to do, and it is worth more than every token figure
+gathered today.
+
+Three real misses, kept separate from the correct zeros: `docs.python.org` (two
+forms detected, nothing compiled), `quotes.toscrape.com` (55 links in a textbook
+repeated structure), and `huggingface.co` (130 elements, client-rendered).
+`developer.mozilla.org` and `example.com` are correct zeros — MDN's HTML as
+delivered to a headless browser contains no form or input at all, which was
+checked rather than assumed after a first guess about hydration timing turned out
+to be wrong.
+
+**A product wart surfaced through a measurement bug.** The first run reported
+twenty refusals on `books.toscrape.com` and the second reported none. The cause is
+that a warm inspection carries no compilation report, so re-visiting a page
+returns its capabilities and says nothing about what was refused. Safety is not
+affected — a refused candidate is not executable on either path — but an agent is
+told about the dangerous forms on its first visit and not on its second, and that
+inconsistency is not defensible as a design. Recorded; not fixed here, because
+fixing it means persisting refusals beside templates.
+
+The measurement now uses a fresh database per page, since coverage is a question
+about compiling and has to be asked of a compiler that ran.
