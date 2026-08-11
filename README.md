@@ -137,6 +137,48 @@ Responses are cached, keyed by the page signature together with the request, the
 model, and the prompt version — so one page class costs one call, and changing any
 of those is a new question rather than a stale hit.
 
+## Benchmark
+
+```bash
+uv run python -m benchmarks.run --dry-run   # builds everything, calls nothing
+uv run python -m benchmarks.run             # needs ANTHROPIC_API_KEY; costs money
+```
+
+Three arms — a baseline with Playwright-MCP-style low-level tools, WCC cold, and
+WCC warm — driven by the same loop against the local fixture site, at least three
+runs each. Token counts come from the provider's usage metadata; a run that fails
+its verification condition is never credited with the tokens it saved by failing.
+Raw runs are written to `benchmarks/results/`.
+
+**No results are published yet.** The harness is complete and tested against a
+scripted client; the measuring run has not been made.
+
+## What this does not defend against
+
+Stated plainly, because a security boundary that is described only by what it
+catches is describing itself dishonestly.
+
+**DNS rebinding.** The URL policy resolves a hostname and checks every address it
+gets; Chromium then resolves the same hostname independently when it connects.
+An attacker who controls a domain can answer the first resolution with a public
+address and the second with `169.254.169.254`. WCC audits the peer address
+Playwright reports and kills the session when it is private — but that happens
+after the connection, so the request has already been sent, and a service that
+never answers produces no response to audit at all.
+
+No amount of re-checking inside the process closes this: it would only prove the
+policy keeps getting the same answer. **If you are running WCC anywhere that
+internal services are reachable, put it behind an egress proxy or a firewall that
+blocks private, loopback, link-local, and metadata ranges.** The URL policy is a
+guard against mistakes and obvious attacks; it is not a substitute for network
+isolation.
+
+Everything else in the same family was checked and is closed: decimal, octal and
+hex IP forms, IPv4-mapped IPv6, IPv6 loopback and unspecified, `0.0.0.0`,
+`localhost` and its aliases, trailing dots, credentials in the URL, non-HTTP
+schemes, redirects to a blocked address, and subresource and `fetch` requests
+made by the page.
+
 ## Operating it
 
 ```bash

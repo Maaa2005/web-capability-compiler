@@ -52,6 +52,9 @@ reportMissingTypeStubs = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# benchmarks is a repo-root package, not part of the installed wheel: it is
+# tooling for measuring wcc rather than part of it. Tests still import it.
+pythonpath = ["."]
 addopts = "-q"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

@@ -1298,3 +1298,34 @@ Scoped at three phases and roughly thirty files, it spent its budget reading and
 returned no findings at all. Recorded rather than quietly retried, because the
 failure was in how it was asked, not in the tool: a counter-review needs a surface
 small enough to reason about. Re-issued against the URL policy alone.
+
+### The URL policy, reviewed narrowly (2026-08-11)
+
+Re-issued against two files instead of thirty, and it worked: one finding and ten
+route-by-route confirmations, each citing the line that closes the route.
+
+The finding is DNS rebinding, and the honest thing to say about it is that the
+code already knew. `on_response`'s docstring says the peer audit happens "after
+the connection exists" and "cannot prevent the connection". What the review
+supplied was the consequence nobody had written down: a service that never
+answers produces no response, so the audit never runs at all, and the request has
+still been sent. Specification 10.2 asks for validation at connection time, and
+this validates at resolution time and again after the fact.
+
+It is not fixable in-process. Re-resolving inside the policy only proves the
+policy keeps getting the same answer; pinning the address would break TLS
+verification; `--host-resolver-rules` is a launch-time flag and sessions are
+dynamic. The real mitigation is an egress proxy or a firewall, which is a
+deployment property rather than a library one.
+
+So the change here is documentation, and it is the right change. The README now
+has a section saying what WCC does not defend against, naming rebinding first and
+saying in those words that the URL policy is not a substitute for network
+isolation. A boundary described only by what it catches is describing itself
+dishonestly.
+
+The other ten routes — decimal, octal and hex IP literals, IPv4-mapped IPv6, IPv6
+loopback and unspecified, `0.0.0.0`, `localhost` and its aliases, trailing dots,
+embedded credentials, non-HTTP schemes, redirects, and page-initiated
+subresources — are closed, and the review cited the line for each. That is worth
+recording as a positive result rather than as an absence of findings.
