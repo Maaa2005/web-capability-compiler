@@ -58,9 +58,17 @@ class Task:
 #: The benchmark of record. Local fixtures, because specification 14.4 makes them
 #: the reproducible arm and public sites only a dated supplement — a public site
 #: can change between two runs and turn a measurement into an anecdote.
+#:
+#: Two of these are the same task at two page sizes, and that pairing is the
+#: point. A first measurement showed that on a six-control fixture a WCC
+#: inspection is *larger* than a baseline snapshot, which is true and says nothing
+#: about real pages: WCC's saving comes from taking fewer observations, not
+#: smaller ones, and a page with six controls has no observation cost to save.
+#: Reporting one number from one page size would have answered a question nobody
+#: asked. Reporting both measures what the saving actually depends on.
 TASKS: tuple[Task, ...] = (
     Task(
-        task_id="search_products",
+        task_id="search_small_page",
         page="/search-page/",
         cold_input="wireless earbuds",
         warm_input="mechanical keyboard",
@@ -70,5 +78,28 @@ TASKS: tuple[Task, ...] = (
         ),
         expects_text="results",
         expects_url_contains="keyword=",
+    ),
+    Task(
+        task_id="search_large_page",
+        page="/large-catalog/",
+        cold_input="wireless earbuds",
+        warm_input="mechanical keyboard",
+        instruction=(
+            "Search this online shop for {input}. "
+            "When the results are showing, reply with the word DONE and nothing else."
+        ),
+        expects_text="results",
+        expects_url_contains="keyword=",
+    ),
+    Task(
+        task_id="filter_results",
+        page="/filter-page/",
+        cold_input="audio",
+        warm_input="wearables",
+        instruction=(
+            "Narrow the products on this page to the {input} category. "
+            "When the filter has been applied, reply with the word DONE and nothing else."
+        ),
+        expects_text="results",
     ),
 )

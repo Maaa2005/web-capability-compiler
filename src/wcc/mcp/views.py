@@ -16,6 +16,8 @@ fixture's own selectors.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from pydantic import Field
 
 from wcc.models.capability import (
@@ -118,10 +120,31 @@ class InspectionView(WCCModel):
     says so, and Phase 7's benchmark measures exactly this distinction.
     """
 
-    entities: list[EntityView] = Field(default_factory=list)
+    entities: EntitySummaryView
     capabilities: list[CapabilityView] = Field(default_factory=list)
     refused: list[RefusalView] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+
+
+class EntitySummaryView(WCCModel):
+    """What a page is about, in the size specification 12.2 asks for.
+
+    Section 12.2 says ``inspect_page`` returns an "entity summary", and the first
+    implementation returned every entity instead. On a 150-product catalog that
+    made an inspection 42,000 characters — nearly three times what a low-level
+    baseline snapshot of the same page costs — which quietly inverted the whole
+    claim of the project. Measurement found it; reading the sentence again would
+    also have found it.
+
+    A sample rather than a page: an agent that wants a specific result gets it
+    from the execution that produced it, where the entities are the answer rather
+    than the scenery.
+    """
+
+    total: int
+    by_type: dict[str, int] = Field(default_factory=dict)
+    sample: list[EntityView] = Field(default_factory=list)
+    truncated: bool = False
 
 
 class CapabilityListView(WCCModel):
@@ -206,10 +229,29 @@ def inspection_view(
         page_signature=snapshot.page_signature,
         title=snapshot.title,
         reused_templates=reused,
-        entities=[entity_view(entity) for entity in ir.entities],
+        entities=entity_summary(ir.entities),
         capabilities=capabilities,
         refused=refused,
         warnings=warnings,
+    )
+
+
+#: How many entities an inspection shows. Enough to tell what kind of page this is
+#: and to name a few things on it; not enough to be a copy of the page. An agent
+#: that needs a particular one runs a capability and gets it in the result.
+SAMPLE_SIZE = 5
+
+
+def entity_summary(entities: Sequence[Entity]) -> EntitySummaryView:
+    """Counts, kinds, and a handful of examples."""
+    by_type: dict[str, int] = {}
+    for entity in entities:
+        by_type[str(entity.type)] = by_type.get(str(entity.type), 0) + 1
+    return EntitySummaryView(
+        total=len(entities),
+        by_type=by_type,
+        sample=[entity_view(entity) for entity in entities[:SAMPLE_SIZE]],
+        truncated=len(entities) > SAMPLE_SIZE,
     )
 
 

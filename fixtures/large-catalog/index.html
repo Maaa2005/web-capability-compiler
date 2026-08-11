@@ -1,0 +1,941 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Fixture: Large Catalog</title>
+</head>
+<body>
+  <!-- A page at the size real ones are. The small fixtures show that the pipeline
+       works; this one shows what it costs. A baseline agent reading this page
+       receives every one of these products in every snapshot it takes, and takes
+       one before each interaction because its element refs die with the snapshot
+       that made them. That is the cost the benchmark is measuring, and it is
+       invisible on a page with six controls. -->
+  <header>
+    <nav aria-label="Main"><a href="/">Home</a><a href="/search-page/">Search</a></nav>
+  </header>
+
+  <main>
+    <h1>Catalog</h1>
+
+    <form id="catalog-search" role="search" action="/product-list/" method="get">
+      <label for="keyword">Search products</label>
+      <input type="search" id="keyword" name="keyword" placeholder="wireless earbuds">
+
+      <label for="category">Category</label>
+      <select id="category" name="category">
+        <option value="">All categories</option>
+        <option value="audio">Audio</option>
+        <option value="wearables">Wearables</option>
+        <option value="desk">Desk</option>
+      </select>
+
+      <button type="submit">Search</button>
+    </form>
+
+    <p class="result-count">150 results</p>
+    <ul id="catalog">
+      <li class="product">
+        <h3><a href="/products/1">Wireless Earbuds</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥8,900</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/2">Noise Cancelling Headphones</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥24,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/3">Bluetooth Speaker</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥6,400</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/4">Studio Monitor</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥31,200</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/5">USB Microphone</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥12,900</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/6">Turntable</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥42,000</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/7">Fitness Tracker</a></h3>
+        <p data-field="category">wearables</p>
+        <p data-field="price">¥11,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/8">Smart Watch</a></h3>
+        <p data-field="category">wearables</p>
+        <p data-field="price">¥34,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/9">Sleep Ring</a></h3>
+        <p data-field="category">wearables</p>
+        <p data-field="price">¥29,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/10">Running Earbuds</a></h3>
+        <p data-field="category">wearables</p>
+        <p data-field="price">¥9,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/11">Mechanical Keyboard</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥15,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/12">Ergonomic Mouse</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥7,200</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/13">Monitor Arm</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥9,900</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/14">Laptop Stand</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥4,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/15">Desk Mat</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥3,200</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/16">Wireless Earbuds Mk2</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥8,900</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/17">Noise Cancelling Headphones Mk2</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥24,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/18">Bluetooth Speaker Mk2</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥6,400</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/19">Studio Monitor Mk2</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥31,200</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/20">USB Microphone Mk2</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥12,900</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/21">Turntable Mk2</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥42,000</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/22">Fitness Tracker Mk2</a></h3>
+        <p data-field="category">wearables</p>
+        <p data-field="price">¥11,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/23">Smart Watch Mk2</a></h3>
+        <p data-field="category">wearables</p>
+        <p data-field="price">¥34,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/24">Sleep Ring Mk2</a></h3>
+        <p data-field="category">wearables</p>
+        <p data-field="price">¥29,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/25">Running Earbuds Mk2</a></h3>
+        <p data-field="category">wearables</p>
+        <p data-field="price">¥9,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/26">Mechanical Keyboard Mk2</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥15,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/27">Ergonomic Mouse Mk2</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥7,200</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/28">Monitor Arm Mk2</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥9,900</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/29">Laptop Stand Mk2</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥4,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/30">Desk Mat Mk2</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥3,200</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/31">Wireless Earbuds Mk3</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥8,900</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/32">Noise Cancelling Headphones Mk3</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥24,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/33">Bluetooth Speaker Mk3</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥6,400</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/34">Studio Monitor Mk3</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥31,200</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/35">USB Microphone Mk3</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥12,900</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/36">Turntable Mk3</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥42,000</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/37">Fitness Tracker Mk3</a></h3>
+        <p data-field="category">wearables</p>
+        <p data-field="price">¥11,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/38">Smart Watch Mk3</a></h3>
+        <p data-field="category">wearables</p>
+        <p data-field="price">¥34,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/39">Sleep Ring Mk3</a></h3>
+        <p data-field="category">wearables</p>
+        <p data-field="price">¥29,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/40">Running Earbuds Mk3</a></h3>
+        <p data-field="category">wearables</p>
+        <p data-field="price">¥9,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/41">Mechanical Keyboard Mk3</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥15,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/42">Ergonomic Mouse Mk3</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥7,200</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/43">Monitor Arm Mk3</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥9,900</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/44">Laptop Stand Mk3</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥4,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/45">Desk Mat Mk3</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥3,200</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/46">Wireless Earbuds Mk4</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥8,900</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/47">Noise Cancelling Headphones Mk4</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥24,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/48">Bluetooth Speaker Mk4</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥6,400</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/49">Studio Monitor Mk4</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥31,200</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/50">USB Microphone Mk4</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥12,900</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/51">Turntable Mk4</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥42,000</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/52">Fitness Tracker Mk4</a></h3>
+        <p data-field="category">wearables</p>
+        <p data-field="price">¥11,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/53">Smart Watch Mk4</a></h3>
+        <p data-field="category">wearables</p>
+        <p data-field="price">¥34,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/54">Sleep Ring Mk4</a></h3>
+        <p data-field="category">wearables</p>
+        <p data-field="price">¥29,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/55">Running Earbuds Mk4</a></h3>
+        <p data-field="category">wearables</p>
+        <p data-field="price">¥9,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/56">Mechanical Keyboard Mk4</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥15,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/57">Ergonomic Mouse Mk4</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥7,200</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/58">Monitor Arm Mk4</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥9,900</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/59">Laptop Stand Mk4</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥4,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/60">Desk Mat Mk4</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥3,200</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/61">Wireless Earbuds Mk5</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥8,900</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/62">Noise Cancelling Headphones Mk5</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥24,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/63">Bluetooth Speaker Mk5</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥6,400</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/64">Studio Monitor Mk5</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥31,200</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/65">USB Microphone Mk5</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥12,900</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/66">Turntable Mk5</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥42,000</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/67">Fitness Tracker Mk5</a></h3>
+        <p data-field="category">wearables</p>
+        <p data-field="price">¥11,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/68">Smart Watch Mk5</a></h3>
+        <p data-field="category">wearables</p>
+        <p data-field="price">¥34,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/69">Sleep Ring Mk5</a></h3>
+        <p data-field="category">wearables</p>
+        <p data-field="price">¥29,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/70">Running Earbuds Mk5</a></h3>
+        <p data-field="category">wearables</p>
+        <p data-field="price">¥9,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/71">Mechanical Keyboard Mk5</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥15,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/72">Ergonomic Mouse Mk5</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥7,200</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/73">Monitor Arm Mk5</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥9,900</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/74">Laptop Stand Mk5</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥4,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/75">Desk Mat Mk5</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥3,200</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/76">Wireless Earbuds Mk6</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥8,900</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/77">Noise Cancelling Headphones Mk6</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥24,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/78">Bluetooth Speaker Mk6</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥6,400</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/79">Studio Monitor Mk6</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥31,200</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/80">USB Microphone Mk6</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥12,900</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/81">Turntable Mk6</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥42,000</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/82">Fitness Tracker Mk6</a></h3>
+        <p data-field="category">wearables</p>
+        <p data-field="price">¥11,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/83">Smart Watch Mk6</a></h3>
+        <p data-field="category">wearables</p>
+        <p data-field="price">¥34,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/84">Sleep Ring Mk6</a></h3>
+        <p data-field="category">wearables</p>
+        <p data-field="price">¥29,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/85">Running Earbuds Mk6</a></h3>
+        <p data-field="category">wearables</p>
+        <p data-field="price">¥9,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/86">Mechanical Keyboard Mk6</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥15,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/87">Ergonomic Mouse Mk6</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥7,200</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/88">Monitor Arm Mk6</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥9,900</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/89">Laptop Stand Mk6</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥4,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/90">Desk Mat Mk6</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥3,200</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/91">Wireless Earbuds Mk7</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥8,900</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/92">Noise Cancelling Headphones Mk7</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥24,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/93">Bluetooth Speaker Mk7</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥6,400</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/94">Studio Monitor Mk7</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥31,200</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/95">USB Microphone Mk7</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥12,900</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/96">Turntable Mk7</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥42,000</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/97">Fitness Tracker Mk7</a></h3>
+        <p data-field="category">wearables</p>
+        <p data-field="price">¥11,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/98">Smart Watch Mk7</a></h3>
+        <p data-field="category">wearables</p>
+        <p data-field="price">¥34,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/99">Sleep Ring Mk7</a></h3>
+        <p data-field="category">wearables</p>
+        <p data-field="price">¥29,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/100">Running Earbuds Mk7</a></h3>
+        <p data-field="category">wearables</p>
+        <p data-field="price">¥9,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/101">Mechanical Keyboard Mk7</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥15,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/102">Ergonomic Mouse Mk7</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥7,200</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/103">Monitor Arm Mk7</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥9,900</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/104">Laptop Stand Mk7</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥4,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/105">Desk Mat Mk7</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥3,200</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/106">Wireless Earbuds Mk8</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥8,900</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/107">Noise Cancelling Headphones Mk8</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥24,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/108">Bluetooth Speaker Mk8</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥6,400</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/109">Studio Monitor Mk8</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥31,200</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/110">USB Microphone Mk8</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥12,900</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/111">Turntable Mk8</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥42,000</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/112">Fitness Tracker Mk8</a></h3>
+        <p data-field="category">wearables</p>
+        <p data-field="price">¥11,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/113">Smart Watch Mk8</a></h3>
+        <p data-field="category">wearables</p>
+        <p data-field="price">¥34,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/114">Sleep Ring Mk8</a></h3>
+        <p data-field="category">wearables</p>
+        <p data-field="price">¥29,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/115">Running Earbuds Mk8</a></h3>
+        <p data-field="category">wearables</p>
+        <p data-field="price">¥9,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/116">Mechanical Keyboard Mk8</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥15,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/117">Ergonomic Mouse Mk8</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥7,200</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/118">Monitor Arm Mk8</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥9,900</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/119">Laptop Stand Mk8</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥4,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/120">Desk Mat Mk8</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥3,200</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/121">Wireless Earbuds Mk9</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥8,900</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/122">Noise Cancelling Headphones Mk9</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥24,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/123">Bluetooth Speaker Mk9</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥6,400</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/124">Studio Monitor Mk9</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥31,200</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/125">USB Microphone Mk9</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥12,900</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/126">Turntable Mk9</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥42,000</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/127">Fitness Tracker Mk9</a></h3>
+        <p data-field="category">wearables</p>
+        <p data-field="price">¥11,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/128">Smart Watch Mk9</a></h3>
+        <p data-field="category">wearables</p>
+        <p data-field="price">¥34,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/129">Sleep Ring Mk9</a></h3>
+        <p data-field="category">wearables</p>
+        <p data-field="price">¥29,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/130">Running Earbuds Mk9</a></h3>
+        <p data-field="category">wearables</p>
+        <p data-field="price">¥9,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/131">Mechanical Keyboard Mk9</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥15,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/132">Ergonomic Mouse Mk9</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥7,200</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/133">Monitor Arm Mk9</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥9,900</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/134">Laptop Stand Mk9</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥4,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/135">Desk Mat Mk9</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥3,200</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/136">Wireless Earbuds Mk10</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥8,900</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/137">Noise Cancelling Headphones Mk10</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥24,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/138">Bluetooth Speaker Mk10</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥6,400</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/139">Studio Monitor Mk10</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥31,200</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/140">USB Microphone Mk10</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥12,900</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/141">Turntable Mk10</a></h3>
+        <p data-field="category">audio</p>
+        <p data-field="price">¥42,000</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/142">Fitness Tracker Mk10</a></h3>
+        <p data-field="category">wearables</p>
+        <p data-field="price">¥11,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/143">Smart Watch Mk10</a></h3>
+        <p data-field="category">wearables</p>
+        <p data-field="price">¥34,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/144">Sleep Ring Mk10</a></h3>
+        <p data-field="category">wearables</p>
+        <p data-field="price">¥29,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/145">Running Earbuds Mk10</a></h3>
+        <p data-field="category">wearables</p>
+        <p data-field="price">¥9,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/146">Mechanical Keyboard Mk10</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥15,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/147">Ergonomic Mouse Mk10</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥7,200</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/148">Monitor Arm Mk10</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥9,900</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/149">Laptop Stand Mk10</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥4,800</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+      <li class="product">
+        <h3><a href="/products/150">Desk Mat Mk10</a></h3>
+        <p data-field="category">desk</p>
+        <p data-field="price">¥3,200</p>
+        <button type="button" data-field="compare">Compare</button>
+      </li>
+    </ul>
+  </main>
+</body>
+</html>

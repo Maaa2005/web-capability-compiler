@@ -1381,3 +1381,46 @@ that a deep document still answers.
 That is now three counter-reviews in a row where a specific predicted failure was
 wrong while the finding around it was right. Verifying each claim before acting on
 it has paid for itself every time.
+
+### Measuring before running found the thing worth finding (2026-08-11)
+
+Before spending anything on the benchmark, the payloads were measured directly.
+Two facts came out, and the second is a defect.
+
+**Fact one: the fixtures were too small to measure anything.** On the six-control
+search page, a baseline snapshot is 563 characters and a WCC inspection is 1,735.
+WCC is three times *larger*. This is true and it is not a criticism of the design:
+WCC's saving comes from taking fewer observations, not smaller ones, and a page
+with six controls has no observation cost worth saving. Running the benchmark as
+it stood would have produced an honest number answering a question nobody asked.
+So a 150-product catalog fixture was added, and the same search task now runs at
+both sizes. Reduction as a function of page size is the thing that is actually
+true.
+
+**Fact two: `inspect_page` was returning every entity.** Specification 12.2 says
+"entity summary". The implementation returned the full list, which on the large
+catalog made an inspection 42,239 characters against the baseline's 15,234 — WCC
+was 2.8 times more expensive on exactly the page it is supposed to win on. The
+whole claim of the project was inverted, in production code, and every test
+passed.
+
+It now returns a summary: a total, counts by type, and five examples. An agent
+that wants a particular entity runs a capability and receives it in the result,
+where the entities are the answer rather than the scenery.
+
+The measurement after the fix:
+
+| page | baseline snapshot | WCC inspection | ratio |
+|---|---|---|---|
+| 6 controls | 563 | 1,787 | 3.17× |
+| 150 products | 15,234 | 2,527 | **0.17×** |
+
+That is the shape of the real result, and it is more interesting than a single
+number would have been: WCC costs more on trivial pages and about six times less
+on realistic ones, because its cost is proportional to the controls a page offers
+while a snapshot's is proportional to everything on it.
+
+Two things are worth naming about how this was found. It was found by measuring
+before paying, which cost nothing and would have been embarrassing to skip. And it
+was found because the first measurement disagreed with the expected answer and was
+believed anyway — the temptation at 3.17× was to assume the harness was wrong.
