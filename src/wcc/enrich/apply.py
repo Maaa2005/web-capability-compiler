@@ -5,20 +5,24 @@ execution actions, or lower deterministic risk". They are enforced twice here, a
 the duplication is deliberate.
 
 The first enforcement is *constructive*. :func:`_enriched` builds the new template
-by copying the old one and replacing exactly three fields — name, description, and
-the ``title``/``description`` annotations inside the parameter schema. A locator
-chain is never named, so no response can reach one, whatever it contains.
+by copying the old one and replacing exactly three things — the name, a
+locally-composed description, and the ``description`` annotations inside the
+parameter schema. A locator chain is never named, so no response can reach one.
 
-The second is a *check*. :func:`_unchanged` compares the result against the input
-on the fields that must not have moved, and raises if any did. That check cannot
-fail today, which is the point: it is aimed at the edit that adds a fourth field
-to the copy a year from now, when the sentence in this docstring has been skimmed
-rather than read. A rule that only lives in a docstring stops being a rule.
+The second is a *check*, and it is an allowlist rather than a denylist. An earlier
+version listed the fields enrichment must not touch, which a counter-review
+correctly called out: it omitted ``schema_version``, never compared
+``risk.reversible`` or ``risk.requires_confirmation``, and did no deep comparison
+of the parameter schema. A list of what must not move has to be revised every time
+a field is added, and nothing fails when it is not. :func:`_only_allowed_changes`
+diffs the two full ``model_dump()`` documents instead and permits exactly four
+paths. A new field is protected the day it is added, by default, without anyone
+remembering to protect it.
 
-Risk is the third, and works differently. A ``risk_hint`` may raise a level and is
-ignored when it would lower one — not rejected, ignored, because a model guessing
-low on a form the compiler classified high is the expected failure and is exactly
-what the deterministic classification is for.
+Risk is the third rule and works differently. A ``risk_hint`` may raise a level and
+is ignored when it would lower one — ignored rather than rejected, because a model
+guessing low on a form the compiler classified high is the expected failure and is
+exactly what the deterministic classification is for.
 """
 
 from __future__ import annotations
@@ -37,6 +41,22 @@ class EnrichmentRejected(Exception):
     between a response and its request — a reference to a candidate that was never
     sent, or a parameter that does not exist.
     """
+
+
+#: The only paths that may differ between a template and its enriched form.
+#: ``parameters`` is matched per property by :func:`_allowed_parameter_change`.
+ALLOWED_PATHS = frozenset({"name", "description", "risk", "parameters"})
+
+
+def describe(template: CapabilityTemplate, subject: str) -> str:
+    """Compose the capability's description from a provider's noun phrase.
+
+    The sentence is WCC's; the noun phrase is the provider's. That split is the
+    whole defence against a page laundering an instruction into text an agent
+    reads as this project's own, so the composition lives here rather than in a
+    format string at the call site where a later edit could widen it.
+    """
+    return f"{template.category.capitalize()} {subject}."
 
 
 def apply_enrichment(
@@ -77,13 +97,17 @@ def _enriched(template: CapabilityTemplate, enrichment: CapabilityEnrichment) ->
     updated = template.model_copy(
         update={
             "name": enrichment.name,
-            "description": enrichment.description,
+            "description": describe(template, enrichment.subject),
             "parameters": _annotated(template.parameters, enrichment),
             "risk": _raised(template.risk, enrichment),
         }
     )
-    _unchanged(template, updated)
-    return updated
+    # ``model_copy`` does not re-run validators, so the result is revalidated
+    # rather than trusted: an update that produced an invalid template would
+    # otherwise be persisted and only fail when something read it back.
+    revalidated = CapabilityTemplate.model_validate(updated.model_dump())
+    _only_allowed_changes(template, revalidated)
+    return revalidated
 
 
 def _annotated(parameters: dict[str, Any], enrichment: CapabilityEnrichment) -> dict[str, Any]:
@@ -106,7 +130,7 @@ def _annotated(parameters: dict[str, Any], enrichment: CapabilityEnrichment) -> 
         existing = rewritten.get(parameter.name)
         if not isinstance(existing, dict):
             raise EnrichmentRejected(f"{parameter.name!r} is not a parameter of this capability")
-        rewritten[parameter.name] = {**existing, "description": parameter.description}
+        rewritten[parameter.name] = {**existing, "description": parameter.subject}
 
     return {**parameters, "properties": rewritten}
 
@@ -114,41 +138,76 @@ def _annotated(parameters: dict[str, Any], enrichment: CapabilityEnrichment) -> 
 def _raised(risk: Risk, enrichment: CapabilityEnrichment) -> Risk:
     """Take the higher of the deterministic level and the hint.
 
-    ``side_effect`` is never touched, so :class:`Risk`'s own floor still applies:
-    the level may rise above what the side effect implies, and can never be argued
-    below it. A hint is an opinion about danger, and the only safe direction for an
-    opinion to move a safety classification is up.
+    Rebuilt through the constructor rather than copied, so :class:`Risk`'s own
+    floor validator runs on the result: the level may rise above what the side
+    effect implies, and can never be argued below it.
     """
     hint = enrichment.risk_hint
     if hint is None or risk_order(hint) <= risk_order(risk.level):
         return risk
-    return risk.model_copy(update={"level": hint})
+    return Risk(
+        level=hint,
+        side_effect=risk.side_effect,
+        reversible=risk.reversible,
+        requires_confirmation=risk.requires_confirmation,
+    )
 
 
-#: The fields a response must leave exactly as the compiler produced them. Named
-#: rather than derived, so that adding a field to :class:`CapabilityTemplate`
-#: without deciding whether enrichment may touch it does not silently opt it in.
-PROTECTED_FIELDS = (
-    "template_id",
-    "origin",
-    "normalized_route_pattern",
-    "page_signature",
-    "category",
-    "execution_plan_template",
-    "target_locators",
-    "expected_effect",
-    "evidence",
-    "confidence",
-    "created_at",
-    "provenance",
-)
+def _only_allowed_changes(before: CapabilityTemplate, after: CapabilityTemplate) -> None:
+    """Diff the whole document and permit exactly the paths enrichment owns."""
+    original = before.model_dump()
+    result = after.model_dump()
 
-
-def _unchanged(before: CapabilityTemplate, after: CapabilityTemplate) -> None:
-    moved = [field for field in PROTECTED_FIELDS if getattr(before, field) != getattr(after, field)]
+    moved = sorted(
+        key
+        for key in set(original) | set(result)
+        if original.get(key) != result.get(key) and key not in ALLOWED_PATHS
+    )
     if moved:
         raise EnrichmentRejected(f"enrichment altered {moved}, which it may never do")
-    if risk_order(after.risk.level) < risk_order(before.risk.level):
+
+    _only_descriptions_changed(original.get("parameters"), result.get("parameters"))
+    _only_the_level_rose(before.risk, after.risk)
+
+
+def _only_descriptions_changed(original: Any, result: Any) -> None:
+    """Every part of the parameter schema is fixed except property descriptions."""
+    if original == result:
+        return
+    if not isinstance(original, dict) or not isinstance(result, dict):
+        raise EnrichmentRejected("enrichment replaced the parameter schema")
+
+    if set(original) != set(result):
+        raise EnrichmentRejected("enrichment changed the keys of the parameter schema")
+    for key in original:
+        if key == "properties":
+            continue
+        if original[key] != result[key]:
+            raise EnrichmentRejected(f"enrichment changed parameters.{key}")
+
+    before_properties, after_properties = original.get("properties"), result.get("properties")
+    if not isinstance(before_properties, dict) or not isinstance(after_properties, dict):
+        raise EnrichmentRejected("enrichment replaced the parameter properties")
+    if set(before_properties) != set(after_properties):
+        raise EnrichmentRejected("enrichment added or removed a parameter")
+
+    for name, schema in before_properties.items():
+        other = after_properties[name]
+        if not isinstance(schema, dict) or not isinstance(other, dict):
+            raise EnrichmentRejected(f"enrichment replaced the schema of {name!r}")
+        if set(schema) - {"description"} != set(other) - {"description"}:
+            raise EnrichmentRejected(f"enrichment changed the shape of {name!r}")
+        for key in set(schema) | set(other):
+            if key != "description" and schema.get(key) != other.get(key):
+                raise EnrichmentRejected(f"enrichment changed {name}.{key}")
+
+
+def _only_the_level_rose(before: Risk, after: Risk) -> None:
+    if risk_order(after.level) < risk_order(before.level):
         raise EnrichmentRejected("enrichment lowered a deterministic risk classification")
-    if after.risk.side_effect is not before.risk.side_effect:
-        raise EnrichmentRejected("enrichment changed a side effect")
+    if (
+        after.side_effect is not before.side_effect
+        or after.reversible != before.reversible
+        or after.requires_confirmation != before.requires_confirmation
+    ):
+        raise EnrichmentRejected("enrichment changed a risk field other than the level")

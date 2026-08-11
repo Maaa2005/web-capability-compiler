@@ -100,9 +100,7 @@ async def test_invalid_model_output_leaves_the_deterministic_output_usable(
             PageEnrichment(
                 page_type="search",
                 capabilities=[
-                    CapabilityEnrichment(
-                        ref="c99", name="search_products", description="A page never sent."
-                    )
+                    CapabilityEnrichment(ref="c99", name="search_products", subject="products")
                 ],
             )
         )
@@ -140,7 +138,7 @@ async def test_enrichment_cannot_alter_locators_actions_or_lower_risk_end_to_end
             CapabilityEnrichment(
                 ref=f"c{index}",
                 name=f"search_products_{index}",
-                description="Renamed by a provider that should not be trusted further.",
+                subject="products",
                 risk_hint=None,
             )
             for index in range(1, len(before) + 1)

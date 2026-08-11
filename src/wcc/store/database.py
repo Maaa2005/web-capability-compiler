@@ -21,7 +21,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 #: The DDL below. Bump when a table or column changes, and add a migration.
-SCHEMA_REVISION = 4
+SCHEMA_REVISION = 5
 
 _EXECUTIONS_DDL = """
 CREATE TABLE IF NOT EXISTS executions (
@@ -66,13 +66,19 @@ CREATE INDEX IF NOT EXISTS idx_steps_failures
 
 _ENRICHMENTS_DDL = """
 CREATE TABLE IF NOT EXISTS enrichments (
-    page_signature  TEXT PRIMARY KEY,
+    cache_key       TEXT PRIMARY KEY,
     page_type       TEXT NOT NULL,
     created_at      TEXT NOT NULL,
     schema_version  TEXT NOT NULL,
     payload_json    TEXT NOT NULL
 );
 """
+
+
+#: What revision 4 created. Kept verbatim so that migration still builds the table
+#: it built at the time; revision 5 replaces it. A migration edited in place stops
+#: describing the database anyone actually has.
+_ENRICHMENTS_DDL_AT_4 = _ENRICHMENTS_DDL.replace("cache_key ", "page_signature")
 
 
 def _run(connection: sqlite3.Connection, ddl: str) -> None:
@@ -92,12 +98,29 @@ def _add_execution_steps(connection: sqlite3.Connection) -> None:
 
 
 def _add_enrichments(connection: sqlite3.Connection) -> None:
-    """Revision 4: cache optional semantic enrichment by page signature (Phase 6).
+    """Revision 4: cache optional semantic enrichment (Phase 6).
 
     A cache in the durable store rather than in memory, because the cost being
-    avoided is a paid network call and the thing it is keyed by — a page class —
-    outlives any one process by design.
+    avoided is a paid network call and the thing it is keyed by outlives any one
+    process by design.
     """
+    _run(connection, _ENRICHMENTS_DDL_AT_4)
+
+
+def _widen_the_enrichment_key(connection: sqlite3.Connection) -> None:
+    """Revision 5: the key stopped being a page signature, so the column is renamed.
+
+    Revision 4 keyed this table by ``page_signature`` alone. A counter-review
+    showed why that is wrong — a response refers to its candidates positionally,
+    and one page class can present them in a different order — so the key now
+    also covers the request, the model, and the prompt version.
+
+    The table is dropped rather than migrated. Every row in it is a cached answer
+    under the old key, none of them can be re-keyed without re-asking, and the
+    entire cost of losing the cache is one model call the next time each page is
+    seen. Migrating regenerable data is how a rename becomes a data-loss bug.
+    """
+    connection.execute("DROP TABLE IF EXISTS enrichments")
     _run(connection, _ENRICHMENTS_DDL)
 
 
@@ -108,6 +131,7 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     2: _add_executions,
     3: _add_execution_steps,
     4: _add_enrichments,
+    5: _widen_the_enrichment_key,
 }
 
 # Column choices follow one rule: SQL holds what is searched, owned, counted, or

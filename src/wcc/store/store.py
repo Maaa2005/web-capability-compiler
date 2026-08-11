@@ -529,7 +529,7 @@ class Store:
 
     # -- enrichment cache --------------------------------------------------
 
-    def load_enrichment(self, page_signature: str) -> PageEnrichment | None:
+    def load_enrichment(self, key: str) -> PageEnrichment | None:
         """A provider response already obtained for this page class (Phase 6).
 
         A row written by an older build is discarded rather than migrated. The
@@ -538,8 +538,8 @@ class Store:
         one would trade that trivial cost for a subtle one.
         """
         row = self._connection.execute(
-            "SELECT payload_json, schema_version FROM enrichments WHERE page_signature = ?",
-            (page_signature,),
+            "SELECT payload_json, schema_version FROM enrichments WHERE cache_key = ?",
+            (key,),
         ).fetchone()
         if row is None or row["schema_version"] != SCHEMA_VERSION:
             return None
@@ -548,18 +548,18 @@ class Store:
         except ValidationError:
             return None
 
-    def save_enrichment(self, page_signature: str, enrichment: PageEnrichment) -> None:
-        payload_json, _ = _dump(enrichment, f"enrichment for {page_signature}")
+    def save_enrichment(self, key: str, enrichment: PageEnrichment) -> None:
+        payload_json, _ = _dump(enrichment, f"enrichment for {key}")
         with transaction(self._connection):
             self._connection.execute(
                 "INSERT INTO enrichments "
-                "(page_signature, page_type, created_at, schema_version, payload_json) "
+                "(cache_key, page_type, created_at, schema_version, payload_json) "
                 "VALUES (?, ?, ?, ?, ?) "
-                "ON CONFLICT(page_signature) DO UPDATE SET "
+                "ON CONFLICT(cache_key) DO UPDATE SET "
                 "page_type = excluded.page_type, created_at = excluded.created_at, "
                 "schema_version = excluded.schema_version, payload_json = excluded.payload_json",
                 (
-                    page_signature,
+                    key,
                     enrichment.page_type,
                     datetime.now(UTC).isoformat(),
                     SCHEMA_VERSION,

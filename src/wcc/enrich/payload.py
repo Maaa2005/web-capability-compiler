@@ -16,14 +16,27 @@ connection. A model that never sees a selector cannot return one.
 person. Specification 18 redacts before persistence, and this is a stricter
 boundary than persistence.
 
-**The page's body text.** Page type is inferable from the route, the title, and
-the shape of what was compiled. Shipping the article someone was reading in order
-to name a search box better is not a trade this project makes.
+**The page's body text.** Page type is inferable from the route and the shape of
+what was compiled. Shipping the article someone was reading in order to name a
+search box better is not a trade this project makes.
 
-One thing that *is* present is attacker-controlled: labels and titles come from the
-page. That is unavoidable — they are what there is to interpret — and it is why
-:mod:`wcc.enrich.apply` treats every field of the response as untrusted input
-rather than as instructions.
+**The page title.** It was sent in the first version, and a counter-review was
+right to object. A title is free text a site chooses, and on a page behind a login
+it is routinely the most identifying string on it — ``Alice Smith medical record
+search``. It bought a marginally better page-type guess and cost the one field
+most likely to carry a person's name.
+
+What remains, exactly, is: the origin, the normalized route pattern, and per
+capability its generated name, category, risk level, side effect, and its
+parameters' names, types, and labels. That list is the contract, it is repeated in
+the README, and this module constructs it field by field so nothing joins it by
+being added to a template.
+
+Two of those are page-authored and cannot be otherwise: parameter labels are what
+naming is *for*, and the route pattern normalizes digits and UUIDs but not a
+tenant slug. Anyone enabling enrichment on an authenticated site is sending those
+to a third party, which is why it is off by default and why the README says so in
+those words rather than in reassuring ones.
 """
 
 from __future__ import annotations
@@ -68,11 +81,10 @@ class CandidateSummary(WCCModel):
 
 
 class EnrichmentRequest(WCCModel):
-    """Everything a provider is given about a page."""
+    """Everything a provider is given about a page. The whole list, not a subset."""
 
     origin: str
     route_pattern: str
-    title: str | None = None
     candidates: list[CandidateSummary] = Field(min_length=1)
 
 
@@ -89,7 +101,6 @@ def build_request(
     return EnrichmentRequest(
         origin=snapshot.origin,
         route_pattern=snapshot.normalized_route_pattern,
-        title=snapshot.title,
         candidates=[
             CandidateSummary(
                 ref=f"c{index}",

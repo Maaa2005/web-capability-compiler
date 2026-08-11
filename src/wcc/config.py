@@ -89,8 +89,9 @@ def build_enricher(
         )
         return Enricher()
     try:
-        provider = AnthropicProvider(enrichment_model(environ), api_key=api_key)
+        model = enrichment_model(environ)
+        provider = AnthropicProvider(model, api_key=api_key)
     except EnrichmentUnavailable as unavailable:
         logger.warning("semantic enrichment is configured but unavailable: %s", unavailable)
         return Enricher()
-    return Enricher(provider, cache=cache)
+    return Enricher(provider, cache=cache, model=model)

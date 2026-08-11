@@ -114,16 +114,28 @@ Set by whoever launches the server, never by an agent over the wire.
 
 ### Optional semantic enrichment
 
-Off unless you turn it on, and the compiler is the product either way — enrichment
-only rewrites names and descriptions. What it is given is a reduced structured
-summary: the compiled capability names, categories, risk levels, and parameter
-names. It is never given the DOM, a selector, a page's text, or a form value. What
-it gets back is validated before use and **cannot** change a locator, an execution
-plan, or lower a risk classification; a risk hint is only ever applied upward. If
-the provider is unreachable or answers with something invalid, the deterministic
-result is used unchanged and the reason is logged.
+Off unless you turn it on, and the compiler is the product either way.
 
-Responses are cached by page signature, so one page class costs one call.
+**Exactly what is sent**, and nothing else: the origin, the normalized route
+pattern, and for each compiled capability its generated name, category, risk
+level, side effect, and its parameters' names, types, and labels. Never the DOM,
+a selector, the page's text, the page title, or a form value.
+
+Two of those fields are written by the page — parameter labels, and a route
+pattern that normalizes digits and UUIDs but not a tenant slug. **On an
+authenticated site those go to a third party.** That is the trade; it is why this
+is off by default.
+
+**What comes back cannot do much.** A provider returns a capability name and a
+short noun phrase; WCC composes the sentence around it, so model-authored prose
+never reaches your agent directly. It cannot change a locator, an execution plan,
+a category, or the shape of an argument schema, and a risk hint is only ever
+applied upward. If the provider is unreachable, slow, or answers with something
+invalid, the deterministic result is used unchanged and the reason is logged.
+
+Responses are cached, keyed by the page signature together with the request, the
+model, and the prompt version — so one page class costs one call, and changing any
+of those is a new question rather than a stale hit.
 
 ## Operating it
 
