@@ -41,9 +41,11 @@ class Arm(Protocol):
 
     def tools(self) -> list[dict[str, Any]]:
         """Tool definitions in Anthropic Messages API shape."""
+        ...
 
     async def call(self, name: str, arguments: dict[str, Any]) -> str:
         """Run one tool and return what the model should see."""
+        ...
 
 
 # -- baseline: low-level browser tools ------------------------------------

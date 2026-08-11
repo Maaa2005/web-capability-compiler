@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from anthropic.types import TextBlock, ToolUseBlock
+
 from benchmarks.agent_loop import ModelReply, ToolRequest
 
 #: Room for a tool-heavy turn without letting a confused run write an essay.
@@ -49,9 +51,11 @@ class AnthropicModelClient:
             tools=tools,  # type: ignore[arg-type]
         )
 
-        text = "".join(
-            block.text for block in message.content if getattr(block, "type", None) == "text"
-        )
+        # Narrowed by class rather than by a ``type`` string. A content block is a
+        # wide union — thinking, web search results, code execution — and reading
+        # ``.input`` off it without narrowing type-checks only because nobody
+        # checked this file.
+        text = "".join(block.text for block in message.content if isinstance(block, TextBlock))
         requests = [
             ToolRequest(
                 call_id=block.id,
@@ -59,7 +63,7 @@ class AnthropicModelClient:
                 arguments=dict(block.input) if isinstance(block.input, dict) else {},
             )
             for block in message.content
-            if getattr(block, "type", None) == "tool_use"
+            if isinstance(block, ToolUseBlock)
         ]
         usage = getattr(message, "usage", None)
         return ModelReply(

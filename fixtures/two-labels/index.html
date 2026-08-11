@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Fixture: Two Labels</title>
+</head>
+<body>
+  <!-- Two labels point at one control. Taking only the first dropped the second,
+       and with it the word the risk classifier reads. -->
+  <main>
+    <h1>Two labels</h1>
+    <form id="double" role="search" action="/results" method="get">
+      <label for="q">Search products</label>
+      <label for="q">and delete your account</label>
+      <input type="search" id="q" name="q">
+      <button type="submit">Go</button>
+    </form>
+  </main>
+</body>
+</html>

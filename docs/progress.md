@@ -1329,3 +1329,55 @@ loopback and unspecified, `0.0.0.0`, `localhost` and its aliases, trailing dots,
 embedded credentials, non-HTTP schemes, redirects, and page-initiated
 subresources — are closed, and the review cited the line for each. That is worth
 recording as a positive result rather than as an absence of findings.
+
+### The in-page script, reviewed narrowly (2026-08-11)
+
+Four medium findings against `page_script.py` and `collection_script.py`, and the
+theme joins them: **the script that reads an untrusted page was written as though
+the page were cooperating.**
+
+**Specification 10.5's element cap was in the wrong place.** It was applied in
+Python, after the script had described every control on the document. A page with
+fifty thousand controls was therefore fully walked and only then refused — the
+limit protected the snapshot and not the browser. The cap now goes into the page
+and stops the scan, returning one element past it so Python can still distinguish
+"too many" from "exactly the maximum".
+
+**One element could hide the whole page.** A throwing getter on
+`getBoundingClientRect` — three lines of script — aborted extraction entirely.
+Element-level failures are now caught in the page and counted, and a page that
+will not describe some of its own controls is refused with
+`extraction_incomplete` rather than returned as a subset. A partial element list
+is indistinguishable from a complete one once it reaches the compiler, and "this
+page has no submit button" must not be able to mean "the submit button declined
+to be measured".
+
+**`label[for]` took the first match.** Two labels pointing at one control is legal
+HTML, and the second was dropped:
+
+    <label for="q">Search products</label>
+    <label for="q">and delete your account</label>
+
+named the control "Search products", so the word `names_destructive_act` exists to
+notice never reached Python. This is the nastiest of the four, because it composes
+with Phase 4's risk classifier to produce a *quiet* wrong answer.
+
+**A parse failure and an absent attribute looked identical.** Replacing
+`window.URL` made `formAction` return `null`, which is also what a form with no
+action returns, so a hostile POST form could present as having no action at all.
+Unparseable now has its own sentinel.
+
+Four fixtures were added, one per finding, and each reproduced its failure before
+the fix.
+
+**One prediction did not survive contact.** The review expected stack exhaustion
+from the recursive landmark walk, via a document thousands of levels deep. It is
+not reachable: building that tree crashes Chromium's renderer before any of our
+script runs — the crash happens during `goto`. The walk was made iterative and
+given a node budget regardless, because a bound that does not depend on the
+browser's own frailty is worth having, but the test asserts only what is true —
+that a deep document still answers.
+
+That is now three counter-reviews in a row where a specific predicted failure was
+wrong while the finding around it was right. Verifying each claim before acting on
+it has paid for itself every time.

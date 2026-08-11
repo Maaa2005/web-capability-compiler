@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Fixture: Unreadable Element</title>
+</head>
+<body>
+  <!-- One element with a throwing getter used to abort the whole extraction, so a
+       single hostile node denied observation of the entire page. -->
+  <main>
+    <h1>Unreadable element</h1>
+    <form id="ordinary" role="search" action="/results" method="get">
+      <label for="q">Search products</label>
+      <input type="search" id="q" name="q">
+      <button type="submit">Go</button>
+    </form>
+  </main>
+  <script>
+    const boom = document.createElement('input');
+    boom.type = 'text';
+    boom.id = 'boom';
+    boom.setAttribute('name', 'boom');
+    document.querySelector('main').appendChild(boom);
+    boom.getBoundingClientRect = () => {
+      throw new Error('abort extraction');
+    };
+  </script>
+</body>
+</html>

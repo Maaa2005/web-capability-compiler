@@ -70,6 +70,20 @@ class LimitExceededError(DriverError):
     code = "limit_exceeded"
 
 
+class ExtractionIncompleteError(DriverError):
+    """The page would not fully describe itself.
+
+    Raised when the in-page script could not read some of its own elements — a
+    throwing getter on ``getBoundingClientRect`` is enough, and a page can install
+    one deliberately. Refused rather than returned, because a partial element list
+    is indistinguishable from a complete one once it reaches the compiler, and
+    "this page has no submit button" would then mean "the submit button declined
+    to be measured".
+    """
+
+    code = "extraction_incomplete"
+
+
 class SessionFailedError(DriverError):
     """The session was closed because something happened that must not be survived.
 
@@ -200,6 +214,7 @@ __all__ = [
     "DriverSettings",
     "DriverTimeoutError",
     "ElementNotResolvedError",
+    "ExtractionIncompleteError",
     "LimitExceededError",
     "NavigationBlockedError",
     "NavigationGuard",

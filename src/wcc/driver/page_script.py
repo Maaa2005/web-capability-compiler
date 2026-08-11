@@ -70,10 +70,21 @@ _SHARED = r"""
     return box.width > 0 && box.height > 0;
   };
 
+  // Every `label[for]`, not the first. A page may point two labels at one
+  // control, and taking `querySelector` alone dropped the second — so
+  //
+  //   <label for="q">Search</label><label for="q">Delete account</label>
+  //
+  // named the control "Search" and the word the risk classifier needs to see
+  // never reached Python. Joined in DOM order, which is the order a person
+  // reading the page would encounter them in.
   const labelFor = (el) => {
     if (!el.id) return null;
     const escaped = (window.CSS && CSS.escape) ? CSS.escape(el.id) : el.id;
-    return text(document.querySelector(`label[for="${escaped}"]`));
+    const parts = Array.prototype.map
+      .call(document.querySelectorAll(`label[for="${escaped}"]`), text)
+      .filter(Boolean);
+    return parts.length ? parts.join(' ') : null;
   };
 
   const wrappingLabel = (el) => text(el.closest('label'));
@@ -93,11 +104,18 @@ _SHARED = r"""
     return heading ? text(heading) : null;
   };
 
+  // Bounded, because a page can nest 50,000 divs and the walk is per element.
+  // The cap is generous next to any real document; reaching it means the page is
+  // built to exhaust this loop rather than to be read.
+  const MAX_ANCESTORS = 60;
+
   const structuralPath = (el) => {
     const parts = [];
     let node = el;
+    let steps = 0;
     const stop = new Set(['FORM', 'MAIN', 'NAV', 'HEADER', 'FOOTER', 'ASIDE', 'SECTION']);
-    while (node && node.nodeType === 1 && node !== document.body) {
+    while (node && node.nodeType === 1 && node !== document.body && steps < MAX_ANCESTORS) {
+      steps += 1;
       const parent = node.parentElement;
       if (!parent) break;
       const tag = node.tagName.toLowerCase();
@@ -117,13 +135,23 @@ _SHARED = r"""
   // layer can normalize one absolute URL instead of re-implementing relative
   // resolution. An empty action means "this document", which resolves to the
   // current URL, so the ordinary case needs no special handling.
+  // ``null`` means there is no form. ``UNRESOLVED`` means there is one and its
+  // action could not be parsed — which a page can force by replacing
+  // ``window.URL``. Collapsing the two into ``null`` let a hostile page make a
+  // POST form look like a form with no action at all, and the Python layer had
+  // no way to tell that it had been told nothing.
+  const UNRESOLVED = '\u0000unresolved';
+  const resolve = (value) => {
+    try {
+      return new URL(value, document.baseURI).href;
+    } catch (e) {
+      return UNRESOLVED;
+    }
+  };
+
   const formAction = (form) => {
     if (!form) return null;
-    try {
-      return new URL(form.getAttribute('action') || '', document.baseURI).href;
-    } catch (e) {
-      return null;
-    }
+    return resolve(form.getAttribute('action') || '');
   };
 
   const SELECTOR = [
@@ -163,13 +191,7 @@ _SHARED = r"""
         ? (el.getAttribute('formmethod') || form.getAttribute('method') || 'get').toLowerCase()
         : null,
       form_action: el.getAttribute('formaction')
-        ? (() => {
-            try {
-              return new URL(el.getAttribute('formaction'), document.baseURI).href;
-            } catch (e) {
-              return null;
-            }
-          })()
+        ? resolve(el.getAttribute('formaction'))
         : formAction(form),
       // `input[type=image]` is a submit button that happens to be drawn as a
       // picture. Omitting it made a form with no other submit look unsubmittable,
@@ -212,17 +234,38 @@ _SHARED = r"""
 """
 
 #: Every eligible control on the page, as the compiler's input.
+#:
+#: Takes the caller's limits rather than reading none. Specification 10.5's
+#: element cap used to be applied in Python *after* this script had described
+#: every element on the page, which meant a document with fifty thousand controls
+#: was fully walked before being refused — the limit protected the model's context
+#: and not the browser. It now stops the scan, and returns one element past the
+#: cap so Python can still tell "too many" from "exactly the maximum".
 EXTRACT_ELEMENTS = (
-    "() => {\n"
+    "(limits) => {\n"
     + _SHARED
     + """
+  const maxElements = (limits && limits.maxElements) || 500;
   const records = [];
   let ordinal = 0;
+  let failed = 0;
+
   for (const el of document.querySelectorAll(SELECTOR)) {
+    if (records.length > maxElements) break;
     ordinal += 1;
-    records.push(describe(el, ordinal));
+    try {
+      records.push(describe(el, ordinal));
+    } catch (error) {
+      // One element cannot cost the whole observation. A page that defines a
+      // throwing getter on `getBoundingClientRect` used to abort extraction
+      // entirely, which turns a single hostile node into a denial of service on
+      // the page. The failure is reported rather than hidden: Python treats a
+      // page that would not describe itself as a page it has not fully seen.
+      failed += 1;
+      records.push({ordinal, extraction_failed: true});
+    }
   }
-  return records;
+  return {records, failed, scanned: ordinal};
 }
 """
 )
@@ -261,15 +304,28 @@ EXTRACT_LANDMARKS = r"""
     || AD_LIKE.test(el.className || '')
     || Array.from(el.attributes).some((a) => a.name.startsWith('data-ad'));
 
+  // Iterative, with a node budget. The recursive version crashed the tab on a
+  // document three thousand elements deep — one `<div>` per level is enough, and
+  // a page can build that in a loop. A crashed renderer is not a refusal: the
+  // session dies with a Playwright error that says nothing about why, so the
+  // limit has to be here rather than in the caller.
+  const MAX_NODES = 20000;
   const out = [];
-  const walk = (node, depth) => {
-    for (const child of node.children) {
+  const stack = [[document.body, 0]];
+  let seen = 0;
+
+  while (stack.length && seen < MAX_NODES) {
+    const [node, depth] = stack.pop();
+    const children = node.children;
+    for (let i = children.length - 1; i >= 0; i--) {
+      const child = children[i];
+      seen += 1;
+      if (seen >= MAX_NODES) break;
       const role = child.getAttribute('role') || IMPLICIT[child.tagName];
       if (role && !isAdLike(child)) out.push(depth + ':' + role);
-      walk(child, role ? depth + 1 : depth);
+      stack.push([child, role ? depth + 1 : depth]);
     }
-  };
-  walk(document.body, 0);
+  }
   return out;
 }
 """

@@ -53,6 +53,7 @@ from wcc.driver.base import (
     DriverSettings,
     DriverTimeoutError,
     ElementNotResolvedError,
+    ExtractionIncompleteError,
     LimitExceededError,
     NavigationBlockedError,
     NavigationGuard,
@@ -566,7 +567,25 @@ class PlaywrightDriver:
         leak page structure to an agent that must never receive a selector.
         """
         session = self._session(session_id)
-        records = await session.page.evaluate(EXTRACT_ELEMENTS)
+        # The cap goes into the page. Applied only here, it bounded what Python
+        # kept while the script had already described every control on the
+        # document — which protected the snapshot and not the browser.
+        observed = await session.page.evaluate(
+            EXTRACT_ELEMENTS, {"maxElements": self._limits.max_elements_per_snapshot}
+        )
+        records = observed.get("records", []) if isinstance(observed, dict) else []
+        failed = int(observed.get("failed", 0)) if isinstance(observed, dict) else 0
+        if failed:
+            # Not silently dropped. A page that will not describe some of its own
+            # controls is a page this driver has not fully seen, and specification
+            # 8.3 would have the compiler report what it could not read rather
+            # than present a subset as the whole.
+            raise ExtractionIncompleteError(
+                f"{failed} element(s) on this page raised while being described; "
+                "the observation is incomplete and is refused rather than returned "
+                "as if it were the whole page"
+            )
+
         elements: list[NormalizedElement] = []
         for record in records:
             if not isinstance(record, dict):

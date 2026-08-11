@@ -32,8 +32,10 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
-from benchmarks.agent_loop import ModelClient, run_loop
-from benchmarks.arms import Arm, BaselineArm
+from playwright.async_api import async_playwright
+
+from benchmarks.agent_loop import LoopResult, ModelClient, run_loop
+from benchmarks.arms import BaselineArm
 from benchmarks.metrics import Run, comparison_table, write_runs
 from benchmarks.tasks import TASKS, Task
 from benchmarks.wcc_arm import WccArm
@@ -85,31 +87,14 @@ async def run_one(
     """One arm, one task, one attempt, in a browser session of its own."""
     started = datetime.now(UTC)
     value = task.input_for(arm_name)
-    driver = PlaywrightDriver(UrlPolicy(), DriverSettings(allow_private_network=True))
     unauthorized = 0
 
-    try:
-        if arm_name == "baseline":
-            arm: Arm = BaselineArm(page=await _blank_page(driver))
-            await arm.call("browser_navigate", {"url": f"{base_url}{task.page}"})
-            result = await run_loop(client, arm, task.prompt(value))
-            succeeded, reason = await _verify_baseline(arm, task)
-        else:
-            store = Store(data_dir / "wcc.sqlite3")
-            try:
-                # Enrichment off by construction, per specification 14.2 — an
-                # inert enricher rather than an unset variable.
-                coordinator = Coordinator(driver, store, enricher=Enricher())
-                wcc = WccArm(coordinator=coordinator, driver=driver)
-                result = await run_loop(
-                    client, wcc, f"Start at {base_url}{task.page}. {task.prompt(value)}"
-                )
-                unauthorized = wcc.unauthorized
-                succeeded, reason = await _verify_wcc(driver, wcc, task)
-            finally:
-                store.close()
-    finally:
-        await driver.shutdown()
+    if arm_name == "baseline":
+        result, succeeded, reason = await _run_baseline(client, task, base_url, value)
+    else:
+        result, succeeded, reason, unauthorized = await _run_wcc(
+            client, task, base_url, value, data_dir
+        )
 
     finished = datetime.now(UTC)
     return Run(
@@ -131,21 +116,46 @@ async def run_one(
     )
 
 
-async def _blank_page(driver: PlaywrightDriver):  # type: ignore[no-untyped-def]
-    """A raw Playwright page for the baseline arm.
+async def _run_baseline(
+    client: ModelClient, task: Task, base_url: str, value: str
+) -> tuple[LoopResult, bool, str | None]:
+    """The baseline arm, on raw Playwright.
 
-    The baseline is deliberately *not* built on WCC's driver abstractions — it is
-    meant to be what an agent has without this project, and borrowing WCC's
-    normalization would quietly make the comparison flattering.
+    Deliberately *not* built on WCC's driver. The arm is meant to be what an agent
+    has without this project, and borrowing WCC's session handling or its
+    normalization would quietly make the comparison flattering. Its own browser,
+    its own context, closed when the run ends.
     """
-    await driver.start()
-    context = await driver.browser.new_context()
-    return await context.new_page()
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch()
+        try:
+            page = await (await browser.new_context()).new_page()
+            arm = BaselineArm(page=page)
+            await arm.call("browser_navigate", {"url": f"{base_url}{task.page}"})
+            result = await run_loop(client, arm, task.prompt(value))
+            succeeded, reason = _judge(page.url, await page.content(), task)
+            return result, succeeded, reason
+        finally:
+            await browser.close()
 
 
-async def _verify_baseline(arm: Arm, task: Task) -> tuple[bool, str | None]:
-    page = arm.page  # type: ignore[attr-defined]
-    return _judge(page.url, await page.content(), task)
+async def _run_wcc(
+    client: ModelClient, task: Task, base_url: str, value: str, data_dir: Path
+) -> tuple[LoopResult, bool, str | None, int]:
+    """The WCC arm, on the real runtime, with enrichment off per 14.2."""
+    driver = PlaywrightDriver(UrlPolicy(), DriverSettings(allow_private_network=True))
+    store = Store(data_dir / "wcc.sqlite3")
+    try:
+        coordinator = Coordinator(driver, store, enricher=Enricher())
+        arm = WccArm(coordinator=coordinator, driver=driver)
+        result = await run_loop(
+            client, arm, f"Start at {base_url}{task.page}. {task.prompt(value)}"
+        )
+        succeeded, reason = await _verify_wcc(driver, arm, task)
+        return result, succeeded, reason, arm.unauthorized
+    finally:
+        store.close()
+        await driver.shutdown()
 
 
 async def _verify_wcc(driver: PlaywrightDriver, arm: WccArm, task: Task) -> tuple[bool, str | None]:

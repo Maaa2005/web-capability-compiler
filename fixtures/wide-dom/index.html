@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Fixture: Wide DOM</title>
+</head>
+<body>
+  <!-- More controls than specification 10.5 allows. The cap used to be applied in
+       Python after the script had described every one of them. -->
+  <main><h1>Wide</h1><div id="wide"></div></main>
+  <script>
+    const wide = document.getElementById('wide');
+    for (let i = 0; i < 1200; i++) {
+      const b = document.createElement('button');
+      b.textContent = 'Button ' + i;
+      wide.appendChild(b);
+    }
+  </script>
+</body>
+</html>
