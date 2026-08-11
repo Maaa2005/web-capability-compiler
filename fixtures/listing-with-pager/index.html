@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Fixture: Listing With a Pager</title></head>
+<body>
+  <!-- Ten identical cards and one sibling that is not a card. Detection used to
+       require every child of a container to share one shape, so this page —
+       which is the shape of essentially every real listing — produced no
+       collection at all. quotes.toscrape.com is exactly this. -->
+  <main>
+    <h1>Items</h1>
+    <div id="listing">
+      <div class="card">
+        <h3><a href="/items/1">Item 1</a></h3>
+        <p data-field="note">Note 1</p>
+      </div>
+      <div class="card">
+        <h3><a href="/items/2">Item 2</a></h3>
+        <p data-field="note">Note 2</p>
+      </div>
+      <div class="card">
+        <h3><a href="/items/3">Item 3</a></h3>
+        <p data-field="note">Note 3</p>
+      </div>
+      <div class="card">
+        <h3><a href="/items/4">Item 4</a></h3>
+        <p data-field="note">Note 4</p>
+      </div>
+      <div class="card">
+        <h3><a href="/items/5">Item 5</a></h3>
+        <p data-field="note">Note 5</p>
+      </div>
+      <div class="card">
+        <h3><a href="/items/6">Item 6</a></h3>
+        <p data-field="note">Note 6</p>
+      </div>
+      <div class="card">
+        <h3><a href="/items/7">Item 7</a></h3>
+        <p data-field="note">Note 7</p>
+      </div>
+      <div class="card">
+        <h3><a href="/items/8">Item 8</a></h3>
+        <p data-field="note">Note 8</p>
+      </div>
+      <div class="card">
+        <h3><a href="/items/9">Item 9</a></h3>
+        <p data-field="note">Note 9</p>
+      </div>
+      <div class="card">
+        <h3><a href="/items/10">Item 10</a></h3>
+        <p data-field="note">Note 10</p>
+      </div>
+      <nav class="pager"><a href="/page/2">Next</a></nav>
+    </div>
+  </main>
+</body>
+</html>

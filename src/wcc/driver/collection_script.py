@@ -91,6 +91,42 @@ EXTRACT_COLLECTIONS = r"""
     return fields;
   };
 
+  // The largest run of siblings that share one shape (specification 8.4).
+  //
+  // Replaces two opposite mistakes that turned out to have one root. Card and
+  // list detection required *every* child to match, so one pagination link, one
+  // heading, or one advert beside ten products deleted the whole collection —
+  // and real pages essentially always have that extra sibling. Table detection
+  // checked shapes not at all, so Hacker News's spacer and navigation rows became
+  // records alongside the stories.
+  //
+  // A repeated structure is a *majority* of similar siblings, not all of them and
+  // not any of them. Returning the dominant group states that once, for all three
+  // callers.
+  const dominantGroup = (children) => {
+    const groups = new Map();
+    for (const child of children) {
+      const key = shape(child);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(child);
+    }
+    let best = [];
+    for (const group of groups.values()) {
+      if (group.length > best.length) best = group;
+    }
+    // Two is a repetition; one is a thing. The fraction stops three lookalikes
+    // among twenty unrelated divs from becoming a collection.
+    //
+    // A quarter, not a majority. A majority was tried first and deleted Hacker
+    // News, whose table alternates a story row, a subtext row and a spacer row —
+    // so the stories are exactly a third of the rows and a majority rule throws
+    // away the collection along with the spacers. Alternating rows are a normal
+    // way to build a listing, and a threshold that cannot see one is measuring
+    // its own strictness.
+    if (best.length < 2 || best.length * 4 < children.length) return null;
+    return best;
+  };
+
   const collections = [];
 
   const emit = (container, kind, items) => {
@@ -116,8 +152,10 @@ EXTRACT_COLLECTIONS = r"""
 
   for (const table of document.querySelectorAll('table')) {
     const headers = Array.from(table.querySelectorAll('thead th')).map(clean);
-    const rows = Array.from(table.querySelectorAll('tbody tr'));
-    if (rows.length < 2) continue;
+    const allRows = Array.from(table.querySelectorAll('tbody tr'));
+    if (allRows.length < 2) continue;
+    const rows = dominantGroup(allRows);
+    if (!rows) continue;
     collections.push({
       kind: 'table',
       label: clean(table.querySelector('caption')) || null,
@@ -139,10 +177,10 @@ EXTRACT_COLLECTIONS = r"""
   }
 
   for (const list of document.querySelectorAll('ul,ol')) {
-    const items = Array.from(list.children).filter((c) => c.tagName === 'LI');
-    if (items.length < 2) continue;
-    const shapes = new Set(items.map(shape));
-    if (shapes.size > 1) continue;
+    const allItems = Array.from(list.children).filter((c) => c.tagName === 'LI');
+    if (allItems.length < 2) continue;
+    const items = dominantGroup(allItems);
+    if (!items) continue;
     const isResults = /result|search/i.test(
       (list.getAttribute('id') || '') + ' ' +
       (list.getAttribute('aria-label') || '') + ' ' +
@@ -152,10 +190,10 @@ EXTRACT_COLLECTIONS = r"""
   }
 
   for (const container of document.querySelectorAll('div,section,main')) {
-    const children = Array.from(container.children).filter((c) => c.tagName !== 'SCRIPT');
-    if (children.length < 2) continue;
-    const shapes = new Set(children.map(shape));
-    if (shapes.size !== 1) continue;
+    const all = Array.from(container.children).filter((c) => c.tagName !== 'SCRIPT');
+    if (all.length < 2) continue;
+    const children = dominantGroup(all);
+    if (!children) continue;
     if (children.every((c) => c.tagName === 'LI')) continue;
     if (!children.some((c) => c.querySelector('a[href],h1,h2,h3,h4,h5,h6,[data-field]'))) continue;
     emit(container, 'cards', children);

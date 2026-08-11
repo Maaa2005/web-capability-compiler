@@ -125,3 +125,25 @@ async def test_a_deeply_nested_page_still_answers(
     snapshot = await driver.snapshot(session_id)
 
     assert snapshot.page_signature.startswith("sha256:")
+
+
+async def test_a_listing_survives_one_extra_sibling(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """Specification 8.4 detection, against the shape real pages actually have.
+
+    Card and list detection used to require *every* child of a container to share
+    one structure, so a single pagination link, heading, or advert beside ten
+    products deleted the whole collection. `quotes.toscrape.com` — ten identical
+    quote blocks next to one pager — produced zero collections because of it, and
+    a page of fifty-five links compiled nothing.
+
+    The fixture puts the extra sibling in on purpose. Detection now takes the
+    dominant group rather than demanding uniformity.
+    """
+    session_id = await _open(driver, f"{fixture_server}/listing-with-pager/")
+
+    collections, _ = await driver.extract_collections(session_id)
+
+    assert collections, "one pager beside ten cards must not delete the collection"
+    assert max(len(c.records) for c in collections) == 10

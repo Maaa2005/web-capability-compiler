@@ -1719,3 +1719,51 @@ The pattern across all three is worth stating plainly. Every one of them was
 invisible while the only pages under test were pages written by this project.
 Twenty-two real pages produced three defects in an afternoon, and none of the 560
 tests had anything to say about them.
+
+### Repeated structure, detected the way real pages are built (2026-08-11)
+
+The `quotes.toscrape.com` miss had a first cause that turned out to be shared with
+the Hacker News mis-detection, and they were opposite symptoms of one mistake.
+
+Card and list detection required **every** child of a container to share a shape.
+Ten identical quote blocks beside one pagination link produced `shapes.size > 1`
+and no collection at all. Table detection checked shapes **not at all**, so Hacker
+News's spacer and navigation rows became records beside the stories — which is how
+a navigation bar ended up inside an entity property earlier today.
+
+One rule for all three branches: take the **dominant group** — the largest set of
+siblings sharing a shape — rather than demanding uniformity or accepting anything.
+A repeated structure is a majority of similar siblings, not all of them and not
+any of them.
+
+The threshold took two attempts and the first was wrong in an instructive way. A
+majority rule deleted Hacker News entirely: its table alternates story row,
+subtext row, spacer row, so the stories are *exactly a third* of the rows.
+Alternating rows are an ordinary way to build a listing, and a threshold that
+cannot see one is measuring its own strictness. A quarter admits it and still
+rejects three lookalikes among twenty unrelated divs.
+
+Verified against the real pages that motivated it: `books.toscrape.com` now
+detects its twenty books as one collection, `quotes.toscrape.com` its ten quotes,
+and Hacker News's spacer rows are excluded from its stories.
+
+### The second cause, found and not yet fixed
+
+Fixing detection did not move coverage, which stayed at 11 of 16. `open_result_item`
+does not use collections at all — it groups **links** by structural path and takes
+the largest group. On `quotes.toscrape.com` the groups are 10, 30, 10 and 2, so the
+winner is the thirty *tag* links rather than the ten quotes.
+
+**"The largest group of repeated links is the result list" does not hold on real
+pages.** Tags, categories, author bylines and per-item action links all repeat, and
+they routinely outnumber the results they belong to. The page then compiles a
+capability for opening a tag, which subsequently fails to bind because its
+container path is ambiguous — so the visible symptom was a binding failure and the
+cause was a semantic one two steps earlier.
+
+The fix is not a bigger threshold. It is that a result list is now *detectable
+directly*: collections are found by structure, and a link inside a detected
+collection record is a result link in a way that a link merely repeating is not.
+Wiring `open_result_item` to collections rather than to link-shape groups is the
+change, and it is a change to how a capability is chosen rather than to a
+constant, so it is recorded here rather than made in passing.
