@@ -1675,3 +1675,47 @@ fixing it means persisting refusals beside templates.
 
 The measurement now uses a fresh database per page, since coverage is a question
 about compiling and has to be asked of a compiler that ran.
+
+### Why the three misses missed (2026-08-11)
+
+Chased rather than filed. They are two different problems and one unknown.
+
+**`docs.python.org` — duplicate controls defeat locator uniqueness.** The page
+renders its search box twice, and every locator candidate matches both:
+
+    id_attribute=2, name_with_form=2, accessible_name_with_role=2,
+    associated_label_text=2, structural_path=2
+
+Specification 7.7 requires exactly one match, so binding refuses — correctly. WCC
+is not guessing which of two identical controls to type into, and it should not.
+But this is not an exotic page: ten primary keys on that document are duplicated,
+and both copies are *visible*, so visibility cannot break the tie either. Any site
+that renders one control for desktop and again for mobile hits this.
+
+The refusal surfaced as `risk rose from low to high`, which is the classifier
+being unable to identify the element and raising on uncertainty per 10.1 — correct
+behaviour reported through a message that describes a symptom rather than the
+cause. The cause is ambiguity.
+
+There is a principled fix and it is not "pick the first match". A structural path
+currently stops at the nearest `FORM`, `MAIN`, `NAV`, `SECTION` and so on, which is
+why both copies produce `form>input[2]`. Continuing past that ancestor until the
+path is unique would distinguish them by *where they are* rather than by which one
+came first. That is a change to locator generation and it belongs in its own
+piece of work.
+
+**`quotes.toscrape.com` — no collections detected at all.** Ten sibling
+`<div class="quote">` blocks, which is as textbook as repeated structure gets, and
+`extract_collections` returned zero. Without a collection there is nothing for
+`open_result_item` to bind to, which is why a page of 55 links compiled nothing.
+This is a specification 8.4 detection gap and it is probably the same root as
+Hacker News's layout tables being *mis*-detected: the heuristic is tuned to the
+fixtures.
+
+**`huggingface.co` — unknown.** 130 elements, client-rendered, nothing compiled.
+Not investigated yet, and recorded as not investigated.
+
+The pattern across all three is worth stating plainly. Every one of them was
+invisible while the only pages under test were pages written by this project.
+Twenty-two real pages produced three defects in an afternoon, and none of the 560
+tests had anything to say about them.
