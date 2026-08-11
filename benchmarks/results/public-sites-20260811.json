@@ -1,0 +1,68 @@
+[
+  {
+    "url": "https://example.com/",
+    "host": "example.com",
+    "note": "the smallest real page there is",
+    "observed_at": "2026-08-11T12:12:21+00:00",
+    "baseline": 49,
+    "wcc": 164,
+    "unit": "tokens (o200k_base, not Claude's tokenizer)",
+    "baseline_error": null,
+    "wcc_error": null
+  },
+  {
+    "url": "https://quotes.toscrape.com/",
+    "host": "quotes.toscrape.com",
+    "note": "a listing built for scraping practice",
+    "observed_at": "2026-08-11T12:12:22+00:00",
+    "baseline": 888,
+    "wcc": 167,
+    "unit": "tokens (o200k_base, not Claude's tokenizer)",
+    "baseline_error": null,
+    "wcc_error": null
+  },
+  {
+    "url": "https://books.toscrape.com/",
+    "host": "books.toscrape.com",
+    "note": "a 20-item product grid, built for practice",
+    "observed_at": "2026-08-11T12:12:25+00:00",
+    "baseline": 1637,
+    "wcc": 613,
+    "unit": "tokens (o200k_base, not Claude's tokenizer)",
+    "baseline_error": null,
+    "wcc_error": null
+  },
+  {
+    "url": "https://www.python.org/",
+    "host": "www.python.org",
+    "note": "a large marketing and navigation page",
+    "observed_at": "2026-08-11T12:12:29+00:00",
+    "baseline": 3150,
+    "wcc": 706,
+    "unit": "tokens (o200k_base, not Claude's tokenizer)",
+    "baseline_error": null,
+    "wcc_error": null
+  },
+  {
+    "url": "https://news.ycombinator.com/",
+    "host": "news.ycombinator.com",
+    "note": "30 links, minimal markup",
+    "observed_at": "2026-08-11T12:12:31+00:00",
+    "baseline": 3610,
+    "wcc": 874,
+    "unit": "tokens (o200k_base, not Claude's tokenizer)",
+    "baseline_error": null,
+    "wcc_error": null
+  },
+  {
+    "url": "https://developer.mozilla.org/en-US/docs/Web/HTML",
+    "host": "developer.mozilla.org",
+    "note": "a long documentation page",
+    "observed_at": "2026-08-11T12:12:34+00:00",
+    "baseline": 6125,
+    "wcc": 438,
+    "unit": "tokens (o200k_base, not Claude's tokenizer)",
+    "baseline_error": null,
+    "wcc_error": null
+  }
+]

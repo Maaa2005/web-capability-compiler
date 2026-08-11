@@ -1531,3 +1531,57 @@ still a key — and the audience for a benchmark about an MCP server is people u
 MCP, who are running Claude. Their question is what it costs on Claude. Borrowing
 OpenAI's tokenizer answers a measurement question; borrowing its models would have
 changed the subject.
+
+### Real sites found what the fixtures could not (2026-08-11)
+
+Six public pages, one visit each, read-only, `robots.txt` checked. Dated
+supplements rather than the benchmark of record, per specification 14.4.
+
+The first run was the useful one, because WCC **lost** twice:
+
+| Site | first run | after |
+|---|---:|---:|
+| `news.ycombinator.com` | 1.25× | **0.24×** |
+| `books.toscrape.com` | 1.14× | **0.37×** |
+
+Neither loss was the design. Both were payload defects that a hand-written fixture
+cannot produce, because nobody writes a fixture that misbehaves in these
+particular ways.
+
+**Sixty-four copies of one warning.** Hacker News emitted
+`record_without_fields` once per row, each naming a different internal record ID —
+5,696 characters, larger than every capability on the page put together. The IDs
+are meaningless outside the process that minted them, and sixty-four repetitions
+carry nothing the count does not. Warnings are now grouped by code with a count.
+
+**A navigation bar inside an entity property.** Hacker News lays out with tables,
+so the compiler read the header row as a record and handed back
+`column_1: "Hacker Newsnew | past | comments | ask | show | jobs | submitlogin"`.
+Entity samples exist to say what kind of thing a page is about; they are now
+bounded per value and per property count, with truncation marked.
+
+Both are the same mistake as the entity-summary defect from earlier today, at a
+smaller scale: **a view that passes through whatever it is given will eventually be
+given something enormous.** Three of these have now been found in one day, each by
+measuring rather than by reading.
+
+The result across all six sites, after the fixes:
+
+| Site | Baseline | WCC | ratio |
+|---|---:|---:|---:|
+| `example.com` | 49 | 164 | 3.35× |
+| `quotes.toscrape.com` | 888 | 167 | 0.19× |
+| `books.toscrape.com` | 1,637 | 613 | 0.37× |
+| `www.python.org` | 3,150 | 706 | 0.22× |
+| `news.ycombinator.com` | 3,610 | 874 | 0.24× |
+| `developer.mozilla.org` | 6,125 | **438** | **0.07×** |
+
+Five wins and one loss, and the loss is a page containing one paragraph and one
+link. The statement that survives all of it: **a snapshot's cost is set by how much
+is on a page; an inspection's is set by how much you can do on it** — and most real
+pages contain far more than they offer.
+
+One thing observed and deliberately not fixed: Hacker News's layout tables are
+read as collections, which is why a navigation bar became a record at all. That is
+a detection-quality question about specification 8.4 rather than a payload one,
+and it wants its own change rather than being bundled into this one.

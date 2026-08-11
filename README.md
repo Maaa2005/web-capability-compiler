@@ -162,15 +162,23 @@ uv run python -m benchmarks.measure_payloads
 
 | Page | Size | Baseline snapshot | WCC inspection | WCC / baseline |
 |---|---|---:|---:|---:|
-| `search-page` | 6 controls | 169 | 474 | 2.80× |
-| `large-catalog` | 150 products | 5,187 | **711** | **0.14×** |
+| `search-page` (fixture) | 6 controls | 169 | 484 | 2.86× |
+| `large-catalog` (fixture) | 150 products | 5,187 | **705** | **0.14×** |
+| `news.ycombinator.com` | 30 links | 3,610 | 874 | 0.24× |
+| `developer.mozilla.org` | a docs page | 6,125 | **438** | **0.07×** |
 
 Tokens, counted offline with `o200k_base` — OpenAI's tokenizer, not Claude's, and
 so labelled everywhere. (Set `ANTHROPIC_API_KEY` and the same command reports
 Claude's own counts instead, still free: `count_tokens` runs no inference.) A
 snapshot grows with the page; an inspection grows with the controls the page
-offers, so the two diverge as pages get realistic. **WCC costs more on trivial
-pages and about seven times less on a 150-product catalog.**
+offers, so the two diverge as pages get realistic. **WCC costs more on nearly
+empty pages and 4–14× less on real ones** — a snapshot's cost is set by how much
+is on a page, an inspection's by how much you can do on it.
+
+The last two rows are public sites, measured on 2026-08-11 with
+`uv run python -m benchmarks.measure_public`. They are dated supplements rather
+than the benchmark of record, and they are also what caught two defects the
+fixtures could not.
 
 What this does *not* show is how many observations a task takes, which is where
 most of the saving is supposed to come from and which needs the agent loop above.

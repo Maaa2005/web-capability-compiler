@@ -13,10 +13,10 @@ same moment.
 
 | Page | Size | Baseline snapshot | WCC inspection | WCC / baseline |
 |---|---|---:|---:|---:|
-| `search-page` | 6 controls | 169 | 474 | 2.80× |
-| `filter-page` | 5 controls | 78 | 342 | 4.38× |
-| `product-list` | 3 results | 149 | 633 | 4.25× |
-| `large-catalog` | 150 products | 5,187 | **711** | **0.14×** |
+| `search-page` | 6 controls | 169 | 484 | 2.86× |
+| `filter-page` | 5 controls | 78 | 350 | 4.49× |
+| `product-list` | 3 results | 149 | 623 | 4.18× |
+| `large-catalog` | 150 products | 5,187 | **705** | **0.14×** |
 
 Tokens, counted with `o200k_base` — OpenAI's published tokenizer, run offline.
 **Not Claude's tokenizer**, and the difference is stated wherever these numbers
@@ -40,6 +40,42 @@ available. The unit travels with the numbers — into the table, into
 `benchmarks/results/payload-sizes.json`, and into the code — so a figure cannot be
 quoted later as something it is not.
 
+## Pages nobody here wrote
+
+Every fixture above was written by the person claiming the result, so the same
+measurement was pointed at public pages. Observed **2026-08-11**; these are dated
+supplements, not the benchmark of record, because a site can change between two
+runs (specification 14.4).
+
+| Site | Page | Baseline | WCC | WCC / baseline |
+|---|---|---:|---:|---|
+| `example.com` | the smallest real page there is | 49 | 164 | 3.35× |
+| `quotes.toscrape.com` | a listing built for scraping practice | 888 | 167 | 0.19× |
+| `books.toscrape.com` | a 20-item product grid | 1,637 | 613 | 0.37× |
+| `www.python.org` | a large marketing and navigation page | 3,150 | 706 | 0.22× |
+| `news.ycombinator.com` | 30 links, minimal markup | 3,610 | 874 | 0.24× |
+| `developer.mozilla.org` | a long documentation page | 6,125 | **438** | **0.07×** |
+
+```bash
+uv run python -m benchmarks.measure_public
+```
+
+One page per site, one visit each, read-only, no crawling, nothing behind a login.
+`robots.txt` was checked for all six.
+
+**This is where the fixtures were caught being too kind.** On the first run WCC
+*lost* on Hacker News (1.25×) and on the books listing (1.14×) — and the reason
+was not the design but two defects that a hand-written fixture could not produce.
+Hacker News emitted sixty-four copies of one warning, each naming a different
+internal record ID, together larger than every capability on the page; and its
+layout tables put a whole navigation bar into a single cell, which arrived as an
+entity property at full length. Warnings are now deduplicated with a count and
+sampled properties are bounded. The same pages then came back at 0.24× and 0.37×.
+
+Real sites found both in one afternoon. Neither would ever have appeared in a
+fixture, because nobody writes a fixture that emits the same warning sixty-four
+times.
+
 ## What it shows
 
 The two costs are proportional to different things, and that is the whole result.
@@ -50,10 +86,15 @@ controls. The 150-product catalog has roughly the same handful of controls as th
 small search page and thirty times the content — and the ratio crosses over
 between them.
 
-**WCC is more expensive on trivial pages and about seven times cheaper on
-realistic ones.** On the pages where it loses, it loses by a few hundred tokens —
-the fixed cost of a capability schema is simply larger than a snapshot of six
-controls. On the page where it wins, it wins by 4,476 tokens per observation.
+**WCC is more expensive on trivial pages and several times cheaper on realistic
+ones.** It loses on `example.com` and on the small fixtures by a few hundred
+tokens, because the fixed cost of a capability schema is larger than a snapshot of
+a page with almost nothing on it. It wins on every real page with actual content,
+by between 4× and 14×.
+
+The clean way to state it: **a snapshot's cost is set by how much is on the page;
+an inspection's is set by how much you can *do* on it.** Most real pages contain
+far more than they offer.
 
 ## What it does not show
 

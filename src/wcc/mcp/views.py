@@ -29,7 +29,7 @@ from wcc.models.capability import (
 )
 from wcc.models.common import Confidence, WCCModel
 from wcc.models.compilation import CompilationReport
-from wcc.models.ir import Entity, PageIR
+from wcc.models.ir import Entity, IRWarning, PageIR
 from wcc.models.session import PageSnapshot, SessionInfo
 
 
@@ -207,7 +207,7 @@ def inspection_view(
     reused: bool,
     report: CompilationReport | None,
 ) -> InspectionView:
-    warnings = [f"{warning.code}: {warning.message}" for warning in ir.warnings]
+    warnings = summarize_warnings(ir.warnings)
     refused: list[RefusalView] = []
     if report is not None:
         refused = [
@@ -236,6 +236,23 @@ def inspection_view(
     )
 
 
+#: The longest a property value may be in an inspection. Real pages put whole
+#: navigation bars into table cells, and an entity sample carrying one is showing
+#: an agent the page's furniture at full length. Truncation is marked, so a reader
+#: can tell a short value from a shortened one.
+MAX_PROPERTY_LENGTH = 120
+
+#: How many properties one sampled entity shows. Same reasoning: a sample is for
+#: recognising what kind of thing this is.
+MAX_PROPERTIES = 6
+
+#: How many distinct warnings an inspection reports. They are deduplicated by code
+#: first, so this is a cap on *kinds* of problem, not on instances — a page that
+#: produced sixty-four copies of one warning had one problem, and reporting it
+#: sixty-four times cost more than the capabilities did.
+MAX_WARNINGS = 10
+
+
 #: How many entities an inspection shows. Enough to tell what kind of page this is
 #: and to name a few things on it; not enough to be a copy of the page. An agent
 #: that needs a particular one runs a capability and gets it in the result.
@@ -250,9 +267,44 @@ def entity_summary(entities: Sequence[Entity]) -> EntitySummaryView:
     return EntitySummaryView(
         total=len(entities),
         by_type=by_type,
-        sample=[entity_view(entity) for entity in entities[:SAMPLE_SIZE]],
+        sample=[_bounded(entity_view(entity)) for entity in entities[:SAMPLE_SIZE]],
         truncated=len(entities) > SAMPLE_SIZE,
     )
+
+
+def _bounded(view: EntityView) -> EntityView:
+    """Keep one sampled entity to a size a sample should be."""
+    properties: dict[str, str] = {}
+    for name, value in list(view.properties.items())[:MAX_PROPERTIES]:
+        properties[name] = (
+            value if len(value) <= MAX_PROPERTY_LENGTH else value[:MAX_PROPERTY_LENGTH] + "…"
+        )
+    label = view.label
+    if label is not None and len(label) > MAX_PROPERTY_LENGTH:
+        label = label[:MAX_PROPERTY_LENGTH] + "…"
+    return view.model_copy(update={"properties": properties, "label": label})
+
+
+def summarize_warnings(warnings: Sequence[IRWarning]) -> list[str]:
+    """One line per kind of problem, with a count — not one line per instance.
+
+    A real page produced sixty-four copies of ``record_without_fields``, each
+    naming a different internal record ID, and together they cost more than every
+    capability on the page. The ID is meaningless outside this process and the
+    repetition carries no information the count does not.
+    """
+    counted: dict[str, tuple[str, int]] = {}
+    for warning in warnings:
+        message, seen = counted.get(warning.code, (warning.message, 0))
+        counted[warning.code] = (message, seen + 1)
+
+    lines = []
+    for code, (message, seen) in list(counted.items())[:MAX_WARNINGS]:
+        suffix = f" (and {seen - 1} more like it)" if seen > 1 else ""
+        lines.append(f"{code}: {message}{suffix}")
+    if len(counted) > MAX_WARNINGS:
+        lines.append(f"and {len(counted) - MAX_WARNINGS} further kinds of warning")
+    return lines
 
 
 def within_risk(capability: CapabilityView, ceiling: RiskLevel) -> bool:

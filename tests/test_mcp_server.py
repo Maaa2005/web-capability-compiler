@@ -204,3 +204,60 @@ async def test_listing_before_inspecting_says_so(server: Any, fixture_server: st
 
     with pytest.raises(Exception, match="inspect_page"):
         await _call(server, "list_capabilities", session_id=session["session_id"])
+
+
+async def test_a_page_with_one_repeated_problem_reports_it_once(
+    server: Any, fixture_server: str
+) -> None:
+    """Warnings are deduplicated by code, with a count.
+
+    Found on a real site rather than here: Hacker News produced sixty-four copies
+    of ``record_without_fields``, each naming a different internal record ID, and
+    together they were larger than every capability on the page. The IDs mean
+    nothing outside the process that minted them and the repetition carries no
+    information the count does not.
+    """
+    from wcc.mcp.views import MAX_WARNINGS, summarize_warnings
+    from wcc.models.ir import IRWarning
+
+    repeated = [
+        IRWarning(code="record_without_fields", message=f"record rec_{index} had no fields")
+        for index in range(64)
+    ]
+
+    lines = summarize_warnings(repeated)
+
+    assert len(lines) == 1
+    assert "and 63 more like it" in lines[0]
+    assert len(summarize_warnings(repeated)) <= MAX_WARNINGS
+
+
+async def test_a_sampled_entity_does_not_carry_the_pages_furniture(
+    server: Any, fixture_server: str
+) -> None:
+    """Property values are bounded, and truncation is visible.
+
+    Also found on a real site: a layout table on Hacker News put the whole
+    navigation bar into one cell, so a sampled entity arrived carrying
+    "Hacker Newsnew | past | comments | ask | show | jobs | submitlogin" as a
+    property value. A sample exists to say what kind of thing this is.
+    """
+    from wcc.mcp.views import MAX_PROPERTIES, MAX_PROPERTY_LENGTH, entity_summary
+    from wcc.models.common import Confidence
+    from wcc.models.ir import Entity, Evidence
+
+    entity = Entity(
+        entity_id="ent_1",
+        type="table_item",
+        label="x" * 400,
+        properties={f"column_{index}": "y" * 400 for index in range(20)},
+        confidence=Confidence.MEDIUM,
+        evidence=[Evidence(kind="dom", element_id="el_1", snapshot_id="snap_1")],
+    )
+
+    sample = entity_summary([entity]).sample[0]
+
+    assert len(sample.properties) == MAX_PROPERTIES
+    assert all(len(value) <= MAX_PROPERTY_LENGTH + 1 for value in sample.properties.values())
+    assert all(value.endswith("…") for value in sample.properties.values())
+    assert sample.label is not None and sample.label.endswith("…")
