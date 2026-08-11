@@ -214,7 +214,11 @@ def inspection_view(
             RefusalView(
                 candidate_key=candidate.candidate_key,
                 code=candidate.code,
-                message=candidate.message,
+                message=(
+                    candidate.message
+                    if len(candidate.message) <= MAX_REFUSAL_LENGTH
+                    else candidate.message[:MAX_REFUSAL_LENGTH] + "…"
+                ),
                 risk=candidate.risk,
             )
             for candidate in report.rejected
@@ -245,6 +249,13 @@ MAX_PROPERTY_LENGTH = 120
 #: How many properties one sampled entity shows. Same reasoning: a sample is for
 #: recognising what kind of thing this is.
 MAX_PROPERTIES = 6
+
+#: A backstop on refusal prose. The messages are written short at the source, and
+#: this keeps a future long one from arriving at an agent in full — the same
+#: reasoning as the property bound above, applied to the other place where text
+#: written for a human is returned to a machine.
+MAX_REFUSAL_LENGTH = 160
+
 
 #: How many distinct warnings an inspection reports. They are deduplicated by code
 #: first, so this is a cap on *kinds* of problem, not on instances — a page that

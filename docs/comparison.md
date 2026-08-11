@@ -13,10 +13,10 @@ same moment.
 
 | Page | Size | Baseline snapshot | WCC inspection | WCC / baseline |
 |---|---|---:|---:|---:|
-| `search-page` | 6 controls | 169 | 484 | 2.86× |
-| `filter-page` | 5 controls | 78 | 350 | 4.49× |
-| `product-list` | 3 results | 149 | 623 | 4.18× |
-| `large-catalog` | 150 products | 5,187 | **705** | **0.14×** |
+| `search-page` | 6 controls | 169 | 464 | 2.75× |
+| `filter-page` | 5 controls | 78 | 338 | 4.33× |
+| `product-list` | 3 results | 149 | 622 | 4.17× |
+| `large-catalog` | 150 products | 5,187 | **700** | **0.13×** |
 
 Tokens, counted with `o200k_base` — OpenAI's published tokenizer, run offline.
 **Not Claude's tokenizer**, and the difference is stated wherever these numbers
@@ -50,11 +50,11 @@ runs (specification 14.4).
 | Site | Page | Baseline | WCC | WCC / baseline |
 |---|---|---:|---:|---|
 | `example.com` | the smallest real page there is | 49 | 164 | 3.35× |
-| `quotes.toscrape.com` | a listing built for scraping practice | 888 | 167 | 0.19× |
-| `books.toscrape.com` | a 20-item product grid | 1,637 | 613 | 0.37× |
-| `www.python.org` | a large marketing and navigation page | 3,150 | 706 | 0.22× |
-| `news.ycombinator.com` | 30 links, minimal markup | 3,610 | 874 | 0.24× |
-| `developer.mozilla.org` | a long documentation page | 6,125 | **438** | **0.07×** |
+| `quotes.toscrape.com` | a listing built for scraping practice | 888 | 166 | 0.19× |
+| `books.toscrape.com` | a 20-item product grid | 1,637 | 610 | 0.37× |
+| `www.python.org` | a large marketing and navigation page | 3,150 | 722 | 0.23× |
+| `news.ycombinator.com` | 30 links, minimal markup | 3,630 | 870 | 0.24× |
+| `developer.mozilla.org` | a long documentation page | 6,125 | **449** | **0.07×** |
 
 ```bash
 uv run python -m benchmarks.measure_public
@@ -86,15 +86,53 @@ controls. The 150-product catalog has roughly the same handful of controls as th
 small search page and thirty times the content — and the ratio crosses over
 between them.
 
-**WCC is more expensive on trivial pages and several times cheaper on realistic
-ones.** It loses on `example.com` and on the small fixtures by a few hundred
-tokens, because the fixed cost of a capability schema is larger than a snapshot of
-a page with almost nothing on it. It wins on every real page with actual content,
-by between 4× and 14×.
+Stated as precisely as nine pages allow:
 
-The clean way to state it: **a snapshot's cost is set by how much is on the page;
-an inspection's is set by how much you can *do* on it.** Most real pages contain
-far more than they offer.
+> **An inspection has a fixed cost, so on a nearly empty page it is more expensive
+> than a snapshot. As a page's content grows without its number of distinct
+> operations growing, the two costs cross over and the gap widens.**
+
+That is a claim about a break-even point, not about winning. It is deliberately
+weaker than "WCC is cheaper on real pages", which nine observations cannot
+support: these are six sites at one page each, chosen by the author, on one day.
+What they do show is that the crossover happens early — every page here with more
+than a paragraph of content is past it.
+
+The mechanism is the part worth remembering: **a snapshot's cost is set by how
+much is on a page; an inspection's is set by how much you can *do* on it.** Most
+pages contain far more than they offer, which is why the crossover sits where it
+does. A page that inverts that — many distinct controls, little content — should
+favour the snapshot, and none of the nine pages here is that shape. That is a gap
+in the sample, not evidence of absence.
+
+## What the losing pages are made of
+
+Both losses were opened up rather than explained away, because "we lose here and
+here is why" is a different sentence from "we lose here".
+
+**`example.com` — 164 tokens, of which the capabilities are `[]`.** The payload is
+`page_signature` (73 characters), three identifiers (92), and a URL. WCC spends
+164 tokens to say there is nothing here you can do. That is fixed cost, it does
+not shrink with the page, and it is the entire loss.
+
+It was left alone. The obvious way to improve the number is to stop returning
+`page_signature` — but specification 12.2 names it in the output, and shaving a
+field that the contract requires in order to look better in a measurement is the
+exact move this project spent the day catching in itself.
+
+**`search-page` — 1,787 characters, of which 740 are capabilities and 606 were
+refusals.** The 740 is the product: argument schemas, risk, confidence, things a
+snapshot does not provide at all. The 606 was not. It was two prose sentences
+explaining *why* a form had not been compiled — written for a person reading a
+test failure, and sent to an agent on every inspection, where the only decision
+they inform is "there is a form here I cannot offer you".
+
+Those are now one clause each. The saving is small (484 → 464 tokens on this page)
+and it is the right change independent of any measurement: the rule belongs in the
+documentation, the response carries the fact.
+
+An external review argued this point and was right. It also argued for dropping
+`page_signature`, without checking that specification 12.2 requires it.
 
 ## What it does not show
 

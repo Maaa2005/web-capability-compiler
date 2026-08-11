@@ -1585,3 +1585,54 @@ One thing observed and deliberately not fixed: Hacker News's layout tables are
 read as collections, which is why a navigation bar became a record at all. That is
 a detection-quality question about specification 8.4 rather than a payload one,
 and it wants its own change rather than being bundled into this one.
+
+### Where the losses come from, and what was done about them (2026-08-11)
+
+Two pages lost, and both were opened up rather than argued away.
+
+**`example.com`: 164 tokens, capabilities `[]`.** Almost the whole payload is
+`page_signature` (73 characters) and three identifiers (92). WCC spends 164 tokens
+to report that there is nothing here to do. It is fixed cost and it does not
+shrink with the page.
+
+**`search-page`: 740 characters of capabilities and 606 of refusals.** The 740 is
+the product — argument schemas, risk, confidence, none of which a snapshot
+provides. The 606 was not: two prose sentences explaining why a form had not been
+compiled, written for a person reading a test failure and sent to an agent on
+every inspection.
+
+An external review was consulted on the direction and disagreed with the position
+being held, which was to publish the losses unchanged. Its argument landed: the
+justification for the extra bytes — "this is information the baseline does not
+give you" — is true of capability schemas and simply false of a paragraph
+explaining a compiler rule. The two had been bundled and defended together.
+
+So the refusal messages are now one clause each. The saving is small, 484 → 464
+tokens on that page, and the change stands on its own reasoning rather than on the
+measurement: the rule belongs in the documentation, the response carries the fact.
+
+**The same review was wrong about `page_signature`,** and the disagreement is
+worth recording. It argued the field has no use to an agent — cache decisions are
+server-side, `reused_templates` already exists — and should leave the default
+response. That reasoning is sound and the conclusion is not available:
+specification 12.2 names "page signature" in the output of `inspect_page`. The
+review had not read the specification. Removing a field the contract requires in
+order to improve a number would also have been the precise move this project spent
+the day catching in itself.
+
+**The claim was weakened on the review's advice, and it was right to be.** "WCC is
+cheaper on realistic pages" is not supportable by six sites at one page each,
+chosen by the author, on one day. What replaces it:
+
+> An inspection has a fixed cost, so on a nearly empty page it is more expensive
+> than a snapshot. As a page's content grows without its number of distinct
+> operations growing, the two costs cross over and the gap widens.
+
+A statement about a break-even point rather than a claim to win. `comparison.md`
+now also names the shape of page that should defeat WCC — many distinct controls,
+little content — and says plainly that no page in the sample is that shape, which
+is a gap in the sample rather than evidence of absence.
+
+Three counter-reviews in a row have now produced a right criticism attached to a
+wrong specific, and the pattern is stable enough to plan around: take the argument
+seriously, check the fact yourself.

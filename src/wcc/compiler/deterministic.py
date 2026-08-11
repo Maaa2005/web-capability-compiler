@@ -75,8 +75,8 @@ def compile_snapshot(snapshot: PageSnapshot) -> CompilationReport:
                 _reject(
                     group,
                     LOW_CONFIDENCE,
-                    f"{group.display} reads as {reading.category} only by "
-                    f"{reading.reason}, which specification 7.4 rates low",
+                    f"{group.display}: reads as {reading.category} only by "
+                    f"{reading.reason} — too weak to compile",
                     confidence=Confidence.LOW,
                 )
             )
@@ -119,10 +119,19 @@ def _navigation_templates(elements: list[NormalizedElement]) -> list[NavigationT
 
 
 def _generic_message(group: FormGroup) -> str:
-    return (
-        f"{group.display} submits by {group.method.upper()} and resolves to no "
-        "deterministic search or filter reading, so it is reported and not compiled"
-    )
+    """Why this form was not compiled, in the length an agent needs.
+
+    The first version of this sentence explained the rule: "…resolves to no
+    deterministic search or filter reading, so it is reported and not compiled".
+    Accurate, and written for a person reading a test failure. It is sent to an
+    agent on every inspection of the page, where the only decision it informs is
+    "there is a form here I cannot offer you" — and on a small page two of these
+    cost more than the capability that *was* compiled.
+
+    The rule still lives in this module's documentation, which is where a person
+    looks it up. The response carries the fact.
+    """
+    return f"{group.display}: submits by {group.method.upper()}, reads as neither search nor filter"
 
 
 def _reject(

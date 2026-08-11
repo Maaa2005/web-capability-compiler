@@ -162,18 +162,20 @@ uv run python -m benchmarks.measure_payloads
 
 | Page | Size | Baseline snapshot | WCC inspection | WCC / baseline |
 |---|---|---:|---:|---:|
-| `search-page` (fixture) | 6 controls | 169 | 484 | 2.86× |
-| `large-catalog` (fixture) | 150 products | 5,187 | **705** | **0.14×** |
-| `news.ycombinator.com` | 30 links | 3,610 | 874 | 0.24× |
-| `developer.mozilla.org` | a docs page | 6,125 | **438** | **0.07×** |
+| `search-page` (fixture) | 6 controls | 169 | 464 | 2.75× |
+| `large-catalog` (fixture) | 150 products | 5,187 | **700** | **0.13×** |
+| `news.ycombinator.com` | 30 links | 3,630 | 870 | 0.24× |
+| `developer.mozilla.org` | a docs page | 6,125 | **449** | **0.07×** |
 
 Tokens, counted offline with `o200k_base` — OpenAI's tokenizer, not Claude's, and
 so labelled everywhere. (Set `ANTHROPIC_API_KEY` and the same command reports
 Claude's own counts instead, still free: `count_tokens` runs no inference.) A
 snapshot grows with the page; an inspection grows with the controls the page
-offers, so the two diverge as pages get realistic. **WCC costs more on nearly
-empty pages and 4–14× less on real ones** — a snapshot's cost is set by how much
-is on a page, an inspection's by how much you can do on it.
+offers. **An inspection has a fixed cost, so it is more expensive than a snapshot
+on a nearly empty page; as content grows without the number of distinct operations
+growing, the two cross over and the gap widens.** That is a statement about a
+break-even point rather than a claim to win — nine pages cannot support the
+stronger one — but the crossover turns out to sit early.
 
 The last two rows are public sites, measured on 2026-08-11 with
 `uv run python -m benchmarks.measure_public`. They are dated supplements rather
