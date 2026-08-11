@@ -19,8 +19,17 @@ It speaks MCP, so any MCP client can use it.
 
 ## What it actually returns
 
-A real fixture page with a search form, a newsletter signup, and a contact form.
-This is the response, not a mock-up:
+A fixture page with a search form, a newsletter signup, and a contact form. Only
+the search form becomes a capability; the two POST forms are reported with their
+risk and never offered.
+
+![WCC inspecting a page: one typed capability with an argument schema, two POST forms refused](docs/demo/demo.gif)
+
+The recording is generated from [`docs/demo/demo.tape`](docs/demo/demo.tape) by
+[vhs](https://github.com/charmbracelet/vhs) running the real command, so it can be
+re-made by anyone and cannot drift from the code without the difference showing.
+
+The same response as JSON:
 
 ```json
 {
