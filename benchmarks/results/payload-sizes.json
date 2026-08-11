@@ -4,6 +4,9 @@
     "description": "6 controls",
     "baseline_snapshot_chars": 563,
     "wcc_inspection_chars": 1787,
+    "baseline_snapshot_tokens": null,
+    "wcc_inspection_tokens": null,
+    "unit_of_ratio": "characters",
     "ratio": 3.1741
   },
   {
@@ -11,6 +14,9 @@
     "description": "5 controls",
     "baseline_snapshot_chars": 253,
     "wcc_inspection_chars": 1142,
+    "baseline_snapshot_tokens": null,
+    "wcc_inspection_tokens": null,
+    "unit_of_ratio": "characters",
     "ratio": 4.5138
   },
   {
@@ -18,6 +24,9 @@
     "description": "3 results",
     "baseline_snapshot_chars": 444,
     "wcc_inspection_chars": 2241,
+    "baseline_snapshot_tokens": null,
+    "wcc_inspection_tokens": null,
+    "unit_of_ratio": "characters",
     "ratio": 5.0473
   },
   {
@@ -25,6 +34,9 @@
     "description": "150 products",
     "baseline_snapshot_chars": 15234,
     "wcc_inspection_chars": 2527,
+    "baseline_snapshot_tokens": null,
+    "wcc_inspection_tokens": null,
+    "unit_of_ratio": "characters",
     "ratio": 0.1659
   }
 ]

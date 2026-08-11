@@ -26,6 +26,14 @@ uv run python -m benchmarks.measure_payloads
 
 No API key, no cost, no network beyond a loopback fixture server.
 
+**With a key, the same command reports provider-counted tokens instead**, and
+still costs nothing: `count_tokens` runs no inference and is not billed. That
+turns the unit of this table from characters into the "machine-readable API usage
+metadata" specification 14.3 asks for, without running an agent. The unit is
+printed with the numbers and stored in `benchmarks/results/payload-sizes.json`, so
+a character figure cannot later be quoted as a token figure by someone reading
+only the file.
+
 ## What it shows
 
 The two costs are proportional to different things, and that is the whole result.
@@ -52,10 +60,11 @@ So the claim supported here is "one observation is cheaper on a realistic page",
 not "a task costs less". The second is the interesting one and it is not yet
 evidenced.
 
-**Tokens.** The numbers above are characters. Specification 14.3 requires token
-counts to come from provider usage metadata rather than from an estimate, so no
-token figure and no percentage is published here. Four characters per token is a
-common approximation and it is not a measurement.
+**Tokens, in this run.** The numbers above are characters, because the run that
+produced them had no API key. No token figure is derived from them: four
+characters per token is a common approximation and it is not a measurement, and
+specification 14.3 draws the line exactly there. Re-running with a key replaces
+the unit rather than converting it.
 
 ## What would complete it
 

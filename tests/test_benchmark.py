@@ -307,3 +307,62 @@ async def test_the_cost_of_an_inspection_tracks_controls_not_page_size(
     assert large.wcc_chars < small.wcc_chars * 3, (
         "an inspection grew with the content it should be summarizing"
     )
+
+
+# -- counting tokens exactly ----------------------------------------------
+
+
+def test_a_measurement_without_a_key_reports_characters_and_says_so() -> None:
+    """The absence of a key must not look like the absence of a result.
+
+    Specification 14.3 forbids estimating tokens, so a keyless run reports
+    characters — labelled as characters — rather than dividing by four and
+    calling the answer a token count. The unit travels with the number, into the
+    printed table and into the JSON, so a figure cannot be quoted as tokens later
+    by someone reading only the file.
+    """
+    from benchmarks.measure_payloads import Measurement
+
+    characters = Measurement(
+        page="large-catalog", description="150 products", baseline_chars=15234, wcc_chars=2527
+    )
+
+    assert characters.unit == "characters"
+    assert characters.ratio == pytest.approx(2527 / 15234)
+
+
+def test_a_measurement_with_counted_tokens_uses_them_for_the_ratio() -> None:
+    """When the provider has counted, the provider's numbers decide."""
+    from benchmarks.measure_payloads import Measurement
+
+    counted = Measurement(
+        page="large-catalog",
+        description="150 products",
+        baseline_chars=15234,
+        wcc_chars=2527,
+        baseline_tokens=3400,
+        wcc_tokens=700,
+    )
+
+    assert counted.unit == "tokens"
+    assert counted.ratio == pytest.approx(700 / 3400)
+
+
+def test_the_token_counter_refuses_rather_than_guessing_without_a_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing key is reported as a missing key, not as a zero.
+
+    The environment is cleared explicitly. Without that this test passes on a
+    machine with no key and fails on the maintainer\'s — a test whose result
+    depends on the shell it runs in is not testing the code.
+
+    The message says the endpoint is free, because the reason someone would not
+    have set a key here is usually the assumption that counting costs money.
+    """
+    from benchmarks.tokens import TokenCounter, TokenCounterUnavailable
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    with pytest.raises(TokenCounterUnavailable, match="free"):
+        TokenCounter("claude-haiku-4-5")

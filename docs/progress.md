@@ -1466,3 +1466,32 @@ exists: 553 functional tests were green while `inspect_page` returned every enti
 and inverted the project's central claim. A project whose claim is "cheaper" needs
 the cheapness under test — functional tests fail when the function breaks, not
 when the argument does.
+
+### Exact tokens, for nothing (2026-08-11)
+
+`count_tokens` runs no inference and is not billed, and it returns the provider's
+own input-token count. That is precisely the "machine-readable API usage metadata"
+specification 14.3 asks for, so the payload measurement can be published in tokens
+rather than characters without an agent, a budget, or an estimate.
+
+`benchmarks/tokens.py` wraps it. Two details are deliberate. The fixed per-request
+overhead is measured once and subtracted, because it appears on both sides of
+every comparison and leaving it in pulls every ratio toward 1. And tool
+definitions are counted separately from observations, because the two arms do not
+carry the same schema weight and folding it into the payload figure would flatter
+whichever arm has the smaller tool list.
+
+Without a key the measurement degrades to characters rather than failing, and the
+unit travels with the number — into the printed table, into the JSON, and into
+`Measurement.unit`. Nothing anywhere divides characters by four. A run that cannot
+count tokens says so and reports something else; it does not report an estimate
+wearing the word "tokens".
+
+The key is the only thing still missing. It has not been set, so the published
+table is still in characters.
+
+One test was written wrong on the way and is worth noting because it is a repeat.
+The key check passed on this machine only because this machine has no key — the
+same environment-dependence caught in the Phase 6 tests two days of work earlier.
+It now clears the variable explicitly. A test whose result depends on the shell it
+runs in is not testing the code.

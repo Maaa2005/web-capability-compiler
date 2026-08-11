@@ -18,6 +18,7 @@ So this is evidence for one half of the claim. It is published as that half.
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import functools
 import http.server
@@ -31,6 +32,8 @@ from pathlib import Path
 from playwright.async_api import async_playwright
 
 from benchmarks.arms import BaselineArm
+from benchmarks.run import DEFAULT_MODEL
+from benchmarks.tokens import TokenCounter, TokenCounterUnavailable
 from benchmarks.wcc_arm import WccArm
 from wcc.driver.base import DriverSettings
 from wcc.driver.playwright_driver import PlaywrightDriver
@@ -60,17 +63,26 @@ class Measurement:
     description: str
     baseline_chars: int
     wcc_chars: int
+    baseline_tokens: int | None = None
+    wcc_tokens: int | None = None
+    """Provider-counted, when a key is available. ``None`` when only characters
+    were measured — never estimated from the character count, because
+    specification 14.3 draws the line exactly there."""
 
     @property
     def ratio(self) -> float:
+        if self.baseline_tokens is not None and self.wcc_tokens is not None:
+            return self.wcc_tokens / self.baseline_tokens
         return self.wcc_chars / self.baseline_chars
+
+    @property
+    def unit(self) -> str:
+        return "tokens" if self.baseline_tokens is not None else "characters"
 
 
 @contextmanager
 def fixture_server() -> Iterator[str]:
-    handler = functools.partial(
-        http.server.SimpleHTTPRequestHandler, directory=str(FIXTURES)
-    )
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(FIXTURES))
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -82,7 +94,13 @@ def fixture_server() -> Iterator[str]:
         thread.join(timeout=5)
 
 
-async def measure(base_url: str, page: str, path: str, description: str) -> Measurement:
+async def measure(
+    base_url: str,
+    page: str,
+    path: str,
+    description: str,
+    counter: TokenCounter | None = None,
+) -> Measurement:
     """One `browser_snapshot` against one `inspect_page`, on the same page."""
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch()
@@ -104,40 +122,83 @@ async def measure(base_url: str, page: str, path: str, description: str) -> Meas
         store.close()
         await driver.shutdown()
 
+    baseline_tokens = wcc_tokens = None
+    if counter is not None:
+        baseline_tokens = await counter.of_text(snapshot)
+        wcc_tokens = await counter.of_text(inspection)
+
     return Measurement(
         page=page,
         description=description,
         baseline_chars=len(snapshot),
         wcc_chars=len(inspection),
+        baseline_tokens=baseline_tokens,
+        wcc_tokens=wcc_tokens,
     )
 
 
 def table(measurements: list[Measurement]) -> str:
+    exact = any(item.baseline_tokens is not None for item in measurements)
+    unit = "tokens" if exact else "chars"
     lines = [
-        "| Page | Size | Baseline snapshot | WCC inspection | WCC / baseline |",
+        f"| Page | Size | Baseline snapshot ({unit}) | WCC inspection ({unit}) | WCC / baseline |",
         "|---|---|---:|---:|---:|",
     ]
     for item in measurements:
+        left = item.baseline_tokens if exact else item.baseline_chars
+        right = item.wcc_tokens if exact else item.wcc_chars
         lines.append(
-            f"| `{item.page}` | {item.description} | {item.baseline_chars:,} | "
-            f"{item.wcc_chars:,} | {item.ratio:.2f}× |"
+            f"| `{item.page}` | {item.description} | {left:,} | {right:,} | {item.ratio:.2f}× |"
         )
     return "\n".join(lines)
 
 
-async def _all() -> list[Measurement]:
+async def _all(counter: TokenCounter | None) -> list[Measurement]:
     with fixture_server() as base_url:
-        return [await measure(base_url, *page) for page in PAGES]
+        return [await measure(base_url, *page, counter=counter) for page in PAGES]
 
 
-def main() -> int:
+def _counter(model: str) -> TokenCounter | None:
+    """A token counter when one can be had, and a plain report when it cannot.
+
+    Degrading to characters rather than failing, because the character
+    measurement is the honest fallback and refusing to produce it would make the
+    absence of a key look like the absence of a result.
+    """
+    try:
+        return TokenCounter(model)
+    except TokenCounterUnavailable as unavailable:
+        print(f"note: {unavailable}\n      Reporting characters instead.\n")
+        return None
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--model",
+        default=DEFAULT_MODEL,
+        help="which tokenizer to count with; counting is free and runs no inference",
+    )
+    parser.add_argument(
+        "--chars-only",
+        action="store_true",
+        help="skip token counting even if a key is present",
+    )
+    arguments = parser.parse_args(argv)
+
     RESULTS.mkdir(parents=True, exist_ok=True)
-    measurements = asyncio.run(_all())
+    counter = None if arguments.chars_only else _counter(arguments.model)
+    measurements = asyncio.run(_all(counter))
 
     print(table(measurements))
-    print("\nCharacters, measured. Not tokens, and not a token-reduction figure:")
-    print("specification 14.3 requires those to come from provider usage metadata,")
-    print("which needs `benchmarks.run` and an API key.")
+    if counter is None:
+        print("\nCharacters, counted exactly. Not tokens: specification 14.3 wants")
+        print("those from provider metadata, and four-per-token is an approximation.")
+    else:
+        print(f"\nInput tokens, counted by the provider for {counter.model} via the free")
+        print("count_tokens endpoint. No inference ran and nothing was billed.")
+    print("\nThis is one observation. How many a task takes is not measured here;")
+    print("that needs `benchmarks.run`, an agent, and a budget.")
 
     (RESULTS / "payload-sizes.json").write_text(
         json.dumps(
@@ -147,6 +208,9 @@ def main() -> int:
                     "description": item.description,
                     "baseline_snapshot_chars": item.baseline_chars,
                     "wcc_inspection_chars": item.wcc_chars,
+                    "baseline_snapshot_tokens": item.baseline_tokens,
+                    "wcc_inspection_tokens": item.wcc_tokens,
+                    "unit_of_ratio": item.unit,
                     "ratio": round(item.ratio, 4),
                 }
                 for item in measurements

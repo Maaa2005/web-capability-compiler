@@ -165,7 +165,9 @@ uv run python -m benchmarks.measure_payloads
 | `search-page` | 6 controls | 563 | 1,787 | 3.17× |
 | `large-catalog` | 150 products | 15,234 | 2,527 | **0.17×** |
 
-Characters, counted exactly — not tokens, and not a token-reduction figure. A
+Characters, counted exactly — not tokens, and not a token-reduction figure. (With
+an API key the same command reports provider-counted tokens, and still costs
+nothing: `count_tokens` runs no inference.) A
 snapshot grows with the page; an inspection grows with the controls the page
 offers, so the two diverge as pages get realistic. **WCC costs more on trivial
 pages and about six times less on a 150-product catalog.**
