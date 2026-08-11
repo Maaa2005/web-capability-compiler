@@ -1495,3 +1495,39 @@ The key check passed on this machine only because this machine has no key — th
 same environment-dependence caught in the Phase 6 tests two days of work earlier.
 It now clears the variable explicitly. A test whose result depends on the shell it
 runs in is not testing the code.
+
+### Tokens without a key (2026-08-11)
+
+Anthropic does not publish a tokenizer for current Claude models, so an exact
+Claude count needs an API key. OpenAI does publish one, and `tiktoken` runs
+offline — so the payload table moved from characters to counted tokens with no
+key, no cost, and no inference.
+
+`benchmarks/tokens.py` now tries three counters in order and prints which one
+answered: Anthropic's `count_tokens` when a key exists, `tiktoken` otherwise,
+characters if neither. Each step down is announced rather than taken silently,
+because the failure mode of a fallback chain is a number whose provenance has
+become invisible. The unit is carried in `Measurement.counted_by`, printed in the
+table, and written into `payload-sizes.json`, so no figure can later be quoted as
+a measurement it is not.
+
+| Page | Baseline | WCC | ratio |
+|---|---:|---:|---:|
+| `search-page` (6 controls) | 169 | 474 | 2.80× |
+| `filter-page` (5 controls) | 78 | 342 | 4.38× |
+| `product-list` (3 results) | 149 | 633 | 4.25× |
+| `large-catalog` (150 products) | 5,187 | **711** | **0.14×** |
+
+The reason this was safe to do in the other order — publish characters first,
+upgrade the unit afterwards — is visible in the numbers. Characters gave 3.17× and
+0.17× where tokens give 2.80× and 0.14×: about 15% apart, across a conclusion that
+spans a factor of twenty. **The finding never depended on the precision**, which is
+exactly why it was publishable before the precision existed and why nothing had to
+be retracted when it arrived.
+
+Using OpenAI's *models* for the benchmark was considered and declined for a
+different reason. It would not have removed the key requirement — an OpenAI key is
+still a key — and the audience for a benchmark about an MCP server is people using
+MCP, who are running Claude. Their question is what it costs on Claude. Borrowing
+OpenAI's tokenizer answers a measurement question; borrowing its models would have
+changed the subject.

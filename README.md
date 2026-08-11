@@ -162,15 +162,15 @@ uv run python -m benchmarks.measure_payloads
 
 | Page | Size | Baseline snapshot | WCC inspection | WCC / baseline |
 |---|---|---:|---:|---:|
-| `search-page` | 6 controls | 563 | 1,787 | 3.17× |
-| `large-catalog` | 150 products | 15,234 | 2,527 | **0.17×** |
+| `search-page` | 6 controls | 169 | 474 | 2.80× |
+| `large-catalog` | 150 products | 5,187 | **711** | **0.14×** |
 
-Characters, counted exactly — not tokens, and not a token-reduction figure. (With
-an API key the same command reports provider-counted tokens, and still costs
-nothing: `count_tokens` runs no inference.) A
+Tokens, counted offline with `o200k_base` — OpenAI's tokenizer, not Claude's, and
+so labelled everywhere. (Set `ANTHROPIC_API_KEY` and the same command reports
+Claude's own counts instead, still free: `count_tokens` runs no inference.) A
 snapshot grows with the page; an inspection grows with the controls the page
 offers, so the two diverge as pages get realistic. **WCC costs more on trivial
-pages and about six times less on a 150-product catalog.**
+pages and about seven times less on a 150-product catalog.**
 
 What this does *not* show is how many observations a task takes, which is where
 most of the saving is supposed to come from and which needs the agent loop above.

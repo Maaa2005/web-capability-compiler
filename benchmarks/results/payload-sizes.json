@@ -4,39 +4,39 @@
     "description": "6 controls",
     "baseline_snapshot_chars": 563,
     "wcc_inspection_chars": 1787,
-    "baseline_snapshot_tokens": null,
-    "wcc_inspection_tokens": null,
-    "unit_of_ratio": "characters",
-    "ratio": 3.1741
+    "baseline_snapshot_tokens": 169,
+    "wcc_inspection_tokens": 474,
+    "unit_of_ratio": "tokens (o200k_base, not Claude's tokenizer)",
+    "ratio": 2.8047
   },
   {
     "page": "filter-page",
     "description": "5 controls",
     "baseline_snapshot_chars": 253,
     "wcc_inspection_chars": 1142,
-    "baseline_snapshot_tokens": null,
-    "wcc_inspection_tokens": null,
-    "unit_of_ratio": "characters",
-    "ratio": 4.5138
+    "baseline_snapshot_tokens": 78,
+    "wcc_inspection_tokens": 342,
+    "unit_of_ratio": "tokens (o200k_base, not Claude's tokenizer)",
+    "ratio": 4.3846
   },
   {
     "page": "product-list",
     "description": "3 results",
     "baseline_snapshot_chars": 444,
     "wcc_inspection_chars": 2241,
-    "baseline_snapshot_tokens": null,
-    "wcc_inspection_tokens": null,
-    "unit_of_ratio": "characters",
-    "ratio": 5.0473
+    "baseline_snapshot_tokens": 149,
+    "wcc_inspection_tokens": 633,
+    "unit_of_ratio": "tokens (o200k_base, not Claude's tokenizer)",
+    "ratio": 4.2483
   },
   {
     "page": "large-catalog",
     "description": "150 products",
     "baseline_snapshot_chars": 15234,
     "wcc_inspection_chars": 2527,
-    "baseline_snapshot_tokens": null,
-    "wcc_inspection_tokens": null,
-    "unit_of_ratio": "characters",
-    "ratio": 0.1659
+    "baseline_snapshot_tokens": 5187,
+    "wcc_inspection_tokens": 711,
+    "unit_of_ratio": "tokens (o200k_base, not Claude's tokenizer)",
+    "ratio": 0.1371
   }
 ]

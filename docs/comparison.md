@@ -13,26 +13,32 @@ same moment.
 
 | Page | Size | Baseline snapshot | WCC inspection | WCC / baseline |
 |---|---|---:|---:|---:|
-| `search-page` | 6 controls | 563 | 1,787 | 3.17× |
-| `filter-page` | 5 controls | 253 | 1,142 | 4.51× |
-| `product-list` | 3 results | 444 | 2,241 | 5.05× |
-| `large-catalog` | 150 products | 15,234 | 2,527 | **0.17×** |
+| `search-page` | 6 controls | 169 | 474 | 2.80× |
+| `filter-page` | 5 controls | 78 | 342 | 4.38× |
+| `product-list` | 3 results | 149 | 633 | 4.25× |
+| `large-catalog` | 150 products | 5,187 | **711** | **0.14×** |
 
-Characters, counted exactly. Reproduce with:
+Tokens, counted with `o200k_base` — OpenAI's published tokenizer, run offline.
+**Not Claude's tokenizer**, and the difference is stated wherever these numbers
+appear. Anthropic does not publish one for current models, so an exact Claude
+count needs an API key; what a consistent ruler does give correctly is the *ratio*
+between two payloads of similar text, which is what the claim rests on.
+
+Reproduce with:
 
 ```bash
 uv run python -m benchmarks.measure_payloads
 ```
 
-No API key, no cost, no network beyond a loopback fixture server.
+No API key, no cost, no inference, no network beyond a loopback fixture server and
+one cached tokenizer download.
 
-**With a key, the same command reports provider-counted tokens instead**, and
-still costs nothing: `count_tokens` runs no inference and is not billed. That
-turns the unit of this table from characters into the "machine-readable API usage
-metadata" specification 14.3 asks for, without running an agent. The unit is
-printed with the numbers and stored in `benchmarks/results/payload-sizes.json`, so
-a character figure cannot later be quoted as a token figure by someone reading
-only the file.
+The command uses the most authoritative counter it can reach and says which one
+answered: Anthropic's `count_tokens` when `ANTHROPIC_API_KEY` is set (exact for
+Claude, free, no inference), `tiktoken` otherwise, and characters if neither is
+available. The unit travels with the numbers — into the table, into
+`benchmarks/results/payload-sizes.json`, and into the code — so a figure cannot be
+quoted later as something it is not.
 
 ## What it shows
 
@@ -44,9 +50,10 @@ controls. The 150-product catalog has roughly the same handful of controls as th
 small search page and thirty times the content — and the ratio crosses over
 between them.
 
-**WCC is more expensive on trivial pages and about six times cheaper on realistic
-ones.** On the pages where it loses, it loses by fractions of a cent; the fixed
-cost of a capability schema is simply larger than a snapshot of six controls.
+**WCC is more expensive on trivial pages and about seven times cheaper on
+realistic ones.** On the pages where it loses, it loses by a few hundred tokens —
+the fixed cost of a capability schema is simply larger than a snapshot of six
+controls. On the page where it wins, it wins by 4,476 tokens per observation.
 
 ## What it does not show
 
@@ -60,11 +67,16 @@ So the claim supported here is "one observation is cheaper on a realistic page",
 not "a task costs less". The second is the interesting one and it is not yet
 evidenced.
 
-**Tokens, in this run.** The numbers above are characters, because the run that
-produced them had no API key. No token figure is derived from them: four
-characters per token is a common approximation and it is not a measurement, and
-specification 14.3 draws the line exactly there. Re-running with a key replaces
-the unit rather than converting it.
+**Claude's own token counts.** The table is `o200k_base`, not Claude. An exact
+Claude count needs an API key, and the run that produced these numbers had none.
+Nothing here is converted or scaled to compensate: re-running with a key replaces
+the unit rather than adjusting it.
+
+For what it is worth, the two rulers agree about the conclusion. The same
+measurement in characters gave 3.17× and 0.17× where tokens give 2.80× and 0.14×
+— within about 15%, across a difference of a factor of twenty. The finding never
+depended on the precision, which is the main reason it was safe to publish before
+having the exact numbers.
 
 ## What would complete it
 

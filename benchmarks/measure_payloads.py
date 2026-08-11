@@ -33,7 +33,7 @@ from playwright.async_api import async_playwright
 
 from benchmarks.arms import BaselineArm
 from benchmarks.run import DEFAULT_MODEL
-from benchmarks.tokens import TokenCounter, TokenCounterUnavailable
+from benchmarks.tokens import Counter, build_counter
 from benchmarks.wcc_arm import WccArm
 from wcc.driver.base import DriverSettings
 from wcc.driver.playwright_driver import PlaywrightDriver
@@ -65,9 +65,14 @@ class Measurement:
     wcc_chars: int
     baseline_tokens: int | None = None
     wcc_tokens: int | None = None
-    """Provider-counted, when a key is available. ``None`` when only characters
-    were measured — never estimated from the character count, because
-    specification 14.3 draws the line exactly there."""
+    """Counted, when a counter was available. ``None`` when only characters were
+    measured — never estimated from the character count, because specification
+    14.3 draws the line exactly there."""
+
+    counted_by: str | None = None
+    """Which ruler produced the token numbers, in words. Anthropic's count and
+    tiktoken's are both exact and they are not the same measurement, so the
+    distinction travels with the figures instead of living in a commit message."""
 
     @property
     def ratio(self) -> float:
@@ -77,7 +82,7 @@ class Measurement:
 
     @property
     def unit(self) -> str:
-        return "tokens" if self.baseline_tokens is not None else "characters"
+        return self.counted_by or "characters"
 
 
 @contextmanager
@@ -99,7 +104,7 @@ async def measure(
     page: str,
     path: str,
     description: str,
-    counter: TokenCounter | None = None,
+    counter: Counter | None = None,
 ) -> Measurement:
     """One `browser_snapshot` against one `inspect_page`, on the same page."""
     async with async_playwright() as playwright:
@@ -134,6 +139,7 @@ async def measure(
         wcc_chars=len(inspection),
         baseline_tokens=baseline_tokens,
         wcc_tokens=wcc_tokens,
+        counted_by=counter.unit if counter is not None else None,
     )
 
 
@@ -153,23 +159,9 @@ def table(measurements: list[Measurement]) -> str:
     return "\n".join(lines)
 
 
-async def _all(counter: TokenCounter | None) -> list[Measurement]:
+async def _all(counter: Counter | None) -> list[Measurement]:
     with fixture_server() as base_url:
         return [await measure(base_url, *page, counter=counter) for page in PAGES]
-
-
-def _counter(model: str) -> TokenCounter | None:
-    """A token counter when one can be had, and a plain report when it cannot.
-
-    Degrading to characters rather than failing, because the character
-    measurement is the honest fallback and refusing to produce it would make the
-    absence of a key look like the absence of a result.
-    """
-    try:
-        return TokenCounter(model)
-    except TokenCounterUnavailable as unavailable:
-        print(f"note: {unavailable}\n      Reporting characters instead.\n")
-        return None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -187,7 +179,7 @@ def main(argv: list[str] | None = None) -> int:
     arguments = parser.parse_args(argv)
 
     RESULTS.mkdir(parents=True, exist_ok=True)
-    counter = None if arguments.chars_only else _counter(arguments.model)
+    counter = None if arguments.chars_only else build_counter(arguments.model)
     measurements = asyncio.run(_all(counter))
 
     print(table(measurements))
@@ -195,8 +187,7 @@ def main(argv: list[str] | None = None) -> int:
         print("\nCharacters, counted exactly. Not tokens: specification 14.3 wants")
         print("those from provider metadata, and four-per-token is an approximation.")
     else:
-        print(f"\nInput tokens, counted by the provider for {counter.model} via the free")
-        print("count_tokens endpoint. No inference ran and nothing was billed.")
+        print(f"\nUnit: {counter.unit}. Nothing was billed and no inference ran.")
     print("\nThis is one observation. How many a task takes is not measured here;")
     print("that needs `benchmarks.run`, an agent, and a budget.")
 

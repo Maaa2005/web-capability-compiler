@@ -342,10 +342,15 @@ def test_a_measurement_with_counted_tokens_uses_them_for_the_ratio() -> None:
         wcc_chars=2527,
         baseline_tokens=3400,
         wcc_tokens=700,
+        counted_by="tokens (o200k_base, not Claude's tokenizer)",
     )
 
-    assert counted.unit == "tokens"
     assert counted.ratio == pytest.approx(700 / 3400)
+    # The ruler is named, not merely implied. Anthropic's count and tiktoken's are
+    # both exact and they are not the same measurement, so a reader of the table
+    # has to be able to tell which one produced it.
+    assert "o200k_base" in counted.unit
+    assert "not Claude" in counted.unit
 
 
 def test_the_token_counter_refuses_rather_than_guessing_without_a_key(
