@@ -1,0 +1,30 @@
+[
+  {
+    "page": "search-page",
+    "description": "6 controls",
+    "baseline_snapshot_chars": 563,
+    "wcc_inspection_chars": 1787,
+    "ratio": 3.1741
+  },
+  {
+    "page": "filter-page",
+    "description": "5 controls",
+    "baseline_snapshot_chars": 253,
+    "wcc_inspection_chars": 1142,
+    "ratio": 4.5138
+  },
+  {
+    "page": "product-list",
+    "description": "3 results",
+    "baseline_snapshot_chars": 444,
+    "wcc_inspection_chars": 2241,
+    "ratio": 5.0473
+  },
+  {
+    "page": "large-catalog",
+    "description": "150 products",
+    "baseline_snapshot_chars": 15234,
+    "wcc_inspection_chars": 2527,
+    "ratio": 0.1659
+  }
+]

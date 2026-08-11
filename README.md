@@ -150,8 +150,29 @@ runs each. Token counts come from the provider's usage metadata; a run that fail
 its verification condition is never credited with the tokens it saved by failing.
 Raw runs are written to `benchmarks/results/`.
 
-**No results are published yet.** The harness is complete and tested against a
+**No agent-loop results yet.** The harness is complete and tested against a
 scripted client; the measuring run has not been made.
+
+What *has* been measured, at no cost and with no API key, is the size of a single
+observation:
+
+```bash
+uv run python -m benchmarks.measure_payloads
+```
+
+| Page | Size | Baseline snapshot | WCC inspection | WCC / baseline |
+|---|---|---:|---:|---:|
+| `search-page` | 6 controls | 563 | 1,787 | 3.17× |
+| `large-catalog` | 150 products | 15,234 | 2,527 | **0.17×** |
+
+Characters, counted exactly — not tokens, and not a token-reduction figure. A
+snapshot grows with the page; an inspection grows with the controls the page
+offers, so the two diverge as pages get realistic. **WCC costs more on trivial
+pages and about six times less on a 150-product catalog.**
+
+What this does *not* show is how many observations a task takes, which is where
+most of the saving is supposed to come from and which needs the agent loop above.
+[docs/comparison.md](docs/comparison.md) states both halves.
 
 ## What this does not defend against
 

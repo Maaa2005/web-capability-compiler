@@ -1424,3 +1424,45 @@ Two things are worth naming about how this was found. It was found by measuring
 before paying, which cost nothing and would have been embarrassing to skip. And it
 was found because the first measurement disagreed with the expected answer and was
 believed anyway — the temptation at 3.17× was to assume the harness was wrong.
+
+### Publishing half a result, labelled as half (2026-08-11)
+
+The paid benchmark run was declined, so what is published is the measurement that
+could be made for nothing: the size of one observation, on four fixture pages,
+in characters.
+
+`benchmarks/measure_payloads.py` is a separate entry point from the benchmark
+proper, and separate on purpose. It answers a smaller question — how large is a
+single payload — and it answers it without a model, a key, or a budget. Anyone can
+re-run it and get the same numbers.
+
+| Page | Baseline snapshot | WCC inspection | ratio |
+|---|---:|---:|---:|
+| `search-page` (6 controls) | 563 | 1,787 | 3.17× |
+| `filter-page` (5 controls) | 253 | 1,142 | 4.51× |
+| `product-list` (3 results) | 444 | 2,241 | 5.05× |
+| `large-catalog` (150 products) | 15,234 | 2,527 | **0.17×** |
+
+The finding is the crossover, not any single row. A snapshot is proportional to
+the page; an inspection is proportional to the controls the page offers. WCC loses
+on trivial pages, by fractions of a cent, and wins by roughly six times on a
+realistic one.
+
+`docs/comparison.md` states the omission in its second paragraph rather than in a
+footnote: **no agent was run, so the number of observations a task takes is not
+measured**, and that is where most of the claimed saving is supposed to live. A
+baseline agent re-snapshots before each interaction because its refs expire; WCC
+binds capabilities that do not. Nothing here evidences that. Publishing the
+per-observation number as though it were a per-task number would be the exact
+dishonesty this project keeps catching itself in.
+
+No token figure and no percentage is published, because specification 14.3 wants
+provider usage metadata and four-characters-per-token is an approximation, not a
+measurement.
+
+**The claim is now a test.** `test_wcc_costs_less_than_a_snapshot_on_a_realistic_page`
+asserts the ratio stays under 0.5 on the large catalog. Its docstring says why it
+exists: 553 functional tests were green while `inspect_page` returned every entity
+and inverted the project's central claim. A project whose claim is "cheaper" needs
+the cheapness under test — functional tests fail when the function breaks, not
+when the argument does.

@@ -257,3 +257,53 @@ def test_both_arms_are_asked_the_same_thing() -> None:
     """14.2 permits differing tool descriptions and nothing else."""
     for task in TASKS:
         assert task.prompt("x") == task.instruction.format(input="x")
+
+
+# -- the claim, as a test -------------------------------------------------
+
+
+async def test_wcc_costs_less_than_a_snapshot_on_a_realistic_page(
+    fixture_server: str, tmp_path: Any
+) -> None:
+    """The project's central claim, asserted rather than believed.
+
+    This test exists because of how the defect it guards was found. Every one of
+    the 553 tests around it checked that something *works*; not one checked what
+    it *costs*, so ``inspect_page`` could return every entity on a 150-product
+    page — making WCC nearly three times more expensive than the baseline on
+    exactly the page it exists to be cheaper on — with the suite entirely green.
+
+    A project whose claim is "cheaper" needs the cheapness under test. Functional
+    tests fail when the function breaks; they do not fail when the argument does.
+    """
+    from benchmarks.measure_payloads import measure
+
+    result = await measure(fixture_server, "large-catalog", "/large-catalog/", "150 products")
+
+    assert result.ratio < 0.5, (
+        f"a WCC inspection of a 150-product page cost {result.wcc_chars:,} characters "
+        f"against a baseline snapshot's {result.baseline_chars:,} ({result.ratio:.2f}×). "
+        "The claim of this project is that it is cheaper on pages like this one."
+    )
+
+
+async def test_the_cost_of_an_inspection_tracks_controls_not_page_size(
+    fixture_server: str,
+) -> None:
+    """Why the ratio moves: the two costs are proportional to different things.
+
+    A snapshot carries everything on the page, so it grows with the page. An
+    inspection carries the capabilities the page offers, so it grows with the
+    controls. The 150-product catalog has the same handful of controls as the
+    small search page and thirty times the content, and the numbers should show
+    exactly that asymmetry.
+    """
+    from benchmarks.measure_payloads import measure
+
+    small = await measure(fixture_server, "search-page", "/search-page/", "6 controls")
+    large = await measure(fixture_server, "large-catalog", "/large-catalog/", "150 products")
+
+    assert large.baseline_chars > small.baseline_chars * 10, "the page did grow"
+    assert large.wcc_chars < small.wcc_chars * 3, (
+        "an inspection grew with the content it should be summarizing"
+    )
