@@ -78,26 +78,30 @@ about.
 ## What it does on pages nobody here wrote
 
 Twenty-two public pages, one visit each, `robots.txt` fetched and honoured per
-host. Observed 2026-08-11 — reproduce with `uv run python -m benchmarks.measure_coverage`.
+host. Observed 2026-10-13 — reproduce with `uv run python -m benchmarks.measure_coverage`.
 
 | | |
 |---|---|
-| observed (4 skipped by robots.txt, 1 timed out) | 17 |
+| observed (3 skipped by robots.txt, 1 timed out) | 18 |
 | had something a compiler could want | 16 |
-| **…and a capability was compiled** | **11 (69%)** |
+| **…and a capability was compiled** | **13 (81%)** |
 | **state-changing candidates refused** | **21** |
 
 The capabilities are ordinary ones on ordinary sites: search on `python.org`,
-`pypi.org`, `crates.io`, `djangoproject.com`, `openstreetmap.org`; opening a result
-on `arxiv.org`, `w3.org`, `debian.org`, `go.dev`; paging on `news.ycombinator.com`.
+`pypi.org`, `djangoproject.com`, `openstreetmap.org`; opening a result on
+`books.toscrape.com`, `quotes.toscrape.com`, `arxiv.org`, `w3.org`, `debian.org`,
+`go.dev`, `docs.python.org`, `developer.mozilla.org`; paging on
+`news.ycombinator.com`.
 
-**The 21 refusals matter as much as the 11 successes.** Twenty are the "add to
+**The 21 refusals matter as much as the 13 successes.** Twenty are the "add to
 basket" forms on a shop and one is a subscription form. A low-level agent sees
 those as buttons and can press them.
 
-Where it found nothing, and why, is listed honestly in
-[`docs/comparison.md`](docs/comparison.md) — including three genuine misses that
-are named rather than averaged away.
+Not every compiled capability is right. On `pypi.org` "open a result" points at
+three footer links and on Hacker News at the thirty user names; neither page's
+count depends on it, and both are listed in
+[`docs/comparison.md`](docs/comparison.md) with where it found nothing, and why —
+named rather than averaged away.
 
 ---
 
@@ -277,6 +281,14 @@ writes a fixture that misbehaves in those particular ways.
 **Repeated-structure detection was too strict and too lax in the same file.** Cards
 required *every* sibling to match, so one pagination link beside ten products
 deleted the collection; tables checked nothing, so spacer rows became records.
+
+**A capability compiled and never bound, and nothing said so.** Once "open a
+result" on `quotes.toscrape.com` was taken from the detected list of quotes, it
+compiled — and the page still showed nothing. The resolver searched for the
+list's container path across the whole document instead of from `<body>`, matched
+it twice, and refused the binding as stale. The binder drops a refused template
+without a word, so the report, the warnings and the coverage run were all silent;
+a probe wrapped around the binder found it.
 
 Four external counter-reviews were run. Three produced a correct criticism
 attached to a wrong specific — a predicted API rejection that the SDK itself

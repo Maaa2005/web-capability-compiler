@@ -88,27 +88,57 @@ RESOLVE_CANDIDATE = r"""
     matches = Array.from(scope().querySelectorAll(INTERACTIVE))
       .filter((el) => accessibleName(el) === key);
   } else if (kind === 5) {
-    const parts = key.split('>').filter(Boolean);
-    let nodes = [document];
-    for (const part of parts) {
-      const m = part.match(/^([a-z0-9-]+)(?:\[(\d+)\])?$/i);
-      if (!m) { nodes = []; break; }
-      const [, tag, index] = m;
-      const next = [];
-      for (const node of nodes) {
-        const children = node === document
-          ? Array.from(document.getElementsByTagName(tag))
-          : Array.from(node.children).filter((c) => c.tagName.toLowerCase() === tag);
-        if (index) {
-          const picked = children[Number(index) - 1];
-          if (picked) next.push(picked);
-        } else {
-          next.push(...children);
+    // A structural path starts where the extractor stopped climbing: at a child
+    // of <body>, or at the landmark it stopped beneath (specification 7.7). Its
+    // first segment is matched there and nowhere else. Matching it against every
+    // element of that tag in the document made a short path ambiguous — a result
+    // list's container, `div>div[2]>div[1]`, is found again inside any deeper
+    // div with the same children — and read `div[2]` as the document's second
+    // div rather than body's.
+    //
+    // The whole-document reading is kept for a path that matches nowhere from
+    // those anchors: the element extractor stops climbing after a fixed number of
+    // ancestors, and such a path starts wherever the climb ran out.
+    const stops = new Set(['form', 'main', 'nav', 'header', 'footer', 'aside', 'section']);
+    const walk = (anchored) => {
+      const parts = key.split('>').filter(Boolean);
+      let nodes = [document];
+      for (const part of parts) {
+        const m = part.match(/^([a-z0-9-]+)(?:\[(\d+)\])?$/i);
+        if (!m) return [];
+        const [, rawTag, index] = m;
+        const tag = rawTag.toLowerCase();
+        const next = [];
+        for (const node of nodes) {
+          let children;
+          if (node !== document) {
+            children = Array.from(node.children).filter((c) => c.tagName.toLowerCase() === tag);
+          } else if (!anchored) {
+            children = Array.from(document.getElementsByTagName(tag));
+          } else {
+            children = document.body
+              ? Array.from(document.body.children).filter((c) => c.tagName.toLowerCase() === tag)
+              : [];
+            if (!index) {
+              const landmarks = Array.from(document.getElementsByTagName(tag)).filter((el) =>
+                el.parentElement !== document.body &&
+                (stops.has(tag) || el.getAttribute('role') === 'search'));
+              children = children.concat(landmarks);
+            }
+          }
+          if (index) {
+            const picked = children[Number(index) - 1];
+            if (picked) next.push(picked);
+          } else {
+            next.push(...children);
+          }
         }
+        nodes = next;
       }
-      nodes = next;
-    }
-    matches = nodes.filter((n) => n !== document);
+      return nodes.filter((n) => n !== document);
+    };
+    matches = walk(true);
+    if (!matches.length) matches = walk(false);
   }
 
   matches = matches.filter(visible);

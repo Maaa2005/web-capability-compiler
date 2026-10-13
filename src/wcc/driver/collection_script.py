@@ -22,10 +22,18 @@ EXTRACT_COLLECTIONS = r"""
   const shape = (el) => {
     // Structure only: tag names and depth, never text and never class names,
     // which are the parts a redesign or an A/B test changes most freely.
+    //
+    // A run of same-tag siblings counts once. How many tags a quote carries, or
+    // how many links a story's subtext holds, is content; counting them split
+    // quotes.toscrape.com's ten quotes into three shapes, so the page's result
+    // list was found as three records and lost to a ten-link tag cloud.
     const parts = [];
     const walk = (node, depth) => {
       if (depth > 3) return;
+      let previous = null;
       for (const child of node.children) {
+        if (child.tagName === previous) continue;
+        previous = child.tagName;
         parts.push(depth + ':' + child.tagName.toLowerCase());
         walk(child, depth + 1);
       }
@@ -73,6 +81,24 @@ EXTRACT_COLLECTIONS = r"""
   const activationPathOf = (el) => {
     const link = el.matches('a[href]') ? el : el.querySelector('a[href]');
     return link ? structuralPath(link) : null;
+  };
+
+  // Whether the record says anything its links do not. A tag, a category or a
+  // menu entry is nothing but its link; a quote, a product or a story has text
+  // around its link. Both repeat, and the second is what a result list is made of
+  // (specification 7.11): on quotes.toscrape.com a ten-tag sidebar is exactly as
+  // long as the ten quotes beside it, and on books.toscrape.com the fifty
+  // category links outnumber the twenty books.
+  const linkOnly = (el) => {
+    if (!el.matches('a[href]') && !el.querySelector('a[href]')) return false;
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (!node.textContent.trim()) continue;
+      const parent = node.parentElement;
+      if (!parent || parent.closest('script,style,noscript,template')) continue;
+      if (!parent.closest('a[href]')) return false;
+    }
+    return true;
   };
 
   const fieldsOf = (el) => {
@@ -146,6 +172,7 @@ EXTRACT_COLLECTIONS = r"""
         fields: fieldsOf(item),
         shape: shape(item),
         activation_path: activationPathOf(item),
+        link_only: linkOnly(item),
       })),
     });
   };
@@ -171,6 +198,7 @@ EXTRACT_COLLECTIONS = r"""
           fields,
           shape: shape(row),
           activation_path: activationPathOf(row),
+          link_only: linkOnly(row),
         };
       }),
     });

@@ -56,6 +56,11 @@
           "title": "Identity",
           "type": "string"
         },
+        "link_only": {
+          "default": false,
+          "title": "Link Only",
+          "type": "boolean"
+        },
         "record_id": {
           "title": "Record Id",
           "type": "string"

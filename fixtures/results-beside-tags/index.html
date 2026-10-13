@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Fixture: Results Beside Tags</title></head>
+<body>
+  <!-- quotes.toscrape.com in miniature. Six quotes carry one, two or three tag
+       links each, and a sidebar holds exactly six bare tag links. Counting every
+       tag in a record's shape split the quotes into three groups, and a rule that
+       picked the largest repeated link group could not tell the quotes from the
+       equally long sidebar. -->
+  <div class="container">
+    <div class="col-md-8">
+      <div class="quote">
+        <span class="text">"Quote number 1."</span>
+        <span>by <small class="author">Author 1</small> <a href="/author/1/">(about)</a></span>
+        <div class="tags">
+          Tags:
+          <a class="tag" href="/tag/life/">life</a>
+          <a class="tag" href="/tag/books/">books</a>
+        </div>
+      </div>
+      <div class="quote">
+        <span class="text">"Quote number 2."</span>
+        <span>by <small class="author">Author 2</small> <a href="/author/2/">(about)</a></span>
+        <div class="tags">
+          Tags:
+          <a class="tag" href="/tag/books/">books</a>
+          <a class="tag" href="/tag/humor/">humor</a>
+          <a class="tag" href="/tag/truth/">truth</a>
+        </div>
+      </div>
+      <div class="quote">
+        <span class="text">"Quote number 3."</span>
+        <span>by <small class="author">Author 3</small> <a href="/author/3/">(about)</a></span>
+        <div class="tags">
+          Tags:
+          <a class="tag" href="/tag/humor/">humor</a>
+        </div>
+      </div>
+      <div class="quote">
+        <span class="text">"Quote number 4."</span>
+        <span>by <small class="author">Author 4</small> <a href="/author/4/">(about)</a></span>
+        <div class="tags">
+          Tags:
+          <a class="tag" href="/tag/truth/">truth</a>
+          <a class="tag" href="/tag/friends/">friends</a>
+        </div>
+      </div>
+      <div class="quote">
+        <span class="text">"Quote number 5."</span>
+        <span>by <small class="author">Author 5</small> <a href="/author/5/">(about)</a></span>
+        <div class="tags">
+          Tags:
+          <a class="tag" href="/tag/friends/">friends</a>
+          <a class="tag" href="/tag/love/">love</a>
+          <a class="tag" href="/tag/life/">life</a>
+        </div>
+      </div>
+      <div class="quote">
+        <span class="text">"Quote number 6."</span>
+        <span>by <small class="author">Author 6</small> <a href="/author/6/">(about)</a></span>
+        <div class="tags">
+          Tags:
+          <a class="tag" href="/tag/love/">love</a>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <h2>Top Tags</h2>
+      <ul class="tags-box">
+        <li><a href="/tag/t1/">tag 1</a></li>
+        <li><a href="/tag/t2/">tag 2</a></li>
+        <li><a href="/tag/t3/">tag 3</a></li>
+        <li><a href="/tag/t4/">tag 4</a></li>
+        <li><a href="/tag/t5/">tag 5</a></li>
+        <li><a href="/tag/t6/">tag 6</a></li>
+      </ul>
+    </div>
+  </div>
+</body>
+</html>

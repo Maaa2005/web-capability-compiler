@@ -21,6 +21,7 @@ from collections.abc import AsyncIterator
 
 import pytest
 
+from wcc.compiler.navigation import build_result_item_template, find_result_links
 from wcc.compiler.risk import names_destructive_act
 from wcc.driver.base import (
     DriverSettings,
@@ -30,6 +31,7 @@ from wcc.driver.base import (
 from wcc.driver.playwright_driver import PlaywrightDriver
 from wcc.limits import ResourceLimits
 from wcc.models.common import ControlType
+from wcc.models.locator import LocatorKind
 from wcc.models.session import OpenSessionRequest
 from wcc.policy.url_policy import UrlPolicy
 
@@ -147,3 +149,54 @@ async def test_a_listing_survives_one_extra_sibling(
 
     assert collections, "one pager beside ten cards must not delete the collection"
     assert max(len(c.records) for c in collections) == 10
+
+
+async def test_records_that_differ_only_in_how_many_tags_they_carry_are_one_listing(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """The result list is the quotes, not the equally long tag sidebar.
+
+    Two findings from quotes.toscrape.com. A record's shape counted every tag
+    link, so quotes with one, two and three tags were three shapes and the ten
+    quotes came out as three records. And the page's result list was taken to be
+    its largest group of repeated links, which could not tell ten quotes from ten
+    tags. The fixture has both: tag counts that vary, and a sidebar exactly as
+    long as the list beside it.
+    """
+    session_id = await _open(driver, f"{fixture_server}/results-beside-tags/")
+    snapshot = await driver.snapshot(session_id)
+
+    quotes = next(c for c in snapshot.collections if c.kind == "cards" and c.record_count == 6)
+    sidebar = next(c for c in snapshot.collections if c.kind == "list" and c.record_count == 6)
+    assert not any(record.link_only for record in quotes.records)
+    assert all(record.link_only for record in sidebar.records)
+
+    links = find_result_links(snapshot.elements, snapshot.collections)
+    assert [link.resolved_label for link in links] == ["(about)"] * 6
+
+
+async def test_a_result_lists_short_container_path_binds_to_one_element(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """The container of a result list resolves once, though its path is short.
+
+    Found on quotes.toscrape.com, where ``open_result_item`` compiled and then
+    never bound: the container path was ``div>div[2]>div[1]``, and the resolver
+    matched its first segment against every div in the document, so the same
+    three steps were found again further down. A structural path starts at a
+    child of ``<body>`` or at the landmark the extractor stopped beneath; the
+    resolver now starts there too.
+    """
+    session_id = await _open(driver, f"{fixture_server}/results-beside-tags/")
+    snapshot = await driver.snapshot(session_id)
+
+    template = build_result_item_template(snapshot.elements, snapshot.collections)
+    assert template is not None
+    chain = template.locators["result_collection"]
+
+    handle = await driver.resolve_chain(session_id, chain)
+    container = await driver.describe_resolved(session_id, handle)
+    paths = [
+        c.key for c in container.locator_chain.candidates if c.kind is LocatorKind.STRUCTURAL_PATH
+    ]
+    assert paths == [chain.primary.key]

@@ -1767,3 +1767,61 @@ collection record is a result link in a way that a link merely repeating is not.
 Wiring `open_result_item` to collections rather than to link-shape groups is the
 change, and it is a change to how a capability is chosen rather than to a
 constant, so it is recorded here rather than made in passing.
+
+### Result lists from collections, and the binding that never happened (2026-10-13)
+
+The change recorded above was made. `open_result_item` now takes its links from a
+detected collection: the activation links of its records, outside any navigation
+landmark and not pagination. Doing it turned up three further causes, each one
+hidden by the one before it.
+
+**A record's shape counted content.** `shape()` listed every child tag, so a quote
+with one tag link and a quote with three were different shapes, and the ten quotes
+were found as groups of three or four. The correction above — "`quotes.toscrape.com`
+its ten quotes" — was not true when it was written: three of the ten were detected.
+A run of same-tag siblings now counts once. How many tags a quote carries is what it
+says, not how it is built.
+
+**The largest collection was not the result list.** With the quotes detected, they
+tied with the ten-tag sidebar beside them; on `books.toscrape.com` the fifty
+category links outnumber the twenty books. Each record now reports `link_only` —
+whether it says anything its links do not — and collections whose records carry
+text are preferred to collections of bare links. Within the preferred kind the
+largest wins, and only when one is largest: two equal lists are left uncompiled
+rather than guessed.
+
+**The template compiled and could not bind.** The capability's container is the
+common prefix of its members' structural paths, `div>div[2]>div[1]` on quotes. The
+resolver matched a path's first segment against every element of that tag in the
+document, so a short path was found again inside deeper divs (twice on the real
+page, eight times in the fixture) and the binding was refused as stale. It also read
+`div[2]` as the document's second div rather than body's. The extractor builds a
+path upward until it reaches `<body>` or a landmark; the resolver now starts from
+exactly those places, and falls back to the whole document only when nothing
+matches from them, which is the case for a path the extractor cut short at its
+ancestor limit. `tests/test_hostile_dom.py` holds both the listing and the binding
+against `fixtures/results-beside-tags/`; the binding test fails on the old
+resolver with `structural_path=8`.
+
+After the first two fixes the page looked unchanged — still nothing — and nothing said why.
+`Coordinator._bind_all` drops a template whose binding fails without a warning, so
+the coverage run, the report and the warnings were all silent. It was found by
+wrapping the binder in a probe. A refused binding should say why; that is not done
+yet.
+
+**Still wrong, and not fixable by the same means.** On Hacker News a story is three
+rows — title, subtext, spacer — and a one-record-per-row detector cannot see it as
+one record. The dominant group there is the thirty subtext rows, whose first link is
+a user name. Taking the title row instead would make the first link the upvote
+arrow, which is worse. Multi-row records need their own detection.
+
+**Measured on the public pages (2026-10-13).** Eighteen observed, sixteen with
+something to find, thirteen with a capability (81%; August: eleven of sixteen,
+69%), twenty-one refusals. `quotes.toscrape.com`, `docs.python.org` and
+`developer.mozilla.org` gained "open a result". `www.djangoproject.com` lost it:
+its only list outside navigation is the footer, and that binding is refused.
+`crates.io` lost everything because the observation returned zero elements, which
+is a separate problem and not investigated. Two compiled capabilities are wrong —
+the footer on `pypi.org` and the user names on Hacker News — and are listed in
+`comparison.md` rather than filtered: on a home page with no result list, any rule
+that removes one wrong list promotes the next one.

@@ -38,7 +38,7 @@ from wcc.identifiers import new_id
 from wcc.models.capability import CapabilityTemplate
 from wcc.models.common import Confidence
 from wcc.models.compilation import CompilationReport, RejectedCandidate
-from wcc.models.element import NormalizedElement
+from wcc.models.element import CollectionSnapshot, NormalizedElement
 from wcc.models.ir import Evidence, IRWarning
 from wcc.models.session import PageSnapshot
 
@@ -99,7 +99,7 @@ def compile_snapshot(snapshot: PageSnapshot) -> CompilationReport:
 
         templates.append(_form_template(snapshot, reading, compiled, used_names))
 
-    for navigation in _navigation_templates(snapshot.elements):
+    for navigation in _navigation_templates(snapshot.elements, snapshot.collections):
         templates.append(_navigation_template(snapshot, navigation, used_names))
 
     return CompilationReport(
@@ -110,9 +110,11 @@ def compile_snapshot(snapshot: PageSnapshot) -> CompilationReport:
     )
 
 
-def _navigation_templates(elements: list[NormalizedElement]) -> list[NavigationTemplate]:
+def _navigation_templates(
+    elements: list[NormalizedElement], collections: list[CollectionSnapshot]
+) -> list[NavigationTemplate]:
     found = list(build_pagination_templates(elements))
-    result_items = build_result_item_template(elements)
+    result_items = build_result_item_template(elements, collections)
     if result_items is not None:
         found.append(result_items)
     return found

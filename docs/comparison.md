@@ -6,7 +6,8 @@ worth nothing, so coverage comes first.
 ## Does it find anything on pages nobody here wrote?
 
 Twenty-two public pages, one visit each, `robots.txt` fetched and honoured per
-host. Observed **2026-08-11**.
+host. Observed **2026-10-13**; `books.toscrape.com` timed out on that run and was
+visited once more the same evening, and that visit is the one recorded.
 
 ```bash
 uv run python -m benchmarks.measure_coverage
@@ -15,23 +16,55 @@ uv run python -m benchmarks.measure_coverage
 | | |
 |---|---|
 | pages visited | 22 |
-| skipped by `robots.txt` | 4 |
+| skipped by `robots.txt` | 3 |
 | failed to load | 1 (`www.gnu.org`, timeout) |
-| **observed** | **17** |
+| **observed** | **18** |
 | had something a compiler could want | 16 |
-| **…and a capability was compiled** | **11 (69%)** |
+| **…and a capability was compiled** | **13 (81%)** |
 | state-changing candidates refused | **21** |
 
 The capabilities are real ones on real sites: search on `python.org`, `pypi.org`,
-`crates.io`, `djangoproject.com` and `openstreetmap.org`; result-opening on
-`arxiv.org`, `w3.org`, `debian.org`, `go.dev`; next-page on
+`djangoproject.com` and `openstreetmap.org`; result-opening on
+`books.toscrape.com`, `quotes.toscrape.com`, `arxiv.org`, `w3.org`, `debian.org`,
+`go.dev`, `docs.python.org` and `developer.mozilla.org`; next-page on
 `news.ycombinator.com`.
 
-**The 21 refusals matter as much as the 11 successes.** Twenty of them are the
+**The 21 refusals matter as much as the 13 successes.** Twenty of them are the
 "add to basket" forms on `books.toscrape.com` and one is a subscription form on
 `debian.org`. A low-level agent sees those as buttons and can press them. WCC
 classified them as state-changing, reported them, and did not offer them. That is
 the actual product; the token figures below are a side effect of it.
+
+### What changed since 2026-08-11
+
+The August run observed 17 pages and compiled something on 11. "Open a result"
+now comes from a detected collection rather than from the largest group of
+same-path links ([`progress.md`](progress.md), 2026-10-13), and that moved four
+pages:
+
+| Page | August | October | Reading |
+|---|---|---|---|
+| `quotes.toscrape.com` | nothing | open a quote | the miss below, fixed |
+| `docs.python.org` | nothing | open a section of the index | fixed by the same change |
+| `developer.mozilla.org` | nothing | open a recent contribution | the home page's list of ten |
+| `www.djangoproject.com` | search, open a result | search | the only list outside navigation is the footer; its binding is refused |
+
+`crates.io` went from search and open-a-result to nothing because the page
+yielded **zero** elements this time, against 29 in August. It is client-rendered
+and the observation, not the compiler, came back empty; why it did is not yet
+investigated.
+
+### Compiled, and wrong
+
+| Page | What "open a result" points at |
+|---|---|
+| `pypi.org` | three footer links (`trademarks`, …). The footer is a `div`, not a `<footer>`, so it is not excluded as navigation, and the home page has no result list to beat it |
+| `news.ycombinator.com` | the thirty user names. A story is three table rows and records are detected one row at a time; the title row's first link is the upvote arrow, so taking it would be worse |
+
+Neither changes the page count — both pages also have a correct capability — but
+an agent offered these would open the wrong thing. They are kept visible here
+rather than filtered by a rule that would only move the mistake: on `pypi.org` the
+next candidate is two paragraphs of introduction.
 
 ### Where it found nothing
 
@@ -41,14 +74,10 @@ are not the same event.
 | Page | Reading |
 |---|---|
 | `example.com` | correct — one paragraph and one link |
-| `developer.mozilla.org` | correct — the HTML delivered to a headless browser contains no `<form>` or `<input>` at all |
 | `www.rust-lang.org` | probably correct — no forms |
-| `docs.python.org` | **a real miss** — two forms detected, nothing compiled |
-| `quotes.toscrape.com` | **a real miss** — 55 links in a textbook repeated structure |
+| `webscraper.io` | **not investigated** — 41 elements, no forms, nothing compiled |
+| `crates.io` | **an observation failure** — zero elements, see above |
 | `huggingface.co` | **unexplained** — 130 elements, client-rendered, nothing compiled |
-
-Three genuine gaps out of seventeen pages, and they are being investigated rather
-than averaged away.
 
 # What one observation costs
 

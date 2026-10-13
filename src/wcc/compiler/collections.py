@@ -97,6 +97,7 @@ def build_collection(raw: dict[str, Any]) -> CollectionSnapshot:
                 identity=identity,
                 fields=fields,
                 activation_locator=_activation_locator(entry.get("activation_path")),
+                link_only=entry.get("link_only") is True,
             )
         )
 

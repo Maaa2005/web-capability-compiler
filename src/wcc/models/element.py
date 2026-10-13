@@ -138,6 +138,13 @@ class CollectionRecord(WCCModel):
     and not openable, and inventing a target for it — the container, the nearest
     link — would activate something the record does not name.
     """
+    link_only: bool = False
+    """Whether every piece of the record's text belongs to one of its links.
+
+    A tag, a category or a menu entry is only a link; a quote, a product or a story
+    says something around it. Both repeat on a page, and only the second is what
+    ``open_result_item`` means by a result (specification 7.11).
+    """
 
 
 class CollectionSnapshot(WCCModel):

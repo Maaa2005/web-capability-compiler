@@ -20,18 +20,16 @@ locate the *container* and let the argument choose the member:
     single links that declare ``rel``, so they need no parameter at all
 
 Finding the container without being told about it is the one piece of inference
-here. Result links are recognised as a repeated structure: two or more links
-outside any navigation landmark whose structural paths differ only in a sibling
-index. The container is their longest common path prefix. This is deliberately
-narrow — a header nav holding "Home" and "Products" has exactly that shape, which
-is why links inside navigation landmarks are excluded before the comparison rather
-than filtered out of the result.
+here. Result links are the activation links of a detected collection's records
+(specification 8.4), not links that merely repeat: tags, categories, bylines and
+per-item actions all repeat, and on real pages they routinely outnumber the
+results they belong to. The container is the links' longest common path prefix.
+Links inside navigation landmarks are excluded before the comparison, because a
+header nav holding "Home" and "Products" is still not a result list when it is
+detected as a collection.
 """
 
 from __future__ import annotations
-
-import re
-from collections import OrderedDict
 
 from wcc.compiler.risk import classify_plan, names_destructive_act
 from wcc.models.capability import (
@@ -41,10 +39,8 @@ from wcc.models.capability import (
     Risk,
 )
 from wcc.models.common import ActionType, Confidence, ControlType
-from wcc.models.element import NormalizedElement
+from wcc.models.element import CollectionSnapshot, NormalizedElement
 from wcc.models.locator import LocatorCandidate, LocatorChain, LocatorKind
-
-_INDEX = re.compile(r"\[\d+\]$")
 
 #: How many links must share a shape before it counts as a repeated structure.
 #: Two is the minimum that can repeat at all; requiring three would make a
@@ -93,11 +89,6 @@ def _segments(path: str) -> list[str]:
     return [part for part in path.split(">") if part]
 
 
-def _shape(path: str) -> str:
-    """The path with sibling indices removed, so two rows of a list look alike."""
-    return ">".join(_INDEX.sub("", part) for part in _segments(path))
-
-
 def common_prefix(paths: list[str]) -> str | None:
     """The deepest path every member shares, or ``None`` when they share nothing.
 
@@ -122,31 +113,59 @@ def _container_chain(path: str, role: str | None = None) -> LocatorChain:
     return LocatorChain(primary=candidate, candidates=[candidate])
 
 
-def find_result_links(elements: list[NormalizedElement]) -> list[NormalizedElement]:
-    """Links that repeat as a structure, which is what a result list is made of.
+def find_result_links(
+    elements: list[NormalizedElement], collections: list[CollectionSnapshot]
+) -> list[NormalizedElement]:
+    """The activation links of the collection that is the page's result list.
 
-    Returns the largest such group, and only when one group is largest. Two groups
-    of equal size is a page with two result lists, and picking either would attach
-    ``open_result_item`` to a collection the agent did not mean. That case is left
-    uncompiled rather than guessed.
+    A collection qualifies with two or more records whose activation link is a
+    non-pagination link outside any navigation landmark. Collections whose records
+    say something beyond their link are preferred to collections of bare links —
+    ten quotes over a ten-tag sidebar, twenty books over fifty category links —
+    and a page whose only repeated links are bare still gets a capability for
+    them, because a plain list of result links is a result list too.
+
+    Within the preferred kind the largest wins, and only when one is largest. Two
+    collections of equal size is a page with two result lists, and picking either
+    would attach ``open_result_item`` to a collection the agent did not mean. That
+    case is left uncompiled rather than guessed.
     """
-    grouped: OrderedDict[str, list[NormalizedElement]] = OrderedDict()
+    links: dict[str, NormalizedElement] = {}
     for element in elements:
         if element.control_type is not ControlType.LINK:
             continue
         if element.in_navigation or element.is_pagination_control:
             continue
         path = _structural_path(element)
-        if path is None or "[" not in path:
-            continue
-        grouped.setdefault(_shape(path), []).append(element)
+        if path is not None:
+            links[path] = element
 
-    groups = [members for members in grouped.values() if len(members) >= _MIN_REPEATED]
-    if not groups:
-        return []
-    largest = max(len(members) for members in groups)
-    winners = [members for members in groups if len(members) == largest]
-    return winners[0] if len(winners) == 1 else []
+    # Keyed by the member paths: a collection nested in another, or detected from
+    # two container levels, is one list and must not tie with itself.
+    candidates: dict[tuple[str, ...], bool] = {}
+    for collection in collections:
+        activatable = [r for r in collection.records if r.activation_locator is not None]
+        paths = tuple(
+            dict.fromkeys(
+                key
+                for record in activatable
+                if record.activation_locator is not None
+                and (key := record.activation_locator.primary.key) in links
+            )
+        )
+        if len(paths) < _MIN_REPEATED:
+            continue
+        bare = all(record.link_only for record in activatable)
+        candidates[paths] = candidates.get(paths, True) and bare
+
+    for bare in (False, True):
+        tier = [paths for paths, is_bare in candidates.items() if is_bare is bare]
+        if not tier:
+            continue
+        largest = max(len(paths) for paths in tier)
+        winners = [paths for paths in tier if len(paths) == largest]
+        return [links[path] for path in winners[0]] if len(winners) == 1 else []
+    return []
 
 
 def _worst(members: list[NormalizedElement]) -> NormalizedElement:
@@ -159,9 +178,11 @@ def _worst(members: list[NormalizedElement]) -> NormalizedElement:
     return next((m for m in members if names_destructive_act(m.resolved_label)), members[0])
 
 
-def build_result_item_template(elements: list[NormalizedElement]) -> NavigationTemplate | None:
+def build_result_item_template(
+    elements: list[NormalizedElement], collections: list[CollectionSnapshot]
+) -> NavigationTemplate | None:
     """The shared ``open_result_item`` capability of specification 7.11."""
-    links = find_result_links(elements)
+    links = find_result_links(elements, collections)
     if not links:
         return None
     paths = [p for p in (_structural_path(link) for link in links) if p]
