@@ -1845,3 +1845,23 @@ bind-time reclassification. Why the footer list reads as critical is not
 investigated yet. `tests/test_coordinator.py` holds the coordinator and view
 behaviour; the coordinator test fails on the old code with an `AttributeError`,
 there being nowhere for the reason to go.
+
+### Compile and bind rate a list by the same members (2026-10-14)
+
+The django footer read critical because the two sides of specification 7.10 rated
+different sets of links. Compilation rated `open_result_item` by the records that
+chose it — the first link of each footer column, five of them, all ordinary. The
+container it saved was their common prefix, `footer>div[1]>div>div`, and binding
+re-classifies by every link under that path: twenty-six, one of them "Donate to
+Django". The template saved low, re-classified critical, and refused on every visit.
+
+`container_representative` in `wcc/compiler/reclassify.py` is now the one rule for
+which member speaks for a container, and `build_result_item_template` rates the
+list through it. On `www.djangoproject.com` the template now saves critical and
+binds critical, with the reason naming the Donate link. Nothing runs that did not
+before: execution still re-classifies the one link being opened, so the footer's
+"About Django" opens and "Donate to Django" is refused as `risk_not_low`.
+
+That a footer is chosen as the result list at all is a separate question and is
+unchanged. `tests/test_navigation.py` holds the footer case; it fails on the old
+code, which rated the list low.

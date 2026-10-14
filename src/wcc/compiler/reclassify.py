@@ -92,6 +92,15 @@ def _signature(element: NormalizedElement) -> tuple[object, ...]:
 def _match_container(
     chain: LocatorChain, elements: list[NormalizedElement]
 ) -> NormalizedElement | None:
+    container = _structural_key(chain)
+    if container is None:
+        return None
+    return container_representative(container, elements)
+
+
+def container_representative(
+    container: str, elements: list[NormalizedElement]
+) -> NormalizedElement | None:
     """A representative of the members inside a container target, if they agree.
 
     Disagreement returns nothing, which refuses the bind. A result list that has
@@ -102,10 +111,14 @@ def _match_container(
     The representative is the worst member, not the first. A list of thirty
     products where the twenty-ninth link says "Delete account" is a list whose risk
     is that link's, and choosing by position would rate it by the first product's.
+
+    Public because compilation has to rate the container by these same members.
+    The compiler knows the records it chose, and the container path it saves can
+    hold more than those: on djangoproject.com the chosen records were the first
+    link of each footer column, the path was the footer, and "Donate to Django" sat
+    in a column below. Rated by its records the template saved low; re-classified
+    by its members it read critical, so it was compiled and then never bound.
     """
-    container = _structural_key(chain)
-    if container is None:
-        return None
     prefix = f"{container}>"
     members = [
         element

@@ -156,6 +156,25 @@ def test_one_list_detected_twice_does_not_tie_with_itself() -> None:
     assert find_result_links(results, collections) == results
 
 
+def test_a_list_is_rated_by_every_link_under_its_container_not_only_its_records() -> None:
+    """djangoproject.com: the records were each footer column's first link, and the
+    saved container was the whole footer, where "Donate to Django" sat lower down.
+
+    Rated by its records the list saved low; binding re-classifies by every member
+    under the container, read critical, and refused it on every visit.
+    """
+    heads = [
+        a_link("el_h1", "footer>div[1]>ul>li[1]>a", resolved_label="About Django"),
+        a_link("el_h2", "footer>div[2]>ul>li[1]>a", resolved_label="Sponsor Django"),
+    ]
+    below = a_link("el_d", "footer>div[2]>ul>li[2]>a", resolved_label="Donate to Django")
+    template = build_result_item_template([*heads, below], [a_list_of(heads)])
+    assert template is not None
+    assert template.locators["result_collection"].primary.key == "footer"
+    assert template.risk.level is RiskLevel.CRITICAL
+    assert "Donate to Django" in template.risk_reason
+
+
 def test_common_prefix_stops_where_the_siblings_differ() -> None:
     assert common_prefix(["main>ul>li[1]>a", "main>ul>li[2]>a"]) == "main>ul"
     assert common_prefix(["nav>a[1]", "main>ul>li[1]>a"]) is None

@@ -31,6 +31,7 @@ detected as a collection.
 
 from __future__ import annotations
 
+from wcc.compiler.reclassify import container_representative
 from wcc.compiler.risk import classify_plan, names_destructive_act
 from wcc.models.capability import (
     CapabilityCategory,
@@ -194,13 +195,13 @@ def build_result_item_template(
     plan = [PlanStep(action=ActionType.ACTIVATE, target_ref=ref, parameter="entity_id")]
     # Risk is classified against a member link rather than against the container,
     # because activating the container is not what happens: one of these links is.
-    # The members are homogeneous in structure by construction — every one is a
-    # non-pagination link outside any navigation landmark — but not in their text,
-    # so the member classified is the worst one rather than the first. Taking the
-    # first would rate a list by whichever product happens to head it today, and
-    # would disagree with the re-classification done at binding time, which asks
-    # the same question of every member.
-    risk, reason = classify_plan(CapabilityCategory.NAVIGATE, plan, {ref: _worst(links)})
+    # The member is the one binding will re-classify against — the worst of every
+    # element under the saved path, not only of the records that chose it — so the
+    # level saved here is the level binding reads back. When those members do not
+    # agree, binding refuses whatever is saved, and the records' worst link at
+    # least says why the list was offered.
+    representative = container_representative(container, elements) or _worst(links)
+    risk, reason = classify_plan(CapabilityCategory.NAVIGATE, plan, {ref: representative})
 
     return NavigationTemplate(
         name="open_result_item",
