@@ -31,6 +31,7 @@ from wcc.models.common import Confidence, WCCModel
 from wcc.models.compilation import CompilationReport
 from wcc.models.ir import Entity, IRWarning, PageIR
 from wcc.models.session import PageSnapshot, SessionInfo
+from wcc.runtime.coordinator import UnboundTemplate
 
 
 class SessionView(WCCModel):
@@ -206,6 +207,7 @@ def inspection_view(
     *,
     reused: bool,
     report: CompilationReport | None,
+    unbound: Sequence[UnboundTemplate] = (),
 ) -> InspectionView:
     warnings = summarize_warnings(ir.warnings)
     refused: list[RefusalView] = []
@@ -214,15 +216,22 @@ def inspection_view(
             RefusalView(
                 candidate_key=candidate.candidate_key,
                 code=candidate.code,
-                message=(
-                    candidate.message
-                    if len(candidate.message) <= MAX_REFUSAL_LENGTH
-                    else candidate.message[:MAX_REFUSAL_LENGTH] + "…"
-                ),
+                message=_short_refusal(candidate.message),
                 risk=candidate.risk,
             )
             for candidate in report.rejected
         ]
+    # A template that compiled and then failed to bind is a refusal too, made one
+    # step later: the page offers less than the compiler found, and an agent told
+    # nothing will look for the missing capability some other way.
+    refused += [
+        RefusalView(
+            candidate_key=template.template_id,
+            code="binding_refused",
+            message=_short_refusal(f"{template.name}: {template.reason}"),
+        )
+        for template in unbound
+    ]
     return InspectionView(
         session_id=snapshot.session_id,
         document_id=snapshot.document_id,
@@ -255,6 +264,12 @@ MAX_PROPERTIES = 6
 #: reasoning as the property bound above, applied to the other place where text
 #: written for a human is returned to a machine.
 MAX_REFUSAL_LENGTH = 160
+
+
+def _short_refusal(message: str) -> str:
+    if len(message) <= MAX_REFUSAL_LENGTH:
+        return message
+    return message[:MAX_REFUSAL_LENGTH] + "…"
 
 
 #: How many distinct warnings an inspection reports. They are deduplicated by code

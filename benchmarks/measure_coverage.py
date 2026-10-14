@@ -100,6 +100,10 @@ class SiteCoverage:
     capabilities: list[str] = field(default_factory=list)
     categories: list[str] = field(default_factory=list)
     refused_codes: list[str] = field(default_factory=list)
+    unbound: list[str] = field(default_factory=list)
+    """Compiled templates the binder refused, as ``name: reason``. Without these a
+    page whose only compiled capability failed to bind read as "nothing found"."""
+
     refused_above_low: int = 0
     """Refusals the compiler classified above ``low`` risk. These are the ones
     whose refusal is the point: a state-changing form that was reported rather
@@ -177,6 +181,7 @@ async def visit(url: str, note: str) -> SiteCoverage:
             result.capabilities.append(template.name)
             result.categories.append(str(template.category))
 
+        result.unbound = [f"{template.name}: {template.reason}" for template in inspection.unbound]
         if inspection.report is not None:
             for candidate in inspection.report.rejected:
                 result.refused_codes.append(candidate.code)
@@ -206,6 +211,9 @@ def report(sites: list[SiteCoverage]) -> str:
             lines.append(f"| `{site.host}` | {site.note} | — | — | error: {site.error[:60]} | — |")
             continue
         found = ", ".join(sorted(set(site.capabilities))) or "—"
+        if site.unbound:
+            names = sorted({entry.split(": ", 1)[0] for entry in site.unbound})
+            found += f" (not bound: {', '.join(names)})"
         lines.append(
             f"| `{site.host}` | {site.note} | {site.interactive_elements} | "
             f"{site.forms_seen} | {found} | {len(site.refused_codes)} "

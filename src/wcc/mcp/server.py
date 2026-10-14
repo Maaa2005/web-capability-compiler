@@ -171,6 +171,7 @@ def build_server(service: Service) -> MCPServer:
             _views(inspection),
             reused=inspection.reused,
             report=inspection.report,
+            unbound=inspection.unbound,
         )
 
     @server.tool(

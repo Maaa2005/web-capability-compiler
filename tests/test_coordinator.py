@@ -398,3 +398,55 @@ async def test_every_resolution_is_released_when_the_execution_ends(store: Store
     await coordinator.execute("sess_1", capability_id, {"keyword": "earbuds"})
 
     assert sorted(driver.released) == ["res_keyword", "res_search-button"]
+
+
+async def test_a_compiled_template_that_cannot_bind_says_why(store: Store) -> None:
+    """A page offering nothing must say whether nothing was found or nothing bound.
+
+    Both targets compile from the snapshot, but the driver can no longer find the
+    keyword field, so the fresh template is refused. Before this was reported the
+    inspection looked exactly like a page with nothing on it.
+    """
+    page = a_snapshot(
+        elements=[
+            an_element("el_input", control_type=ControlType.SEARCH),
+            a_submit("el_submit"),
+        ]
+    )
+    driver = FakeDriver([page])
+    coordinator = Coordinator(driver, store)
+    await coordinator.open_session(OpenSessionRequest(url=f"{ORIGIN}{ROUTE}"))
+    compiled = await coordinator.inspect_page("sess_1")
+    driver.unresolvable = {
+        chain.primary.key
+        for template in compiled.templates.values()
+        for chain in template.target_locators.values()
+    }
+
+    fresh = Coordinator(driver, store)
+    await fresh.open_session(OpenSessionRequest(url=f"{ORIGIN}{ROUTE}"))
+    inspection = await fresh.inspect_page("sess_1")
+
+    assert not inspection.capabilities
+    assert inspection.unbound, "a refused binding must be reported, not dropped"
+    refusal = inspection.unbound[0]
+    assert "stale" in refusal.reason
+    assert not refusal.reason.startswith("none of"), "the binder's wrapping is not the reason"
+
+
+def test_an_unbound_template_reaches_the_agent_as_a_refusal() -> None:
+    """The MCP answer lists it beside the compiler's refusals, bounded in length."""
+    from wcc.ir import build_page_ir
+    from wcc.mcp.views import MAX_REFUSAL_LENGTH, inspection_view
+    from wcc.runtime.coordinator import UnboundTemplate
+
+    page = a_page()
+    unbound = UnboundTemplate("tpl_1", "open_result_item", "the container is stale " * 20)
+
+    view = inspection_view(
+        page, build_page_ir(page), [], reused=False, report=None, unbound=[unbound]
+    )
+
+    assert [(r.candidate_key, r.code) for r in view.refused] == [("tpl_1", "binding_refused")]
+    assert view.refused[0].message.startswith("open_result_item: the container is stale")
+    assert len(view.refused[0].message) <= MAX_REFUSAL_LENGTH + 1

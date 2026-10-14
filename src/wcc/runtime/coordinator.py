@@ -129,6 +129,24 @@ class Inspection:
     templates: dict[str, CapabilityTemplate]
     reused: bool
     report: CompilationReport | None = None
+    unbound: list[UnboundTemplate] = field(default_factory=list)
+    """Templates this inspection tried to bind and could not, with the reason.
+
+    A compiled template that fails to bind leaves the page looking as if nothing
+    had been found, and without this the coverage run, the report and the agent
+    were all silent about why. Only the pass that produced ``capabilities`` is
+    reported: a stored template refusing before a recompile is the defined next
+    move of specification 7.10, not news.
+    """
+
+
+@dataclass(frozen=True)
+class UnboundTemplate:
+    """One template the binder refused on this page, and what it said."""
+
+    template_id: str
+    name: str
+    reason: str
 
 
 @dataclass
@@ -260,7 +278,7 @@ class Coordinator:
         state.templates = {}
 
         stored = self._store.find_templates(snapshot.origin, snapshot.normalized_route_pattern)
-        bindings = await self._bind_all(session_id, snapshot, stored)
+        bindings, unbound = await self._bind_all(session_id, snapshot, stored)
         if bindings:
             self._remember(state, bindings)
             return Inspection(
@@ -269,6 +287,7 @@ class Coordinator:
                 capabilities=[binding for binding, _ in bindings],
                 templates={template.template_id: template for _, template in bindings},
                 reused=True,
+                unbound=unbound,
             )
 
         report = compile_snapshot(snapshot)
@@ -278,7 +297,7 @@ class Coordinator:
         enriched = await self._enricher.enrich(snapshot, report.templates)
         report = report.model_copy(update={"templates": enriched})
         saved = [self._store.save_template(template) for template in enriched]
-        bindings = await self._bind_all(session_id, snapshot, saved)
+        bindings, unbound = await self._bind_all(session_id, snapshot, saved)
         self._remember(state, bindings)
         return Inspection(
             snapshot=snapshot,
@@ -287,6 +306,7 @@ class Coordinator:
             templates={template.template_id: template for _, template in bindings},
             reused=False,
             report=report,
+            unbound=unbound,
         )
 
     async def _bind_all(
@@ -294,25 +314,30 @@ class Coordinator:
         session_id: str,
         snapshot: PageSnapshot,
         templates: list[CapabilityTemplate],
-    ) -> list[tuple[BoundCapability, CapabilityTemplate]]:
+    ) -> tuple[list[tuple[BoundCapability, CapabilityTemplate]], list[UnboundTemplate]]:
         """Bind each template on its own, keeping the ones that hold.
 
         One template failing to bind says nothing about the next: they describe
         different capabilities on the same page. This is not the partial binding
         specification 7.10 step 6 forbids, which is about the targets *within* one
         template — and that rule is enforced inside the binder, where it belongs.
+        The ones that do not hold are returned with the binder's reason rather than
+        dropped, so the inspection can say why a page offers less than it compiled.
         """
         bound: list[tuple[BoundCapability, CapabilityTemplate]] = []
+        unbound: list[UnboundTemplate] = []
         for template in templates:
             try:
                 binding, matched = await self._binder.bind(session_id, snapshot, [template])
-            except BindingRefused:
+            except BindingRefused as refused:
                 self._store.record_bind_outcome(template.template_id, succeeded=False)
+                reason = refused.reasons.get(template.template_id, refused.message)
+                unbound.append(UnboundTemplate(template.template_id, template.name, reason))
                 continue
             self._store.record_bind_outcome(matched.template_id, succeeded=True)
             self._store.save_binding(binding)
             bound.append((binding, matched))
-        return bound
+        return bound, unbound
 
     def _remember(
         self,

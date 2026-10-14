@@ -41,6 +41,13 @@ class BindingRefused(DriverError):
 
     code = "binding_refused"
 
+    def __init__(self, message: str, reasons: dict[str, str] | None = None) -> None:
+        super().__init__(message)
+        #: Each candidate's own reason, by template ID. The message joins them for
+        #: a log; a caller reporting one template needs its reason without the
+        #: wrapping, which would otherwise spend a short display budget on itself.
+        self.reasons: dict[str, str] = reasons or {}
+
 
 @runtime_checkable
 class ElementResolver(Protocol):
@@ -134,17 +141,18 @@ class Binder:
                 f"no saved template for {snapshot.origin}{snapshot.normalized_route_pattern}"
             )
 
-        reasons: list[str] = []
+        reasons: dict[str, str] = {}
         for template in ordered:
             try:
                 binding = await self._bind_one(session_id, snapshot, template)
             except BindingRefused as refused:
-                reasons.append(f"{template.template_id}: {refused.message}")
+                reasons[template.template_id] = refused.message
                 continue
             return binding, template
 
+        joined = "; ".join(f"{template_id}: {reason}" for template_id, reason in reasons.items())
         raise BindingRefused(
-            f"none of {len(ordered)} candidate templates bound ({'; '.join(reasons)})"
+            f"none of {len(ordered)} candidate templates bound ({joined})", reasons
         )
 
     async def _bind_one(

@@ -1825,3 +1825,23 @@ is a separate problem and not investigated. Two compiled capabilities are wrong 
 the footer on `pypi.org` and the user names on Hacker News — and are listed in
 `comparison.md` rather than filtered: on a home page with no result list, any rule
 that removes one wrong list promotes the next one.
+
+### A refused binding says why (2026-10-14)
+
+`Coordinator._bind_all` now keeps each template it could not bind, with the
+binder's own reason, as `Inspection.unbound`. The MCP `inspect_page` answer lists
+them under `refused` with the code `binding_refused`, next to the compiler's
+refusals and under the same length bound, and the coverage run records them and
+marks them in its table as "not bound". The binder's aggregate message wraps each
+reason in "none of N candidate templates bound (…)"; `BindingRefused.reasons`
+carries the unwrapped reason per template so a short display budget is not spent
+on the wrapping. Only the pass that produced the capabilities is reported: a stored
+template refusing before a recompile is specification 7.10's defined next move.
+
+The first page it was pointed at corrected the record above. On
+`www.djangoproject.com` the footer's `open_result_item` is not refused for a
+stale target: the reason is `risk rose from low to critical on this page`, the
+bind-time reclassification. Why the footer list reads as critical is not
+investigated yet. `tests/test_coordinator.py` holds the coordinator and view
+behaviour; the coordinator test fails on the old code with an `AttributeError`,
+there being nowhere for the reason to go.
