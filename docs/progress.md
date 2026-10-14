@@ -1858,9 +1858,10 @@ Django". The template saved low, re-classified critical, and refused on every vi
 `container_representative` in `wcc/compiler/reclassify.py` is now the one rule for
 which member speaks for a container, and `build_result_item_template` rates the
 list through it. On `www.djangoproject.com` the template now saves critical and
-binds critical, with the reason naming the Donate link. Nothing runs that did not
-before: execution still re-classifies the one link being opened, so the footer's
-"About Django" opens and "Donate to Django" is refused as `risk_not_low`.
+binds critical, with the reason naming the Donate link. Nothing should run that did
+not before: `Coordinator._check_risk` re-classifies the one link being opened, so by
+that code "About Django" may open and "Donate to Django" is refused as
+`risk_not_low`. That is read from the code; no execution was run against the site.
 
 That a footer is chosen as the result list at all is a separate question and is
 unchanged. `tests/test_navigation.py` holds the footer case; it fails on the old
