@@ -2345,7 +2345,7 @@ measured page does.
 `ERR_NETWORK_IO_SUSPENDED`, and every run since 2026-10-13 has timed out. It is
 not the page. From the line these runs use, TCP to 209.51.188.116 on ports 80 and 443
 and ICMP all time out; a traceroute stops after `mass-ix.fsf.org`, the FSF's
-edge; nine outside probes (check-host.net, Tokyo among them) connect in under
+edge, and nothing comes back; nine outside probes (check-host.net, Tokyo among them) connect in under
 0.3 s; and `debian.org` answers from both. No hosts entry, firewall rule, proxy
 or VPN is involved here. Whether the FSF's edge drops this line or the return
 path fails cannot be told from outside. A diagnostic run with the page-load
@@ -2369,17 +2369,21 @@ before.
 `example.com` is now skipped too, for a reason that belongs to this machine.
 Its chain runs `Cloudflare TLS Issuing ECC CA 3` → `SSL.com TLS Transit ECC CA
 R2` → `SSL.com TLS ECC Root CA 2022`, cross-signed by `AAA Certificate
-Services`. The trust store Python uses here has neither root: the second was
-never in it, and the first was removed on purpose on 2026-10-22. The system
-trust store accepts the chain, and the browser that opens the page may too. The
+Services`. The trust store Python uses here has neither root: `AAA Certificate
+Services` was removed from it on purpose on 2026-10-22, and `SSL.com TLS ECC
+Root CA 2022` is not in it now. The system trust store accepts the chain, and
+the browser that opens the page may too. The
 old code read the verification failure as permission. Trusting another store
 for this one fetch would undo a deliberate choice, so the fetch still fails
 closed, and the reason names it first: "certificate not trusted on this
 machine".
 
-So the next full run will measure two fewer pages than the last, for local
-reasons, and its totals are not directly comparable with earlier runs. Neither
-is a regression or a change to the criteria.
+So the next full run's totals move for local reasons. Against
+`coverage-20261022-afterfooter.json`, pages skipped by `robots.txt` go from 3
+to 5, pages that failed to observe from 1 (`www.gnu.org`) to 0, and pages
+observed from 18 to 17. The observed page lost is `example.com`, the only one
+with nothing to find, so "13 of 17 compile something" is not moved by this
+change. Neither skip is a regression or a change to the criteria.
 
 Two options make a narrowed run possible: `--only HOST` measures the pages on
 one host, and `--load-timeout-ms N` sets the page-load limit. Such a run is a
