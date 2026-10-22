@@ -2241,5 +2241,17 @@ collections by structural path, which stops at the `<footer>` and so cannot say
 what follows it; knowing would take a new field on elements or records, a
 schema change (rule 7) made for one page.
 
+The two partial lists were diagnosed from the live pages and not changed. Both
+are one list laid out as several sibling lists, and a collection is one
+container. `docs.python.org` puts its twelve documentation sections in two
+`<ul>` columns of six; the first column's "What's new" entry carries a second
+link, so only five of its items share a shape, and the second column, six,
+wins. `arxiv.org` puts its subjects under eight `<h2>` headings, one `<ul>`
+each; Physics has thirteen archives and the other seven headings one each, so
+Physics is the list, and eleven of its thirteen are found. Joining sibling
+lists would read both right, but a heading over a list, repeated, is also how a
+footer lays out its columns, which the rules depend on telling apart from a
+result list. It is left for a change that can be measured against that.
+
 Still open: `pypi.org`'s legal notice; `arxiv.org` and `docs.python.org`, where
 only part of the right list is found.
