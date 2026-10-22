@@ -84,6 +84,8 @@ class ModelReply:
     input_tokens: int | None
     output_tokens: int | None
     raw_content: list[dict[str, Any]]
+    model: str | None = None
+    """The snapshot the provider says answered, which an alias does not name."""
 
 
 @dataclass
@@ -94,10 +96,42 @@ class LoopResult:
     duration_seconds: float
     final_text: str
     stopped_because: str
+    served_model: str | None = None
+    """The dated snapshot that answered, or ``None`` if the provider never said.
+
+    Specification 14.2 fixes the version as well as the model. A run is asked for
+    by alias, and the alias is what a later reader cannot pin down: it is moved
+    to each new snapshot as it ships.
+    """
 
     @property
     def turn_count(self) -> int:
         return len(self.turns)
+
+
+class Agent(Protocol):
+    """Whatever drives an arm through one task: this loop, or Claude Code's.
+
+    The runner holds an agent rather than a client so that the provider can change
+    without the arms, the tasks or the verification noticing. Both implementations
+    use :data:`SYSTEM_PROMPT` and :data:`MAX_TURNS`, and both hand the arm's tool
+    definitions to the model unchanged.
+    """
+
+    model: str
+
+    async def run(self, arm: Arm, prompt: str) -> LoopResult: ...
+
+
+class LoopAgent:
+    """The API path: :func:`run_loop` over one :class:`ModelClient`."""
+
+    def __init__(self, client: ModelClient) -> None:
+        self.client = client
+        self.model = client.model
+
+    async def run(self, arm: Arm, prompt: str) -> LoopResult:
+        return await run_loop(self.client, arm, prompt)
 
 
 async def run_loop(client: ModelClient, arm: Arm, prompt: str) -> LoopResult:
@@ -108,10 +142,13 @@ async def run_loop(client: ModelClient, arm: Arm, prompt: str) -> LoopResult:
     tool_calls = 0
     started = time.monotonic()
     stopped_because = "max_turns"
+    served: set[str] = set()
 
     for _ in range(MAX_TURNS):
         reply = await client.respond(SYSTEM_PROMPT, messages, arm.tools())
         usage = usage.plus(reply.input_tokens, reply.output_tokens)
+        if reply.model:
+            served.add(reply.model)
         turns.append(
             Turn(
                 stop_reason=reply.stop_reason,
@@ -153,4 +190,7 @@ async def run_loop(client: ModelClient, arm: Arm, prompt: str) -> LoopResult:
         duration_seconds=round(time.monotonic() - started, 3),
         final_text=turns[-1].text if turns else "",
         stopped_because=stopped_because,
+        # All of them if they differ, so the record shows it rather than one
+        # snapshot standing in for the run.
+        served_model=", ".join(sorted(served)) or None,
     )

@@ -36,6 +36,7 @@ dev = [
     "pyright>=1.1.380",
     "pytest-asyncio>=1.4.0",
     "tiktoken>=0.13.0",
+    "claude-agent-sdk>=0.2.172",
 ]
 
 [tool.ruff]

@@ -13,13 +13,17 @@ actually work.
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
+from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 import pytest
-from benchmarks.agent_loop import ModelReply, ToolRequest, run_loop
+from benchmarks.agent_loop import Arm, LoopResult, ModelReply, ToolRequest, run_loop
 from benchmarks.arms import BaselineArm
-from benchmarks.metrics import Run, Usage, comparison_table, summarize, write_runs
+from benchmarks.metrics import Run, Usage, comparison_table, report, summarize, write_runs
+from benchmarks.run import run_one
 from benchmarks.tasks import TASKS
 from playwright.async_api import Page, async_playwright
 
@@ -90,6 +94,15 @@ async def test_the_loop_stops_when_the_model_stops_asking_for_tools(page: Page) 
     assert result.turn_count == 2
     assert result.final_text == "DONE"
     assert result.stopped_because == "end_turn"
+
+
+async def test_the_loop_records_the_model_that_answered() -> None:
+    """The provider names the snapshot it served; specification 14.2 wants the version."""
+    client = ScriptedClient([replace(_done(), model="scripted-20260101")])
+
+    result = await run_loop(client, _NoTools(), "anything")
+
+    assert result.served_model == "scripted-20260101"
 
 
 async def test_a_tool_that_raises_is_handed_back_rather_than_ending_the_run(
@@ -176,9 +189,18 @@ async def test_a_stale_ref_is_reported_rather_than_clicking_something_else(
 # -- metrics --------------------------------------------------------------
 
 
-def _run(arm: str, tokens: int, *, succeeded: bool = True, reported: bool = True) -> Run:
+def _run(
+    arm: str,
+    tokens: int,
+    *,
+    succeeded: bool = True,
+    reported: bool = True,
+    task_id: str = "search_products",
+    reused: list[bool] | None = None,
+    served_model: str | None = "scripted-v1",
+) -> Run:
     return Run(
-        task_id="search_products",
+        task_id=task_id,
         arm=arm,
         attempt=1,
         model="scripted",
@@ -190,6 +212,8 @@ def _run(arm: str, tokens: int, *, succeeded: bool = True, reported: bool = True
         succeeded=succeeded,
         input_value="wireless earbuds",
         usage=Usage(input_tokens=tokens, output_tokens=0, reported=reported),
+        reused=reused or [],
+        served_model=served_model,
     )
 
 
@@ -229,6 +253,30 @@ def test_the_table_reports_the_arms_independently() -> None:
     assert "%" not in table
 
 
+def test_the_report_gives_each_task_its_own_table() -> None:
+    """The small and large pages exist to be compared; one pooled median hides that."""
+    runs = [
+        _run("baseline", 10_000, task_id="small"),
+        _run("baseline", 30_000, task_id="large"),
+    ]
+
+    text = report(runs)
+
+    assert "small" in text and "large" in text
+    assert "| 10000 |" in text and "| 30000 |" in text
+    assert "20000" not in text
+
+
+def test_the_report_says_how_many_warm_runs_were_warm() -> None:
+    """Specification 14.1: a warm run that recompiled is not a warm measurement."""
+    runs = [
+        _run("wcc_warm", 2_000, reused=[True, False]),
+        _run("wcc_warm", 9_000, reused=[False]),
+    ]
+
+    assert "1 of 2 wcc_warm runs bound a stored template" in report(runs)
+
+
 def test_every_raw_run_is_written_including_the_failures(tmp_path: Any) -> None:
     """Specification 14.4 publishes raw logs, which is what makes a claim checkable."""
     import json
@@ -257,6 +305,217 @@ def test_both_arms_are_asked_the_same_thing() -> None:
     """14.2 permits differing tool descriptions and nothing else."""
     for task in TASKS:
         assert task.prompt("x") == task.instruction.format(input="x")
+
+
+# -- verification ---------------------------------------------------------
+
+TASK = {task.task_id: task for task in TASKS}
+
+
+class Visits:
+    """Goes straight to a page through the arm's own tools, then says DONE.
+
+    No model, so what is under test is the verdict alone: whatever the agent says,
+    the fixture decides.
+    """
+
+    model = "scripted"
+
+    def __init__(
+        self,
+        url: str | None,
+        *,
+        close: bool = False,
+        inspect: bool = False,
+        stopped: str = "end_turn",
+    ) -> None:
+        self.url = url
+        self.close = close
+        self.inspect = inspect
+        self.stopped = stopped
+
+    async def run(self, arm: Arm, prompt: str) -> LoopResult:
+        if self.url is not None and arm.name == "baseline":
+            await arm.call("browser_navigate", {"url": self.url})
+        elif self.url is not None:
+            session = json.loads(await arm.call("open_session", {"url": self.url}))
+            if self.inspect:
+                await arm.call("inspect_page", {"session_id": session["session_id"]})
+            if self.close:
+                await arm.call("close_session", {"session_id": session["session_id"]})
+        return LoopResult(
+            turns=[],
+            usage=Usage(reported=True),
+            tool_calls=0,
+            duration_seconds=0.0,
+            final_text="DONE",
+            stopped_because=self.stopped,
+            served_model="scripted-20260101",
+        )
+
+
+async def _verdict(agent: Visits, task_id: str, arm: str, base: str, tmp_path: Path) -> Run:
+    return await run_one(agent, TASK[task_id], arm, 1, base, tmp_path)
+
+
+@pytest.mark.parametrize("arm", ["baseline", "wcc_cold"])
+async def test_a_search_for_the_asked_value_is_verified(
+    arm: str, fixture_server: str, tmp_path: Path
+) -> None:
+    url = f"{fixture_server}/product-list/?keyword=Wireless+Earbuds"
+
+    run = await _verdict(Visits(url), "search_small_page", arm, fixture_server, tmp_path)
+
+    assert run.succeeded, run.failure_reason
+
+
+@pytest.mark.parametrize("arm", ["baseline", "wcc_cold"])
+async def test_a_search_for_something_else_is_not_verified(
+    arm: str, fixture_server: str, tmp_path: Path
+) -> None:
+    """The fixture shows the same three results for any query, so the query is the check."""
+    url = f"{fixture_server}/product-list/?keyword=bluetooth+speaker"
+
+    run = await _verdict(Visits(url), "search_small_page", arm, fixture_server, tmp_path)
+
+    assert not run.succeeded
+    assert "wireless earbuds" in (run.failure_reason or "")
+
+
+@pytest.mark.parametrize("arm", ["baseline", "wcc_cold"])
+async def test_staying_on_a_page_that_already_says_results_is_not_verified(
+    arm: str, fixture_server: str, tmp_path: Path
+) -> None:
+    """The large catalog shows "150 results" before anyone has searched."""
+    url = f"{fixture_server}/large-catalog/"
+
+    run = await _verdict(Visits(url), "search_large_page", arm, fixture_server, tmp_path)
+
+    assert not run.succeeded
+
+
+async def test_markup_does_not_pass_for_what_the_page_shows(
+    fixture_server: str, tmp_path: Path
+) -> None:
+    """The address is right, but "results" is only in this page's title and a class name."""
+    url = f"{fixture_server}/pagination-page/?keyword=wireless+earbuds"
+
+    run = await _verdict(Visits(url), "search_small_page", "baseline", fixture_server, tmp_path)
+
+    assert not run.succeeded
+    assert "results" in (run.failure_reason or "")
+
+
+async def test_a_session_the_agent_closed_is_judged_as_it_was_left(
+    fixture_server: str, tmp_path: Path
+) -> None:
+    url = f"{fixture_server}/product-list/?keyword=wireless+earbuds"
+
+    run = await _verdict(
+        Visits(url, close=True), "search_small_page", "wcc_cold", fixture_server, tmp_path
+    )
+
+    assert run.succeeded, run.failure_reason
+
+
+async def test_a_run_that_never_opened_a_page_says_so(fixture_server: str, tmp_path: Path) -> None:
+    run = await _verdict(Visits(None), "search_small_page", "wcc_cold", fixture_server, tmp_path)
+
+    assert not run.succeeded
+    assert run.failure_reason == "the run never opened a page"
+
+
+async def test_a_run_that_ran_out_of_turns_says_so(fixture_server: str, tmp_path: Path) -> None:
+    """Whether the page was right is the verifier's call; why the loop ended is kept beside it."""
+    agent = Visits(f"{fixture_server}/search-page/", stopped="max_turns")
+
+    run = await _verdict(agent, "search_small_page", "baseline", fixture_server, tmp_path)
+
+    assert not run.succeeded
+    assert run.to_json()["stopped_because"] == "max_turns"
+
+
+def test_the_report_names_the_snapshot_every_run_was_answered_by() -> None:
+    runs = [_run("baseline", 100), _run("wcc_cold", 100, task_id="other")]
+
+    assert "Every run was answered by scripted-v1." in report(runs)
+
+
+def test_the_report_flags_runs_that_were_not_held_to_one_snapshot() -> None:
+    """Specification 14.2 holds the version fixed across the whole benchmark, not
+    only within a run — so a second snapshot, or a run that did not say, is stated."""
+    runs = [
+        _run("baseline", 100),
+        _run("wcc_cold", 100, served_model="scripted-v2"),
+        _run("wcc_warm", 100, served_model=None),
+    ]
+
+    printed = report(runs)
+
+    assert "More than one snapshot answered: scripted-v1, scripted-v2." in printed
+    assert "1 run did not record which snapshot answered." in printed
+    assert "Every run was answered by" not in printed
+
+
+async def test_the_warm_run_is_recorded_as_reusing_what_the_cold_run_persisted(
+    fixture_server: str, tmp_path: Path
+) -> None:
+    """Specification 14.1: warm means a stored template was bound, not recompiled.
+
+    The warm column measures nothing unless that happened, so each run records it
+    per inspection rather than the report assuming it from the arm's name.
+    """
+    agent = Visits(f"{fixture_server}/large-catalog/", inspect=True)
+
+    cold = await _verdict(agent, "search_large_page", "wcc_cold", fixture_server, tmp_path)
+    warm = await _verdict(agent, "search_large_page", "wcc_warm", fixture_server, tmp_path)
+
+    assert cold.to_json()["reused"] == [False]
+    assert warm.to_json()["reused"] == [True]
+
+
+async def test_the_baseline_records_no_inspections(fixture_server: str, tmp_path: Path) -> None:
+    agent = Visits(f"{fixture_server}/large-catalog/", inspect=True)
+
+    run = await _verdict(agent, "search_large_page", "baseline", fixture_server, tmp_path)
+
+    assert run.to_json()["reused"] == []
+
+
+async def test_a_run_names_the_snapshot_that_answered(fixture_server: str, tmp_path: Path) -> None:
+    """Asked for by alias, recorded by version — the alias can move between runs."""
+    run = await _verdict(
+        Visits(f"{fixture_server}/search-page/"),
+        "search_small_page",
+        "baseline",
+        fixture_server,
+        tmp_path,
+    )
+
+    assert run.to_json()["model"] == "scripted"
+    assert run.to_json()["served_model"] == "scripted-20260101"
+
+
+@pytest.mark.parametrize(
+    ("query", "verified"),
+    [
+        ("keyword=audio", True),
+        ("keyword=&brand=audio", False),
+        ("keyword=&brand=a", False),
+        ("", False),
+    ],
+    ids=["the-keyword", "the-wrong-control", "another-value", "nothing"],
+)
+@pytest.mark.parametrize("arm", ["baseline", "wcc_cold"])
+async def test_a_filter_counts_only_if_its_keyword_reached_the_address(
+    arm: str, query: str, verified: bool, fixture_server: str, tmp_path: Path
+) -> None:
+    """The filter page's only free-text control is its keyword box."""
+    url = f"{fixture_server}/product-list/?{query}"
+
+    run = await _verdict(Visits(url), "filter_results", arm, fixture_server, tmp_path)
+
+    assert run.succeeded is verified, run.failure_reason
 
 
 # -- the claim, as a test -------------------------------------------------

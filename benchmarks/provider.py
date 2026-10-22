@@ -73,4 +73,5 @@ class AnthropicModelClient:
             input_tokens=getattr(usage, "input_tokens", None),
             output_tokens=getattr(usage, "output_tokens", None),
             raw_content=[block.model_dump() for block in message.content],
+            model=message.model,
         )

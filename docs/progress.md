@@ -1979,3 +1979,100 @@ refuses a wrong target on `www.openstreetmap.org` (`Fastly`, `Terms of Use`) and
 on `huggingface.co` (its sidebar's task filters), which answers the previous
 section's open question about huggingface: the refusal is right, the target was
 not.
+
+### The benchmark, on a subscription (2026-10-22)
+
+The paid run was declined in August, and the agent benchmark has waited on a key
+since. It did not need one. Claude Code signed in to a subscription reports the
+provider's usage metadata for every request — the same fields specification 14.3
+asks for — so `uv run python -m benchmarks.run` now drives both arms through it
+by default (`benchmarks/subscription.py`), and `--provider api` keeps the key
+path. Tasks, arms, system prompt, tool definitions and verification are shared;
+only the loop changes hands.
+
+What that costs in control is stated rather than hidden:
+
+- **Claude Code owns the loop.** It adds a fixed preamble to every request.
+  `--calibrate` measured one near-empty request at 539–541 input and 142–145
+  output tokens. It is the same for every arm and scales with turns, not tool
+  surface. With each arm's tools, the first request of a run read 1,397 input
+  tokens on the baseline and about 1,533 on WCC.
+- **The SDK checks a tool call against its schema before the arm sees it.** The
+  API path would hand a malformed call to the arm, which fails in its own words.
+  Either way the model reads an error and the call is counted, so such calls are
+  recognised and counted rather than lost.
+- **Requests Claude Code makes on its own initiative are switched off.** The first
+  smoke run showed a second model in the usage: Claude Code titles the session
+  with a separate request. `CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1` removes it, and
+  `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` keeps it from reading a memory directory
+  outside the run. Two background steps remain after the answer and are not in
+  the reported usage: a side query and a post-turn summary, about 1.6 seconds,
+  the same on every arm. They add to the measured seconds and not to the tokens.
+- **Isolation is checked, not assumed.** Each run gets a fresh empty working
+  directory, and refuses to start unless the session says subscription sign-in
+  (`apiKeySource` of `none`), the requested model, and no tools beyond the
+  arm's. Settings, hooks, memory, slash commands and session persistence are off.
+- **Turns are read from the stream, and must add up.** Claude Code repeats a
+  request's starting usage on each content block, so a turn's counts come from
+  that request's own start and end events. A run whose turns do not sum to its
+  total is refused: the difference would be a request the benchmark did not make.
+
+Smoke runs, one attempt per arm, before anything was frozen, found four things
+wrong with the harness. None of these runs is a result.
+
+**Verification read the wrong thing.** The fixture's results pages are static:
+they show the same records whatever was searched for, and the large catalog says
+"150 results" before any search. Text alone proved only that some results page
+was reached. A run now passes only if the task's input reached the address's
+query parameter and the visible text — `inner_text`, not markup — shows the
+expected word. Both arms are read the same way: the WCC arm through the driver's
+new `page_text`, the baseline through Playwright, and a WCC session the agent
+closed is read as it was left.
+
+**One task asked for something the page did not have.** `filter_results` asked
+for "the {input} category". The filter page has a keyword box and a brand select
+and no category. The baseline spent all 25 turns looking for it. The task now
+asks for products matching the input, and the check is the `keyword` parameter.
+The fixture was not changed, since its measured sizes are published above.
+
+**Running out of turns crashed the run.** On a failed result the SDK yields the
+result message and then raises `ResultError` when Claude Code exits non-zero. The
+harness meant to record a max-turns run as the arm's failure and never got there.
+The test double now raises as the real SDK does, which failed four tests before
+the fix. A real run with the limit set to two confirmed each arm is recorded and
+the run goes on. Each run also records why its loop ended (`stopped_because`),
+beside the verdict rather than inside it.
+
+**Nothing showed whether warm was warm.** On the large page the warm run cost more
+than the cold one. Specification 14.1 defines warm as binding a stored template
+without compiling. Each run now records, per `inspect_page`, whether stored
+templates were bound (`reused`). A test on the real fixture and store shows the
+cold run compiles and the warm one binds. The printed report gives one table per
+task — pooling the six-control page with the 150-product one would hide what the
+pair exists to show — and under it, how many warm runs bound a template on their
+first inspection.
+
+Smoke totals, in tokens, one run each, for scale only:
+
+| Task | baseline | wcc_cold | wcc_warm |
+|---|---:|---:|---:|
+| search, 6 controls | 9,725 | 10,132 | 9,890 |
+| search, 150 products | 35,570 | 10,686 | 15,843 |
+| filter, reworded | 25,798 | 9,848 | 9,972 |
+
+The warm run on the large page called `inspect_page` again on the results page
+after searching. That run predates `reused`, so whether it compiled there was not
+recorded. It probably did: the results page is a different route, the cold run
+never inspected it, and each attempt starts from an empty directory. If so, runs
+of record that do the same will show `reused` as `[True, False]`. Either way it is
+the model's choice of steps, and the runs of record will show how often it happens.
+
+**The record named the alias, not the version.** Specification 14.2 fixes the
+model *and* its version, and the smoke record said only `claude-haiku-4-5` — an
+alias that moves to each new snapshot. Each run now records the snapshot that
+answered (`served_model`), read from Claude Code's messages on the subscription
+and from the response on the API. A run in which two snapshots answered is
+refused. Each run can only check itself, so the printed report also names the
+snapshot across all runs, and says so if there was more than one or a run did not
+record it. A one-attempt run on the small page afterwards recorded
+`claude-haiku-4-5-20251001` on all three arms.

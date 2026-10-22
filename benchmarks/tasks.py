@@ -46,7 +46,14 @@ class Task:
     forbids merging that run into a token-reduction figure.
     """
 
-    expects_url_contains: str | None = None
+    input_parameter: str | None = None
+    """The query parameter the input value must have reached, or ``None`` for any.
+
+    Every fixture results page is static — it shows the same records whatever was
+    searched for — so the text alone says only that a results page was reached.
+    The address is what records *which* search was made, and a run that searched
+    for something other than it was asked to has not done the task.
+    """
 
     def prompt(self, value: str) -> str:
         return self.instruction.format(input=value)
@@ -77,7 +84,7 @@ TASKS: tuple[Task, ...] = (
             "When the results are showing, reply with the word DONE and nothing else."
         ),
         expects_text="results",
-        expects_url_contains="keyword=",
+        input_parameter="keyword",
     ),
     Task(
         task_id="search_large_page",
@@ -89,7 +96,7 @@ TASKS: tuple[Task, ...] = (
             "When the results are showing, reply with the word DONE and nothing else."
         ),
         expects_text="results",
-        expects_url_contains="keyword=",
+        input_parameter="keyword",
     ),
     Task(
         task_id="filter_results",
@@ -97,9 +104,15 @@ TASKS: tuple[Task, ...] = (
         cold_input="audio",
         warm_input="wearables",
         instruction=(
-            "Narrow the products on this page to the {input} category. "
+            "Use this page's filter to show only products matching {input}. "
             "When the filter has been applied, reply with the word DONE and nothing else."
         ),
         expects_text="results",
+        # The wording asks only for what the page offers: a keyword box and a
+        # brand select, and no category control. An earlier wording asked for
+        # "the {input} category", and in a smoke run before any run of record
+        # the baseline spent all 25 turns looking for a control that is not
+        # there — a measurement of the task's wording, not of either arm.
+        input_parameter="keyword",
     ),
 )

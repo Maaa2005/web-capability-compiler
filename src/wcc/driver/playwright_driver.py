@@ -678,6 +678,17 @@ class PlaywrightDriver:
             warnings=warnings,
         )
 
+    async def page_text(self, session_id: str) -> tuple[str, str]:
+        """The current address and the text a reader would see on the page.
+
+        For checking an outcome from outside the agent — the benchmark's verifier
+        — and never handed to a model. Rendered text rather than markup, so that a
+        class name or a title cannot pass for content. Form values are not part of
+        it: an input's value is not rendered text.
+        """
+        session = self._session(session_id)
+        return session.page.url, await session.page.inner_text("body")
+
     def _apply_display_limits(
         self, collections: list[CollectionSnapshot]
     ) -> tuple[list[CollectionSnapshot], list[str]]:

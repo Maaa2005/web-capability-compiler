@@ -14,6 +14,8 @@ build/
 
 # Benchmark output is regenerated; committed results live under benchmarks/results/.
 benchmarks/results/*.tmp
+# A smoke run checks the harness on one task; it is not a result of record.
+benchmarks/results/smoke/
 
 .DS_Store
 .reviews/

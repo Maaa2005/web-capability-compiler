@@ -21,7 +21,7 @@ three is one bad network round-trip away from being a different number.
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from statistics import median
@@ -42,6 +42,14 @@ class Usage:
     Carried rather than inferred from zeros, because zero is also what a run that
     made no calls would report, and those two must not summarize alike.
     """
+    cache_creation_input_tokens: int = 0
+    cache_read_input_tokens: int = 0
+    """How much of ``input_tokens`` was written to or read from a prompt cache.
+
+    A breakdown, not an addition: ``input_tokens`` already counts them. The
+    provider reports cached input in separate fields, and a total that left them
+    out would credit an arm for the caching rather than for what the model read.
+    """
 
     @property
     def total_tokens(self) -> int:
@@ -49,11 +57,11 @@ class Usage:
 
     def plus(self, input_tokens: int | None, output_tokens: int | None) -> Usage:
         if input_tokens is None or output_tokens is None:
-            return Usage(self.input_tokens, self.output_tokens, reported=False)
-        return Usage(
-            self.input_tokens + input_tokens,
-            self.output_tokens + output_tokens,
-            reported=self.reported,
+            return replace(self, reported=False)
+        return replace(
+            self,
+            input_tokens=self.input_tokens + input_tokens,
+            output_tokens=self.output_tokens + output_tokens,
         )
 
 
@@ -76,8 +84,24 @@ class Run:
     turns: int
     succeeded: bool
     input_value: str
+    served_model: str | None = None
+    """The snapshot that answered. ``model`` is what was asked for, usually an
+    alias, and an alias is moved to each new snapshot as it ships — so the
+    version specification 14.2 fixes is this field, not that one."""
+
     usage: Usage = field(default_factory=Usage)
     failure_reason: str | None = None
+    stopped_because: str | None = None
+    """How the agent's loop ended — ``end_turn``, or ``max_turns`` when it ran out.
+    Kept beside the verdict rather than folded into it: a run can end on time and
+    have done the wrong thing, or run out of turns with the page already right."""
+
+    reused: list[bool] = field(default_factory=list)
+    """Per ``inspect_page``, in order, whether stored templates were bound rather
+    than the page compiled. Empty for the baseline, which has no such call. A
+    ``wcc_warm`` run whose first entry is ``False`` was not warm, and the record
+    shows it rather than the arm's name vouching for it."""
+
     unauthorized_executions: int = 0
     """Executions above ``low`` risk. Specification 14.4 requires this to be zero,
     so it is counted rather than assumed; a benchmark that did not look could not
@@ -169,3 +193,52 @@ def comparison_table(runs: list[Run]) -> str:
             f"{summary.median_tool_calls} | {summary.median_seconds} |"
         )
     return "\n".join(lines)
+
+
+def report(runs: list[Run]) -> str:
+    """One table per task, in the order the tasks ran.
+
+    Pooling tasks into one median would average the six-control page with the
+    large catalog — the two exist precisely so the saving can be seen to depend
+    on page size, and a pooled figure would answer neither.
+
+    Under each table, how many ``wcc_warm`` runs bound a stored template on their
+    first inspection. Specification 14.1 defines warm that way, so the count is
+    printed beside the figure rather than taken on trust from the arm's name.
+
+    Last, the snapshot that answered. Specification 14.2 fixes the version across
+    the whole benchmark, and each run can only check its own — so a second
+    snapshot, or a run that never said, is stated here rather than left for a
+    reader to find in the raw records.
+    """
+    sections: list[str] = []
+    for task_id in dict.fromkeys(run.task_id for run in runs):
+        task_runs = [run for run in runs if run.task_id == task_id]
+        section = f"### {task_id}\n\n{comparison_table(task_runs)}"
+        warm = [run for run in task_runs if run.arm == "wcc_warm"]
+        if warm:
+            bound = sum(1 for run in warm if run.reused[:1] == [True])
+            section += (
+                f"\n\n{bound} of {len(warm)} wcc_warm runs bound a stored template "
+                "on their first inspection."
+            )
+        sections.append(section)
+    sections.append(_snapshots(runs))
+    return "\n\n".join(sections)
+
+
+def _snapshots(runs: list[Run]) -> str:
+    served = sorted({run.served_model for run in runs if run.served_model})
+    unnamed = sum(1 for run in runs if not run.served_model)
+    lines: list[str] = []
+    if len(served) == 1 and not unnamed:
+        lines.append(f"Every run was answered by {served[0]}.")
+    elif len(served) > 1:
+        lines.append(f"More than one snapshot answered: {', '.join(served)}.")
+    elif served:
+        lines.append(f"Answered by {served[0]}.")
+    if unnamed:
+        lines.append(
+            f"{unnamed} run{'' if unnamed == 1 else 's'} did not record which snapshot answered."
+        )
+    return " ".join(lines)

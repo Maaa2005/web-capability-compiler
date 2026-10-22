@@ -17,9 +17,11 @@ only a claim worth making if something counted.
 
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass, field
 from typing import Any
 
+from wcc.driver.base import DriverError
 from wcc.driver.playwright_driver import PlaywrightDriver
 from wcc.mcp.views import capability_view, inspection_view, session_view
 from wcc.models.capability import RiskLevel, risk_order
@@ -94,11 +96,32 @@ class WccArm:
     coordinator: Coordinator
     driver: PlaywrightDriver
     """Held only to take the snapshot ``open_session`` reports, exactly as
-    :mod:`wcc.mcp.server` does. Nothing here drives the page directly."""
+    :mod:`wcc.mcp.server` does, and to read the page for the verifier. Nothing
+    here drives the page directly."""
 
     name: str = "wcc"
     unauthorized: int = 0
     inspections: dict[str, Inspection] = field(default_factory=dict)
+    reused: list[bool] = field(default_factory=list)
+    """Whether each ``inspect_page``, in call order, bound stored templates.
+
+    Kept for the record rather than inferred from the arm's name: a warm run is
+    only warm if its first inspection here says so (specification 14.1).
+    """
+    opened: list[str] = field(default_factory=list)
+    closed_pages: dict[str, tuple[str, str]] = field(default_factory=dict)
+    """What each session showed when the agent closed it. Closing is part of
+    finishing tidily, and must not leave the verifier with nothing to read."""
+
+    async def final_page(self) -> tuple[str, str] | None:
+        """The address and visible text of the last session opened, as it stands
+        now or as it was when closed. ``None`` if no session was ever opened."""
+        if not self.opened:
+            return None
+        session_id = self.opened[-1]
+        if session_id in self.closed_pages:
+            return self.closed_pages[session_id]
+        return await self.driver.page_text(session_id)
 
     def tools(self) -> list[dict[str, Any]]:
         # ``get_execution_result`` is omitted: it retrieves a result the caller
@@ -113,6 +136,7 @@ class WccArm:
             session = await self.coordinator.open_session(
                 OpenSessionRequest(url=str(arguments["url"]))
             )
+            self.opened.append(session.session_id)
             snapshot = await self.driver.snapshot(session.session_id)
             return session_view(session, snapshot).model_dump_json()
         if name == "inspect_page":
@@ -122,13 +146,18 @@ class WccArm:
         if name == "execute_capability":
             return await self._execute(arguments)
         if name == "close_session":
-            await self.coordinator.close_session(str(arguments["session_id"]))
+            session_id = str(arguments["session_id"])
+            # Already gone is possible; the coordinator says so to the agent below.
+            with contextlib.suppress(DriverError):
+                self.closed_pages[session_id] = await self.driver.page_text(session_id)
+            await self.coordinator.close_session(session_id)
             return '{"status": "closed"}'
         return f"Error: there is no tool named {name}"
 
     async def _inspect(self, session_id: str) -> Any:
         inspection = await self.coordinator.inspect_page(session_id)
         self.inspections[session_id] = inspection
+        self.reused.append(inspection.reused)
         return inspection_view(
             inspection.snapshot,
             inspection.ir,

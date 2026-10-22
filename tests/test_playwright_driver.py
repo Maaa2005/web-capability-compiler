@@ -1048,3 +1048,16 @@ async def test_payment_fields_the_old_rules_missed_are_still_never_read(
         element.resolved_label for element in snapshot.elements if element.value_omitted_for_safety
     }
     assert "Card number" in omitted
+
+
+async def test_the_page_text_is_what_a_reader_sees_and_where(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """The benchmark's verifier reads this, so markup must not pass for content."""
+    session_id = await _open(driver, f"{fixture_server}/product-list/?keyword=earbuds")
+
+    url, text = await driver.page_text(session_id)
+
+    assert url.endswith("/product-list/?keyword=earbuds")
+    assert "3 results" in text
+    assert "result-count" not in text
