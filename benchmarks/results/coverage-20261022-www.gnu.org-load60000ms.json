@@ -1,0 +1,20 @@
+[
+  {
+    "url": "https://www.gnu.org/",
+    "host": "www.gnu.org",
+    "note": "an old-fashioned static site",
+    "observed_at": "2026-10-22T15:42:14+00:00",
+    "allowed": true,
+    "capabilities": [],
+    "categories": [],
+    "refused_codes": [],
+    "unbound": [],
+    "refused_above_low": 0,
+    "result_list": [],
+    "collections": 0,
+    "warnings": [],
+    "interactive_elements": 0,
+    "forms_seen": 0,
+    "error": "driver_timeout: loading https://www.gnu.org/ exceeded 60000 ms"
+  }
+]

@@ -1,0 +1,20 @@
+[
+  {
+    "url": "https://www.gnu.org/",
+    "host": "www.gnu.org",
+    "note": "an old-fashioned static site",
+    "observed_at": "2026-10-22T16:11:38+00:00",
+    "allowed": false,
+    "capabilities": [],
+    "categories": [],
+    "refused_codes": [],
+    "unbound": [],
+    "refused_above_low": 0,
+    "result_list": [],
+    "collections": 0,
+    "warnings": [],
+    "interactive_elements": 0,
+    "forms_seen": 0,
+    "error": "robots.txt could not be fetched (<urlopen error timed out>), so it disallows"
+  }
+]

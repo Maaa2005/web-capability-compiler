@@ -2338,3 +2338,50 @@ win, and it would be wrong; the page has no list of results on its home page.
 A page whose real content follows a page-level footer, or whose last results
 come after the last card's footer at page level, would lose those links; no
 measured page does.
+
+### An unreadable `robots.txt` disallows; `www.gnu.org` is unreachable from here (2026-10-23)
+
+`www.gnu.org` has not loaded in any saved run: the first failed with
+`ERR_NETWORK_IO_SUSPENDED`, and every run since 2026-10-13 has timed out. It is
+not the page. From the line these runs use, TCP to 209.51.188.116 on ports 80 and 443
+and ICMP all time out; a traceroute stops after `mass-ix.fsf.org`, the FSF's
+edge; nine outside probes (check-host.net, Tokyo among them) connect in under
+0.3 s; and `debian.org` answers from both. No hosts entry, firewall rule, proxy
+or VPN is involved here. Whether the FSF's edge drops this line or the return
+path fails cannot be told from outside. A diagnostic run with the page-load
+limit at 60 seconds (`coverage-20261022-www.gnu.org-load60000ms.json`) timed
+out the same way, so a longer limit is not the answer.
+
+That search found a real fault in the benchmark. `robots_allows` caught the
+network error from the standard library's `RobotFileParser.read()` and returned
+true, so a `robots.txt` that could not be read counted as permission and the
+page was opened anyway. RFC 9309 section 2.3.1.4 says the opposite: a file
+unreachable through server or network errors means complete disallow. The
+reader also has no timeout of its own, which cost 75 seconds here. It is now
+`robots_refusal`, which fetches with a 20-second limit and returns the reason
+it refuses or `None`: 401 and 403 disallow everything, other 4xx restrict
+nothing (section 2.3.1.3), and a 5xx or no answer disallows. The report's
+skipped row shows that reason. `www.gnu.org` is now skipped after 20 seconds
+(`coverage-20261022-www.gnu.org.json`). `flask.palletsprojects.com` and
+`en.wikipedia.org` (403) and `lobste.rs` (a disallowed path) are skipped as
+before.
+
+`example.com` is now skipped too, for a reason that belongs to this machine.
+Its chain runs `Cloudflare TLS Issuing ECC CA 3` → `SSL.com TLS Transit ECC CA
+R2` → `SSL.com TLS ECC Root CA 2022`, cross-signed by `AAA Certificate
+Services`. The trust store Python uses here has neither root: the second was
+never in it, and the first was removed on purpose on 2026-10-22. The system
+trust store accepts the chain, and the browser that opens the page may too. The
+old code read the verification failure as permission. Trusting another store
+for this one fetch would undo a deliberate choice, so the fetch still fails
+closed, and the reason names it first: "certificate not trusted on this
+machine".
+
+So the next full run will measure two fewer pages than the last, for local
+reasons, and its totals are not directly comparable with earlier runs. Neither
+is a regression or a change to the criteria.
+
+Two options make a narrowed run possible: `--only HOST` measures the pages on
+one host, and `--load-timeout-ms N` sets the page-load limit. Such a run is a
+diagnosis, not a measurement, so its file name carries the host and limit and
+never replaces the day's full run.

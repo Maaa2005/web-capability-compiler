@@ -23,7 +23,8 @@ excuse.
 
 **Manners.** ``robots.txt`` is fetched and honoured for every host before the page
 is opened — a disallowed page is skipped and recorded as skipped, not quietly
-dropped. One page per site, one visit, read-only, no crawling, no logins. A pause
+dropped. A ``robots.txt`` that cannot be reached counts as disallowing, as RFC 9309
+says. One page per site, one visit, read-only, no crawling, no logins. A pause
 between sites.
 """
 
@@ -32,18 +33,21 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import ssl
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
+from urllib.request import urlopen
 from urllib.robotparser import RobotFileParser
 
 from wcc.compiler.navigation import find_result_links
 from wcc.driver.base import DriverError, DriverSettings
 from wcc.driver.playwright_driver import PlaywrightDriver
 from wcc.enrich.enricher import Enricher
+from wcc.limits import ResourceLimits
 from wcc.models.capability import RiskLevel
 from wcc.models.session import OpenSessionRequest
 from wcc.policy.url_policy import UrlPolicy
@@ -60,6 +64,11 @@ USER_AGENT = "wcc-benchmark (+https://github.com/Maaa2005/web-capability-compile
 #: Seconds between sites. Not a rate limit so much as a statement of intent: this
 #: visits two dozen pages once each, and there is no reason for it to be fast.
 PAUSE_SECONDS = 2.0
+
+#: How long to wait for a ``robots.txt``. The standard library's reader has no
+#: limit of its own: an unreachable ``www.gnu.org`` held it for 75 seconds, and a
+#: server that accepted the connection and never answered would hold it forever.
+ROBOTS_TIMEOUT_SECONDS = 20.0
 
 #: Public pages, one per host. Weighted towards documentation, open-source project
 #: sites, and pages that exist to be scraped, because those are the ones where a
@@ -139,24 +148,45 @@ class SiteCoverage:
         return self.forms_seen > 0 or self.interactive_elements >= 20
 
 
-def robots_allows(url: str) -> bool:
-    """Whether ``robots.txt`` permits this agent to fetch this path.
+def robots_refusal(url: str) -> str | None:
+    """Why ``robots.txt`` does not let this agent fetch this path, or ``None``.
 
-    A fetch failure is treated as permission, which is the conventional reading:
-    a site with no robots.txt has not restricted anything. A site that *has* one
-    and disallows the path is skipped and said to be skipped.
+    Read as RFC 9309 section 2.3.1 says, which is the standard library's reading
+    except in one place. A missing file (a 4xx other than 401 and 403) restricts
+    nothing. An unreachable one — a 5xx, or no answer at all — is a file whose
+    contents are unknown, and the standard says to assume complete disallow. This
+    used to treat a network failure as permission, so a host that could not be
+    reached had its page opened anyway, and the run spent the page-load limit on a
+    connection that was never going to answer.
     """
     parts = urlsplit(url)
-    parser = RobotFileParser()
-    parser.set_url(f"{parts.scheme}://{parts.netloc}/robots.txt")
+    robots_url = f"{parts.scheme}://{parts.netloc}/robots.txt"
+    parser = RobotFileParser(robots_url)
     try:
-        parser.read()
-    except (URLError, OSError):
-        return True
-    return parser.can_fetch(USER_AGENT, url)
+        with urlopen(robots_url, timeout=ROBOTS_TIMEOUT_SECONDS) as response:
+            raw = response.read()
+    except HTTPError as status:
+        if status.code in (401, 403):
+            return f"robots.txt answered {status.code}, which disallows everything"
+        if 400 <= status.code < 500:
+            return None
+        return f"robots.txt answered {status.code}, so it is unreachable and disallows"
+    except (URLError, OSError) as failed:
+        # A certificate this machine does not trust is the machine's verdict, not
+        # the site's, and the browser that opens the page may trust it. The file is
+        # still unread, so it still disallows; the reason says so first, because the
+        # report keeps only its opening words.
+        cause = failed.reason if isinstance(failed, URLError) else failed
+        if isinstance(cause, ssl.SSLCertVerificationError):
+            return f"certificate not trusted on this machine; robots.txt unread ({cause})"
+        return f"robots.txt could not be fetched ({failed}), so it disallows"
+    parser.parse(raw.decode("utf-8", errors="replace").splitlines())
+    if not parser.can_fetch(USER_AGENT, url):
+        return "robots.txt disallows this path"
+    return None
 
 
-async def visit(url: str, note: str) -> SiteCoverage:
+async def visit(url: str, note: str, limits: ResourceLimits | None = None) -> SiteCoverage:
     host = urlsplit(url).netloc
     result = SiteCoverage(
         url=url,
@@ -165,12 +195,13 @@ async def visit(url: str, note: str) -> SiteCoverage:
         observed_at=datetime.now(UTC).replace(microsecond=0).isoformat(),
     )
 
-    if not robots_allows(url):
+    refusal = robots_refusal(url)
+    if refusal is not None:
         result.allowed = False
-        result.error = "robots.txt disallows this path"
+        result.error = refusal
         return result
 
-    driver = PlaywrightDriver(UrlPolicy(), DriverSettings())
+    driver = PlaywrightDriver(UrlPolicy(), DriverSettings(limits=limits or ResourceLimits()))
     # A fresh database per visit, so every page is measured on the cold path.
     # Re-using one silently changed the answer: the second run of a page binds a
     # stored template, and a warm inspection carries no compilation report — so
@@ -223,7 +254,8 @@ def report(sites: list[SiteCoverage]) -> str:
     ]
     for site in sites:
         if not site.allowed:
-            lines.append(f"| `{site.host}` | {site.note} | — | — | skipped: robots.txt | — |")
+            reason = (site.error or "")[:60]
+            lines.append(f"| `{site.host}` | {site.note} | — | — | skipped: {reason} | — |")
             continue
         if site.error:
             lines.append(f"| `{site.host}` | {site.note} | — | — | error: {site.error[:60]} | — |")
@@ -274,11 +306,16 @@ def summarize(sites: list[SiteCoverage]) -> str:
     )
 
 
-async def _all(pages: tuple[tuple[str, str], ...]) -> list[SiteCoverage]:
+async def _all(
+    pages: tuple[tuple[str, str], ...], limits: ResourceLimits | None = None
+) -> list[SiteCoverage]:
     sites = []
     for url, note in pages:
         print(f"  {url}")
-        sites.append(await visit(url, note))
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        sites.append(await visit(url, note, limits))
+        print(f"    {loop.time() - started:.1f} s")
         await asyncio.sleep(PAUSE_SECONDS)
     return sites
 
@@ -286,19 +323,41 @@ async def _all(pages: tuple[tuple[str, str], ...]) -> list[SiteCoverage]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--limit", type=int, default=0, help="visit only the first N pages")
+    parser.add_argument(
+        "--only", metavar="HOST", default="", help="visit only the listed page on this host"
+    )
+    parser.add_argument(
+        "--load-timeout-ms",
+        type=int,
+        default=0,
+        help="override the page-load limit, to tell a slow page from one that never loads",
+    )
     arguments = parser.parse_args(argv)
 
     pages = PAGES[: arguments.limit] if arguments.limit else PAGES
+    if arguments.only:
+        pages = tuple(page for page in pages if urlsplit(page[0]).netloc == arguments.only)
+        if not pages:
+            parser.error(f"no listed page is on {arguments.only}")
+    limits = (
+        ResourceLimits(page_load_timeout_ms=arguments.load_timeout_ms)
+        if arguments.load_timeout_ms
+        else None
+    )
     RESULTS.mkdir(parents=True, exist_ok=True)
 
     print(f"Visiting {len(pages)} public pages, once each, read-only:")
-    sites = asyncio.run(_all(pages))
+    sites = asyncio.run(_all(pages, limits))
 
     print("\n" + report(sites))
     print("\n" + summarize(sites))
 
+    # A narrowed or re-limited run is a diagnosis, not a measurement, and must not
+    # overwrite the day's full run that comparisons are made against.
     stamp = datetime.now(UTC).strftime("%Y%m%d")
-    path = RESULTS / f"coverage-{stamp}.json"
+    suffix = f"-{arguments.only}" if arguments.only else ""
+    suffix += f"-load{arguments.load_timeout_ms}ms" if arguments.load_timeout_ms else ""
+    path = RESULTS / f"coverage-{stamp}{suffix}.json"
     path.write_text(json.dumps([asdict(site) for site in sites], indent=2))
     print(f"\nraw: {path}")
     return 0
