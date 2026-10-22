@@ -170,6 +170,10 @@ async def test_records_that_differ_only_in_how_many_tags_they_carry_are_one_list
     sidebar = next(c for c in snapshot.collections if c.kind == "list" and c.record_count == 6)
     assert not any(record.link_only for record in quotes.records)
     assert all(record.link_only for record in sidebar.records)
+    # Each quote's own tags are a run of links, reported since the extractor
+    # counts children that are links. They head nothing the quotes start with.
+    tag_runs = [c for c in snapshot.collections if c.kind == "cards" and c.record_count in (2, 3)]
+    assert len(tag_runs) == 4
 
     links = find_result_links(snapshot.elements, snapshot.collections)
     assert [link.resolved_label for link in links] == ["(about)"] * 6
@@ -225,6 +229,33 @@ async def test_a_row_of_columns_ending_in_a_more_card_does_not_outrank_a_result_
         "Dropbox",
         "Netflix",
         "Uber",
+    ]
+
+
+async def test_rows_of_link_runs_do_not_outrank_a_result_list(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """The result list is the news, not the first link of each "Use Python for" row.
+
+    Found on www.python.org: each row is a label and a run of links inside a
+    span. The label made the rows more than links, and the runs were never
+    reported, because the extractor did not look inside spans and did not count
+    a container whose children are themselves links. With the runs reported, each
+    row heads a list of its own, and the rows go the way of footer columns.
+    """
+    session_id = await _open(driver, f"{fixture_server}/link-run-rows/")
+    snapshot = await driver.snapshot(session_id)
+
+    runs = [c for c in snapshot.collections if c.record_count == 3]
+    assert len(runs) == 5
+    assert all(record.link_only for run in runs for record in run.records)
+
+    links = find_result_links(snapshot.elements, snapshot.collections)
+    assert [link.resolved_label for link in links] == [
+        "Mark your calendars",
+        "Python 3.15.1 is now available",
+        "Wikis: relaunched",
+        "Announcing the new fellows",
     ]
 
 

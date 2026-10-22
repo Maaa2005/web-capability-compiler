@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Fixture: Link-run Rows</title></head>
+<body>
+  <!-- www.python.org in miniature. The news is a list of four stories, each a
+       date beside its link. Below it is a "Use Python for" list whose rows are a
+       label followed by a run of links inside a span. The rows say something
+       their links do not (the label), they are more numerous than the stories,
+       and each row's first link is the first link of a run that was never
+       reported as a list of its own: the extractor did not look inside spans,
+       and did not count a container whose children are themselves links. So the
+       rows were the compiled result list, opening "Django" as the first item. -->
+  <main>
+    <section>
+      <div>
+        <h2>Latest News</h2>
+        <ul>
+          <li><time datetime="2026-10-20">2026-10-20</time> <a href="/news/1/">Mark your calendars</a></li>
+          <li><time datetime="2026-10-14">2026-10-14</time> <a href="/news/2/">Python 3.15.1 is now available</a></li>
+          <li><time datetime="2026-10-09">2026-10-09</time> <a href="/news/3/">Wikis: relaunched</a></li>
+          <li><time datetime="2026-10-01">2026-10-01</time> <a href="/news/4/">Announcing the new fellows</a></li>
+        </ul>
+      </div>
+    </section>
+    <section>
+      <h2>Use Python for…</h2>
+      <ul>
+        <li><b>Web Development</b>: <span><a href="/web/django/">Django</a>, <a href="/web/pyramid/">Pyramid</a>, <a href="/web/bottle/">Bottle</a></span></li>
+        <li><b>GUI Development</b>: <span><a href="/gui/tkinter/">tkInter</a>, <a href="/gui/pygobject/">PyGObject</a>, <a href="/gui/pyqt/">PyQt</a></span></li>
+        <li><b>Scientific and Numeric</b>: <span><a href="/sci/pytorch/">PyTorch</a>, <a href="/sci/scipy/">SciPy</a>, <a href="/sci/pandas/">Pandas</a></span></li>
+        <li><b>Software Development</b>: <span><a href="/dev/buildbot/">Buildbot</a>, <a href="/dev/trac/">Trac</a>, <a href="/dev/roundup/">Roundup</a></span></li>
+        <li><b>System Administration</b>: <span><a href="/sys/ansible/">Ansible</a>, <a href="/sys/salt/">Salt</a>, <a href="/sys/openstack/">OpenStack</a></span></li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>

@@ -217,13 +217,20 @@ EXTRACT_COLLECTIONS = r"""
     emit(list, isResults ? 'search_results' : 'list', items);
   }
 
-  for (const container of document.querySelectorAll('div,section,main')) {
+  // A span is a container too. A run of links inside one is how a page writes a
+  // row of "Label: link, link, link" (www.python.org's "Use Python for" rows), and
+  // a run never reported is a list the footer rule cannot see: each row's first
+  // link heads that run, and without the run on record the rows were compiled as
+  // the page's result list. A child that is itself a link counts as content, as a
+  // child containing one always did.
+  for (const container of document.querySelectorAll('div,section,main,span')) {
     const all = Array.from(container.children).filter((c) => c.tagName !== 'SCRIPT');
     if (all.length < 2) continue;
     const children = dominantGroup(all);
     if (!children) continue;
     if (children.every((c) => c.tagName === 'LI')) continue;
-    if (!children.some((c) => c.querySelector('a[href],h1,h2,h3,h4,h5,h6,[data-field]'))) continue;
+    const content = 'a[href],h1,h2,h3,h4,h5,h6,[data-field]';
+    if (!children.some((c) => c.matches('a[href]') || c.querySelector(content))) continue;
     emit(container, 'cards', children);
   }
 
