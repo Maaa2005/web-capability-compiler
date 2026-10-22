@@ -1927,3 +1927,55 @@ the compiled one. So huggingface does not compile nothing, as the 2026-10-13 run
 suggested; it compiles two templates and refuses them. Whether that refusal is
 right is not yet investigated. On `www.rust-lang.org` "open a result" compiled and
 its container was not found exactly once at binding.
+
+### Footer columns are not a result list (2026-10-22)
+
+The fix named in the previous section. `find_result_links` now drops a candidate
+collection when every one of its links is the only link it shares with some other
+detected collection — that is, when each record's link is the first entry of a
+list of its own. A row of footer columns is exactly that: each column is a heading
+over a list, the row is detected as cards whose heading says something beyond the
+link, and each card's link also opens the column's own list. The test is per
+record and needs the overlap to be that one link, so a list nested inside one
+larger list (which shares all its links with it) still qualifies, and a quote card
+whose author link is in no tag list is untouched — `results-beside-tags`, the
+opposite case, passes unchanged.
+
+Three tests. `test_footer_columns_whose_links_each_head_a_list_are_not_the_result_list`
+and the browser test `test_footer_columns_do_not_outrank_a_bare_result_list`, on a
+new `footer-columns` fixture that is crates.io in miniature, fail on the old code.
+`test_a_list_inside_one_larger_list_is_still_a_candidate` passes on both and holds
+the rule from reaching too far.
+
+The twenty-two-page run was repeated
+(`benchmarks/results/coverage-20261022-footer.json`). The totals did not move:
+eighteen observed, seventeen with something to find, fourteen compiled (82%),
+twenty-one refused. Four pages changed underneath them:
+
+- `crates.io` lost its footer "open a result" and keeps search.
+- `www.djangoproject.com` keeps "open a result", now on its two latest news posts
+  instead of five footer links.
+- `developer.mozilla.org` lost its only capability, which was footer links, and
+  now compiles nothing from 378 elements.
+- `webscraper.io` gained "open a result" on its three products.
+
+Going through every target rather than every name found two wrong ones the docs
+had listed as successes, now moved to "Compiled, and wrong" in
+[`comparison.md`](comparison.md):
+
+- `go.dev`: the first package of each use-case column, plus a "More use cases"
+  card that heads no list. One record without a list of its own keeps the whole
+  row. It is the page's only capability, so one of the fourteen is a wrong one.
+- `www.python.org`: the first project of each "Use Python for…" row. The rows
+  are runs of sibling links that the collection detector does not report as
+  lists, so nothing marks them as heads. That belongs in the detector, not here.
+
+Still open, in the order they would be taken: go.dev's extra card; python.org's
+link runs; `pypi.org`'s footer, whose links sit in sentences; Hacker News, where
+a story is three table rows and records are read one row at a time;
+`arxiv.org` and `docs.python.org`, where the right list is found but only part of
+it (eleven physics archives; one column of six index sections). Binding still
+refuses a wrong target on `www.openstreetmap.org` (`Fastly`, `Terms of Use`) and
+on `huggingface.co` (its sidebar's task filters), which answers the previous
+section's open question about huggingface: the refusal is right, the target was
+not.

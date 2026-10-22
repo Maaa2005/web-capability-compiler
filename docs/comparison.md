@@ -6,7 +6,8 @@ worth nothing, so coverage comes first.
 ## Does it find anything on pages nobody here wrote?
 
 Twenty-two public pages, one visit each, `robots.txt` fetched and honoured per
-host. Observed **2026-10-22**, in a single run.
+host. Observed **2026-10-22**, in a single run after the footer-column fix below
+(`benchmarks/results/coverage-20261022-footer.json`).
 
 ```bash
 uv run python -m benchmarks.measure_coverage
@@ -24,9 +25,17 @@ uv run python -m benchmarks.measure_coverage
 
 The capabilities are real ones on real sites: search on `python.org`, `pypi.org`,
 `crates.io`, `djangoproject.com` and `openstreetmap.org`; result-opening on
-`books.toscrape.com`, `quotes.toscrape.com`, `arxiv.org`, `w3.org`, `debian.org`,
-`go.dev`, `docs.python.org` and `developer.mozilla.org`; next-page on
-`news.ycombinator.com`.
+`books.toscrape.com` (20 books), `quotes.toscrape.com` (10 quotes),
+`webscraper.io` (3 products), `w3.org` (4 news items), `debian.org` (5 news items)
+and `djangoproject.com` (2 news posts); next-page on `news.ycombinator.com`.
+Result-opening on `arxiv.org` and `docs.python.org` points at the right kind of
+link but only part of it: arxiv's 11 physics archives without mathematics,
+computer science and the rest, and the 6 index sections of one column of
+docs.python.org.
+
+Not all fourteen pages are carried by a correct capability. `go.dev`'s only
+capability is wrong, so the 14 includes one page that compiled something an agent
+should not use; see [Compiled, and wrong](#compiled-and-wrong).
 
 **The 21 refusals matter as much as the 14 successes.** Twenty of them are the
 "add to basket" forms on `books.toscrape.com` and one is a subscription form on
@@ -40,12 +49,25 @@ Opening a page now waits for it to stop changing before the first observation
 ([`progress.md`](progress.md), 2026-10-22). Before that, the first observation was
 taken at the load event, and a client-rendered page had not drawn anything yet.
 
-| Page | 2026-10-13 | 2026-10-22 | Reading |
+| Page | 2026-10-13 | 2026-10-22, settle fix | Reading |
 |---|---|---|---|
-| `crates.io` | 0 elements, nothing | 89 elements, search, open a result | the fix; "open a result" is wrong, see below |
-| `www.djangoproject.com` | search | search, open a result | "open a result" now binds, and it is wrong, see below |
+| `crates.io` | 0 elements, nothing | 89 elements, search, open a result | the fix; "open a result" was footer links, removed by the footer fix below |
+| `www.djangoproject.com` | search | search, open a result | "open a result" now bound, to footer links; the footer fix moved it to the news posts |
 
 Element counts moved by one to five on six other pages; no other capability changed.
+
+Within the same day, "open a result" stopped treating a row of footer columns as a
+result list ([`progress.md`](progress.md), "Footer columns are not a result
+list"). The run before that fix (`coverage-20261022.json`) and the one after it
+have the same totals and differ on four pages:
+
+| Page | Before the footer fix | After |
+|---|---|---|
+| `crates.io` | search, open a result (three footer links) | search |
+| `www.djangoproject.com` | search, open a result (five footer links) | search, open a result (the two latest news posts) |
+| `developer.mozilla.org` | open a result (footer links) | nothing |
+| `webscraper.io` | nothing | open a result (the three products) |
+
 The run also now records templates that compiled but did not bind, which the
 October 13 file did not, so the bindings below cannot be compared with it:
 
@@ -67,8 +89,8 @@ pages:
 |---|---|---|---|
 | `quotes.toscrape.com` | nothing | open a quote | the miss below, fixed |
 | `docs.python.org` | nothing | open a section of the index | fixed by the same change |
-| `developer.mozilla.org` | nothing | open a recent contribution | the home page's list of ten |
-| `www.djangoproject.com` | search, open a result | search | the only list outside navigation is the footer; its binding is refused |
+| `developer.mozilla.org` | nothing | open a result | the target was not recorded; on 2026-10-22 the same capability pointed at footer links, and the footer fix removed it |
+| `www.djangoproject.com` | search, open a result | search | "open a result" pointed at the footer and its binding was refused |
 
 `crates.io` went from search and open-a-result to nothing because the page
 yielded **zero** elements that time, against 29 in August. It is client-rendered
@@ -79,15 +101,21 @@ page had rendered. Fixed on 2026-10-22, above.
 
 | Page | What "open a result" points at |
 |---|---|
-| `pypi.org` | three footer links (`trademarks`, …). The footer is a `div`, not a `<footer>`, so it is not excluded as navigation, and the home page has no result list to beat it |
+| `go.dev` | the first package of each use-case column (`cloud.google.com/go`, `spf13/cobra`, `net/http`, …) plus a "More use cases" card. Each column is a heading over a list of packages, like a footer, but the extra card heads no list, so the footer rule does not remove the row |
+| `www.python.org` | the first project of each "Use Python for…" row (`Django`, `tkInter`, `PyTorch`, …). Each row is a run of sibling links rather than a list the collection detector reports, so nothing marks them as the heads of lists |
+| `pypi.org` | three footer links (`trademarks`, …). The footer is a `div`, not a `<footer>`, so it is not excluded as navigation, and its links sit in sentences, so no list of their own marks them |
 | `news.ycombinator.com` | the thirty user names. A story is three table rows and records are detected one row at a time; the title row's first link is the upvote arrow, so taking it would be worse |
-| `crates.io` | three footer links, one from each footer column (`rust-lang.org`, `The Cargo Book`, `Usage Policy`). The footer columns are detected as cards with a heading beyond their link, and cards that say something beyond their link are preferred to the page's real lists of ten crates, which are bare links |
-| `www.djangoproject.com` | five footer links, one from each footer column (`About Django`, `Join a Group`, …), for the same reason |
 
-None of these changes the page count — every one of these pages also has a correct capability — but
-an agent offered these would open the wrong thing. They are kept visible here
+`go.dev`'s count depends on this: it is the page's only capability, so one of the
+fourteen pages is counted on a wrong capability. The other three also have a
+correct one — search on python.org and pypi, next-page on Hacker News — and an
+agent offered these would still open the wrong thing. They are kept visible here
 rather than filtered by a rule that would only move the mistake: on `pypi.org` the
 next candidate is two paragraphs of introduction.
+
+Two more compiled a wrong target that binding refused, so it was never offered:
+`www.openstreetmap.org` (the `Fastly` and `Terms of Use` links) and
+`huggingface.co` (the task filters of its sidebar, `Text Generation`, `PyTorch`, …).
 
 ### Where it found nothing
 
@@ -97,9 +125,9 @@ are not the same event.
 | Page | Reading |
 |---|---|
 | `example.com` | correct — one paragraph and one link |
-| `www.rust-lang.org` | probably correct — no forms; "open a result" compiled and did not bind |
-| `webscraper.io` | **not investigated** — 41 elements, no forms, nothing compiled |
-| `huggingface.co` | **not yet explained** — 133 elements; "open a result" and "go to page" compiled, and binding refused both because their risk rose from low to high on the live page |
+| `www.rust-lang.org` | probably correct — no forms; "open a result" compiled over four "Building Tools, Writing Web Apps, …" cards and its container did not resolve exactly once at binding |
+| `developer.mozilla.org` | a miss — 378 elements, no forms; the only "open a result" it ever compiled was the footer; why nothing else on the page qualifies is not yet investigated |
+| `huggingface.co` | correct refusal of a wrong target — 133 elements; "open a result" compiled over the sidebar's filters and "go to page" beside it, and binding refused both because their risk rose from low to high on the live page |
 
 # What one observation costs
 

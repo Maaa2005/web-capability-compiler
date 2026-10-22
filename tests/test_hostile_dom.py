@@ -175,6 +175,33 @@ async def test_records_that_differ_only_in_how_many_tags_they_carry_are_one_list
     assert [link.resolved_label for link in links] == ["(about)"] * 6
 
 
+async def test_footer_columns_do_not_outrank_a_bare_result_list(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """The result list is the crates, not the first link of each footer column.
+
+    Found on crates.io, djangoproject.com and developer.mozilla.org: a footer
+    column is a heading over a list of links, so a row of columns is detected as
+    cards that say something beyond their link, and cards beat the bare crate
+    links. Each column's own list is detected too, and every card's link is the
+    first entry of one of them — which is what marks the row as columns.
+    """
+    session_id = await _open(driver, f"{fixture_server}/footer-columns/")
+    snapshot = await driver.snapshot(session_id)
+
+    columns = next(c for c in snapshot.collections if c.kind == "cards" and c.record_count == 3)
+    assert not any(record.link_only for record in columns.records)
+
+    links = find_result_links(snapshot.elements, snapshot.collections)
+    assert [link.resolved_label for link in links] == [
+        "hashbrown",
+        "syn",
+        "getrandom",
+        "rand",
+        "serde",
+    ]
+
+
 async def test_a_result_lists_short_container_path_binds_to_one_element(
     driver: PlaywrightDriver, fixture_server: str
 ) -> None:

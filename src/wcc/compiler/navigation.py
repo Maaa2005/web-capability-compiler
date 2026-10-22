@@ -124,7 +124,9 @@ def find_result_links(
     say something beyond their link are preferred to collections of bare links —
     ten quotes over a ten-tag sidebar, twenty books over fifty category links —
     and a page whose only repeated links are bare still gets a capability for
-    them, because a plain list of result links is a result list too.
+    them, because a plain list of result links is a result list too. A collection
+    whose every link heads a list of its own is a row of footer columns, not a
+    result list, and does not qualify.
 
     Within the preferred kind the largest wins, and only when one is largest. Two
     collections of equal size is a page with two result lists, and picking either
@@ -159,6 +161,11 @@ def find_result_links(
         bare = all(record.link_only for record in activatable)
         candidates[paths] = candidates.get(paths, True) and bare
 
+    candidates = {
+        paths: bare
+        for paths, bare in candidates.items()
+        if not _heads_of_other_lists(paths, candidates)
+    }
     for bare in (False, True):
         tier = [paths for paths, is_bare in candidates.items() if is_bare is bare]
         if not tier:
@@ -167,6 +174,21 @@ def find_result_links(
         winners = [paths for paths in tier if len(paths) == largest]
         return [links[path] for path in winners[0]] if len(winners) == 1 else []
     return []
+
+
+def _heads_of_other_lists(paths: tuple[str, ...], candidates: dict[tuple[str, ...], bool]) -> bool:
+    """Whether every one of these links is the first link of a list of its own.
+
+    A footer column is a heading over a list of links, so a row of columns is
+    detected as cards that say something beyond their link — the heading — and
+    each card's link is merely the first entry of its column. On crates.io that
+    made "rust-lang.org, The Cargo Book, Usage Policy" the result list. The test is
+    per record: each link must sit in another detected list that shares nothing
+    else with this one. A list nested inside one larger list shares all its links
+    with it and is not excluded, and a quote card's author link is in no tag list.
+    """
+    mine = set(paths)
+    return all(any(set(other) & mine == {path} for other in candidates) for path in paths)
 
 
 def _worst(members: list[NormalizedElement]) -> NormalizedElement:

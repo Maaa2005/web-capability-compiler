@@ -156,6 +156,42 @@ def test_one_list_detected_twice_does_not_tie_with_itself() -> None:
     assert find_result_links(results, collections) == results
 
 
+def test_footer_columns_whose_links_each_head_a_list_are_not_the_result_list() -> None:
+    """crates.io: each footer column is a heading over a list of links, so the row
+    of columns reads as cards with content, and "rust-lang.org, The Cargo Book,
+    Usage Policy" — the first link of each column — beat ten bare crate links.
+    """
+    crates = [a_link(f"el_r{n}", f"main>ul>li[{n}]>a") for n in range(1, 6)]
+    columns = [
+        [a_link(f"el_f{c}{n}", f"footer>div[{c}]>ul>li[{n}]>a") for n in (1, 2, 3)]
+        for c in (1, 2, 3)
+    ]
+    heads = [column[0] for column in columns]
+    collections = [
+        a_list_of(crates, link_only=True, collection_id="crates"),
+        a_list_of(heads, collection_id="footer"),
+        *(
+            a_list_of(column, link_only=True, collection_id=f"column_{c}")
+            for c, column in enumerate(columns)
+        ),
+    ]
+    elements = crates + [link for column in columns for link in column]
+    assert find_result_links(elements, collections) == crates
+
+
+def test_a_list_inside_one_larger_list_is_still_a_candidate() -> None:
+    """Sharing links with one other list is not heading lists of its own: the three
+    featured results also appear in the full list of five, and win over it.
+    """
+    featured = [a_link(f"el_{n}", f"main>ul>li[{n}]>a") for n in (1, 2, 3)]
+    rest = [a_link(f"el_{n}", f"main>ul>li[{n}]>a") for n in (4, 5)]
+    collections = [
+        a_list_of(featured, collection_id="featured"),
+        a_list_of(featured + rest, link_only=True, collection_id="all"),
+    ]
+    assert find_result_links(featured + rest, collections) == featured
+
+
 def test_a_list_is_rated_by_every_link_under_its_container_not_only_its_records() -> None:
     """djangoproject.com: the records were each footer column's first link, and the
     saved container was the whole footer, where "Donate to Django" sat lower down.

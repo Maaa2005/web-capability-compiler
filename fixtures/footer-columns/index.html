@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Fixture: Footer Columns</title></head>
+<body>
+  <!-- crates.io in miniature. The result list is five bare crate links, and the
+       footer is three columns, each a heading over its own list of four links.
+       The heading gives each column text beyond its first link, so the row of
+       columns read as cards with content and beat the crates: the compiled
+       result list was "rust-lang.org, The Cargo Book, Usage Policy". -->
+  <main>
+    <section>
+      <h2>Most Downloaded</h2>
+      <ul>
+        <li><a href="/crates/hashbrown/">hashbrown</a></li>
+        <li><a href="/crates/syn/">syn</a></li>
+        <li><a href="/crates/getrandom/">getrandom</a></li>
+        <li><a href="/crates/rand/">rand</a></li>
+        <li><a href="/crates/serde/">serde</a></li>
+      </ul>
+    </section>
+  </main>
+  <footer>
+    <div class="columns">
+      <div class="column">
+        <h3>Rust</h3>
+        <ul>
+          <li><a href="/rust/rust-lang-org/">rust-lang.org</a></li>
+          <li><a href="/rust/rust-foundation/">Rust Foundation</a></li>
+          <li><a href="/rust/the-crates-io-team/">The crates.io team</a></li>
+          <li><a href="/rust/governance/">Governance</a></li>
+        </ul>
+      </div>
+      <div class="column">
+        <h3>Get Help</h3>
+        <ul>
+          <li><a href="/get-help/the-cargo-book/">The Cargo Book</a></li>
+          <li><a href="/get-help/support/">Support</a></li>
+          <li><a href="/get-help/system-status/">System Status</a></li>
+          <li><a href="/get-help/report-a-bug/">Report a bug</a></li>
+        </ul>
+      </div>
+      <div class="column">
+        <h3>Policies</h3>
+        <ul>
+          <li><a href="/policies/usage-policy/">Usage Policy</a></li>
+          <li><a href="/policies/security/">Security</a></li>
+          <li><a href="/policies/privacy-policy/">Privacy Policy</a></li>
+          <li><a href="/policies/code-of-conduct/">Code of Conduct</a></li>
+        </ul>
+      </div>
+    </div>
+  </footer>
+</body>
+</html>
