@@ -2076,3 +2076,49 @@ refused. Each run can only check itself, so the printed report also names the
 snapshot across all runs, and says so if there was more than one or a run did not
 record it. A one-attempt run on the small page afterwards recorded
 `claude-haiku-4-5-20251001` on all three arms.
+
+### The runs of record (2026-10-22)
+
+The harness was frozen at `2aa9d7a` and run once: three tasks, three arms, three
+attempts, 27 runs in about six minutes, local fixtures only. The tables and what
+they show are in [comparison.md](comparison.md#what-a-task-costs); the raw
+records are `benchmarks/results/runs-20261022T124255Z.json`.
+
+All 27 runs met their verification condition, reported usage, and executed
+nothing above `low`. One snapshot answered all of them,
+`claude-haiku-4-5-20251001`. On every task, 3 of 3 warm runs bound a stored
+template on their first inspection.
+
+**The expectation the main claim rested on was mostly wrong.** comparison.md and
+the docstring of `benchmarks/arms.py` both said a baseline agent snapshots before
+every interaction, because its refs expire with the snapshot that produced them.
+The baseline's refs stay valid until the next snapshot, and the model used that:
+on both search tasks every baseline run took exactly two snapshots, typing and
+clicking on the refs of the first. WCC still read far fewer tokens on the large
+page, for a different reason — the baseline carried its one 6,800-token snapshot
+as history through every later request. comparison.md is corrected. The docstring
+is left as it was frozen, and this entry records that it was wrong.
+
+**On the small page the result is a wash**, as the observation table predicted:
+the baseline's cheapest run, 9,739, is below every WCC run.
+
+**Warm saved nothing measurable.** Cold and warm medians are within 340 tokens on
+every task. Binding instead of compiling changes what WCC does, not what the model
+reads.
+
+**Most of the large-page gap is cache reads**: 33,650 of 44,008 input tokens in
+the six-request baseline run. No price is computed.
+
+**Prompt caching was reported unevenly.** Every run on the large page wrote to the
+cache. On the other two pages only two runs did: the longest filter baseline and
+the warm filter run that listed capabilities. Why was not investigated. It does
+not change any total, since cached input is counted as input.
+
+**The filter baseline's spread is mostly requests.** Its runs took 7, 11 and 17
+requests, each reading 1,400–4,500 input tokens, of which about 540 is Claude
+Code's own preamble. That is the gap most dependent on this route.
+
+Not measured by this run: capability evidence coverage, which the Phase 7 rules
+want at 100% and which the Phase 3 acceptance test enforces on four fixtures (not
+the large catalog); and any public site.
+

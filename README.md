@@ -128,10 +128,41 @@ than a snapshot. As a page's content grows without its number of distinct
 operations growing, the two cross over and the gap widens.**
 
 That is a claim about a break-even point, not a claim to win, and it is
-deliberately weaker than this project originally asserted. What is *not* measured
-is how many observations a task takes — which is where most of the saving is
-supposed to come from, and which needs an agent loop that has not been run.
-`benchmarks/run.py` is written and tested for it.
+deliberately weaker than this project originally asserted.
+
+---
+
+## What a task costs
+
+```bash
+uv run python -m benchmarks.run
+```
+
+An agent does three tasks on local fixtures, either with low-level browser tools
+(a Playwright-MCP-style baseline) or with WCC — cold, with nothing stored, and
+warm, reusing what the cold run stored. Three runs each, all 27 completed, run
+through Claude Code on a subscription with `claude-haiku-4-5-20251001`. Tokens
+are the provider's own counts, input plus output, median and range:
+
+| Task | baseline | WCC cold | WCC warm |
+|---|---:|---:|---:|
+| search, 6-control page | 12,052 (9,739–12,056) | 10,191 (10,187–10,229) | 9,859 (9,783–9,922) |
+| search, 150-product page | 44,453 (27,204–44,558) | 10,716 (10,671–10,722) | 10,690 (10,617–15,910) |
+| filter | 25,687 (13,986–50,643) | 9,838 (9,835–9,899) | 9,896 (9,864–13,287) |
+
+- **Small page: no clear win.** The baseline's cheapest run beat every WCC run.
+- **Large page:** the baseline read one 6,800-token snapshot again on every later
+  request. Most of that came from the prompt cache, so the gap is in tokens read,
+  not in price.
+- **Filter:** the baseline took 3, 5 and 8 snapshots across its three runs; WCC
+  took three or four calls every time.
+- **Warm cost the same as cold.** Reusing a stored template saved nothing
+  measurable here.
+- Claude Code adds about 540 tokens to every request, which widens gaps that come
+  from the number of requests. The figures hold for this route.
+
+Details, and what this does not show:
+[docs/comparison.md](docs/comparison.md#what-a-task-costs).
 
 ---
 
@@ -323,14 +354,18 @@ uv run wcc --help
 ./scripts/test.sh
 ```
 
-561 tests, ruff and pyright clean, CI on every push.
+637 tests, ruff and pyright clean, CI on every push.
 
 ## Status and scope
 
 Phases 0–6 of 7 are complete against
 [spec v0.2.1](docs/spec/WCC_AGENT_IMPLEMENTATION_SPEC_v0.2.1.md), which is the
-source of truth for the data model, risk model, and methodology. Phase 7's
-harness is built and its agent-loop run has not been made.
+source of truth for the data model, risk model, and methodology. Phase 7's runs
+of record were made on 2026-10-22, with two departures from the specification:
+they ran through Claude Code on a subscription rather than the benchmark's own
+model loop, and they requested the model by alias, recording the snapshot that
+answered. The specification's own loop (`--provider api`) is built and tested
+and has not been run.
 
 Out of scope: CAPTCHA bypass, anti-bot evasion, credential storage.
 

@@ -1,6 +1,6 @@
-# What it finds, what it refuses, and what one observation costs
+# What it finds, what it refuses, and what it costs
 
-Three measurements, in the order they matter. A cheaper observation of nothing is
+Four measurements, in the order they matter. A cheaper observation of nothing is
 worth nothing, so coverage comes first.
 
 ## Does it find anything on pages nobody here wrote?
@@ -267,40 +267,30 @@ An external review argued this point and was right. It also argued for dropping
 
 ## What it does not show
 
-**How many observations a task takes.** This is the important omission. WCC's
-saving is supposed to come mostly from *asking fewer times*: a baseline agent's
-element refs expire with the snapshot that produced them, so it snapshots again
-before each interaction, while an inspection binds capabilities that stay valid.
-That difference cannot be measured without running an agent, and no agent was run.
+**What a whole task costs.** This table measures one observation. A task is
+measured separately, by running an agent, [below](#what-a-task-costs).
 
-So the claim supported here is "one observation is cheaper on a realistic page",
-not "a task costs less". The second is the interesting one and it is not yet
-evidenced.
+This page used to say WCC's saving would come mostly from *asking fewer times*:
+that a baseline agent's element refs expire with the snapshot that produced them,
+so it snapshots again before each interaction. The agent runs showed that was
+mostly wrong. On both search tasks every baseline run took exactly two snapshots,
+one at the start and one at the end; it typed and clicked on the refs of the
+first. The large-page cost came from one large snapshot being read again as
+history on every later request, not from taking many. Repeated snapshots happened
+only on the filter task.
 
 **Claude's own token counts.** The table is `o200k_base`, not Claude. An exact
-Claude count needs an API key, and the run that produced these numbers had none.
-Nothing here is converted or scaled to compensate: re-running with a key replaces
-the unit rather than adjusting it.
+Claude count for one payload needs an API key, and the run that produced these
+numbers had none. Nothing here is converted or scaled to compensate: re-running
+with a key replaces the unit rather than adjusting it. The agent runs below do use
+Claude's own counts, but they measure whole tasks, so they do not replace this
+table.
 
 For what it is worth, the two rulers agree about the conclusion. The same
 measurement in characters gave 3.17× and 0.17× where tokens give 2.80× and 0.14×
 — within about 15%, across a difference of a factor of twenty. The finding never
 depended on the precision, which is the main reason it was safe to publish before
 having the exact numbers.
-
-## What would complete it
-
-`benchmarks/run.py` is written and tested: three arms (a Playwright-MCP-style
-baseline, WCC cold, WCC warm), one shared agent loop, at least three runs per
-condition, success decided by the fixture rather than by the model, and raw runs
-written to `benchmarks/results/`. It needs an API key and roughly $0.16.
-
-```bash
-uv run python -m benchmarks.run --dry-run   # builds everything, calls nothing
-uv run python -m benchmarks.run             # needs ANTHROPIC_API_KEY
-```
-
-Until that has been run, this page is what there is, and it says so.
 
 ## A note on how the number above was found
 
@@ -322,3 +312,101 @@ There is now a test asserting that a WCC inspection of the large catalog costs
 less than half a baseline snapshot. A project whose claim is "cheaper" should have
 the cheapness under test; functional tests fail when the function breaks, not when
 the argument does.
+
+# What a task costs
+
+The agent benchmark of specification 14: three tasks on local fixtures, three
+arms, three attempts each. Run once on 2026-10-22, with the harness frozen at
+commit `2aa9d7a`. Every run, request by request, is in
+`benchmarks/results/runs-20261022T124255Z.json`.
+
+```bash
+uv run python -m benchmarks.run
+```
+
+One agent does each task with either a Playwright-MCP-style baseline's low-level
+browser tools or WCC's six tools — cold, with nothing stored, and warm, with the
+templates the cold run stored, on a different input. It runs as Claude Code
+signed in to a subscription: no API key, nothing billed per token, and the counts
+are the provider's usage for every request, not an estimate. The model was
+requested as `claude-haiku-4-5`, and every run was answered by
+`claude-haiku-4-5-20251001`.
+
+All 27 runs met their verification condition — the task's input reached the
+results page's address and its visible text — so none is missing from the
+medians. No run executed anything above `low` risk. All nine warm runs bound a
+stored template on their first inspection.
+
+Total tokens, input plus output, median and observed range over three runs:
+
+| Task | baseline | WCC cold | WCC warm |
+|---|---:|---:|---:|
+| search, `search-page` (6 controls) | 12,052 (9,739–12,056) | 10,191 (10,187–10,229) | 9,859 (9,783–9,922) |
+| search, `large-catalog` (150 products) | 44,453 (27,204–44,558) | 10,716 (10,671–10,722) | 10,690 (10,617–15,910) |
+| filter, `filter-page` | 25,687 (13,986–50,643) | 9,838 (9,835–9,899) | 9,896 (9,864–13,287) |
+
+Median tool calls and seconds:
+
+| Task | baseline | WCC cold | WCC warm |
+|---|---:|---:|---:|
+| search, 6 controls | 5 calls, 12.3 s | 3 calls, 11.7 s | 3 calls, 11.7 s |
+| search, 150 products | 5 calls, 12.5 s | 3 calls, 12.7 s | 3 calls, 12.2 s |
+| filter | 10 calls, 16.2 s | 3 calls, 11.8 s | 3 calls, 11.6 s |
+
+No percentage is given. The arms are reported independently (specification
+14.4), and one ratio over the three tasks would average the page where WCC does
+not win with the pages where it does.
+
+## What it shows
+
+**On the six-control page, no clear win.** Two baseline runs cost 12,052 and
+12,056 tokens. The third cost 9,739, less than any WCC run (the cheapest was
+9,783). The ranges overlap. That is the break-even the observation table
+predicts: on a page this small, an inspection is larger than a snapshot.
+
+**On the 150-product page, the baseline reads one snapshot many times.** Its
+first request read 1,399 input tokens. Then the snapshot — about 6,800 tokens of
+catalog — rode along as history on every later request: 8,179, 8,355, 8,495,
+8,641 and 8,939, for 44,008 input tokens over six requests. The attempt that
+finished in four requests read 26,857. WCC's requests on the same page read
+1,535, 1,799, 2,738 and 4,212.
+
+**Most of that re-reading came from the prompt cache.** In that six-request run,
+33,650 of the 44,008 input tokens were cache reads, which are billed at a
+fraction of fresh input. So the gap is in tokens the model read, not in price,
+and no price is computed here.
+
+**On the filter task, the baseline varied and WCC did not.** The baseline's
+three runs took 3, 5 and 8 snapshots (6, 10 and 16 tool calls) and cost 13,986,
+25,687 and 50,643 tokens. Every WCC run took three or four calls. The filter
+page is small, so this gap is mostly the per-request cost repeated: each baseline
+request read 1,400–4,500 input tokens. It is also the only task where the
+seconds differ.
+
+**Warm cost the same as cold.** On every task the two medians are within 340
+tokens and half a second of each other. Binding a stored template instead of
+compiling saved nothing measurable here: the model reads an inspection of about
+the same size either way, and on these fixtures the compile does not show in the
+seconds. The two highest warm runs (15,910 and 13,287) are the two that looked at
+the page a second time. On the large page it was an `inspect_page` after the
+search, on the results page, which had nothing stored, so it compiled. On the
+filter page it was a `list_capabilities` before executing, which inspects again,
+and it bound.
+
+## What it does not show
+
+**Another route's numbers.** Claude Code adds about 540 input tokens to every
+request (539–541, measured with `--calibrate`). It is the same for every arm,
+but it is paid per request, so it widens every gap that comes from the number of
+requests — the filter task's most of all. Through the API (`--provider api`) the
+totals would be lower and those gaps narrower. These figures hold for this route,
+this model and these fixtures.
+
+**Public sites.** The benchmark of record is local fixtures, as specification
+14.4 requires. No agent was run on a public page.
+
+**Evidence coverage.** The Phase 7 reporting rules ask that capability evidence
+coverage equal 100%. This run does not measure it. It is enforced by a Phase 3
+acceptance test that fails if any template compiled from the search, filter,
+product-list or pagination fixtures carries no evidence
+(`tests/test_phase3_acceptance.py`). The large catalog is not in that test.
