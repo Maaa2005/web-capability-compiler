@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Fixture: Article Footer</title></head>
+<body>
+  <!-- An article that ends in its own footer, followed by the results, and no
+       footer for the page. The article's footer closes the article, not the
+       page, so nothing after it is "after the page footer". -->
+  <main>
+    <article>
+      <h1>Weekly digest</h1>
+      <p>This week's releases, in the order they were published.</p>
+      <footer><p>Compiled by <a href="/staff/ada/">Ada</a></p></footer>
+    </article>
+    <section>
+      <h2>Releases</h2>
+      <ul>
+        <li><a href="/r/1/">Parser 2.0</a> <span>2026-10-20</span></li>
+        <li><a href="/r/2/">Linter 1.4</a> <span>2026-10-18</span></li>
+        <li><a href="/r/3/">Formatter 0.9</a> <span>2026-10-15</span></li>
+        <li><a href="/r/4/">Bundler 3.1</a> <span>2026-10-11</span></li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>

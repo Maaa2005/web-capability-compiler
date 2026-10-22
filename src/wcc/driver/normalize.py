@@ -301,6 +301,7 @@ def normalize_element(
         submits_form=bool(record.get("submits_form")),
         in_search_landmark=bool(record.get("in_search_landmark")),
         in_navigation=bool(record.get("in_navigation")),
+        after_page_footer=bool(record.get("after_page_footer")),
         is_pagination_control=is_pagination_control(record, control_type, label),
         pagination_rel=pagination_rel(record),
         locator_chain=build_locator_chain(record, label),

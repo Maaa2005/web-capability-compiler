@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Fixture: Footers Before the Results</title></head>
+<body>
+  <!-- A page with two footers of its own. A slim footer of contact links sits
+       above the content, and only the last footer, at the bottom, closes the
+       page. The results come after the first and before the last, so a rule
+       that took "after the footer" from the first would drop them. -->
+  <footer class="topbar">
+    <p>Questions? <a href="/contact/">Contact us</a></p>
+  </footer>
+  <main>
+    <section>
+      <h2>Releases</h2>
+      <ul>
+        <li><a href="/r/1/">Parser 2.0</a> <span>2026-10-20</span></li>
+        <li><a href="/r/2/">Linter 1.4</a> <span>2026-10-18</span></li>
+        <li><a href="/r/3/">Formatter 0.9</a> <span>2026-10-15</span></li>
+        <li><a href="/r/4/">Bundler 3.1</a> <span>2026-10-11</span></li>
+      </ul>
+    </section>
+  </main>
+  <footer>
+    <p>&copy; 2026 Example. <a href="/terms/">Terms</a></p>
+    <p>Hosted by a friend. <a href="/hosting/">Hosting</a></p>
+  </footer>
+</body>
+</html>

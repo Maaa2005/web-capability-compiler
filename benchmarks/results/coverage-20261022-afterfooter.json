@@ -1,0 +1,605 @@
+[
+  {
+    "url": "https://example.com/",
+    "host": "example.com",
+    "note": "one paragraph, one link",
+    "observed_at": "2026-10-22T15:09:08+00:00",
+    "allowed": true,
+    "capabilities": [],
+    "categories": [],
+    "refused_codes": [],
+    "unbound": [],
+    "refused_above_low": 0,
+    "result_list": [],
+    "collections": 0,
+    "warnings": [],
+    "interactive_elements": 1,
+    "forms_seen": 0,
+    "error": null
+  },
+  {
+    "url": "https://quotes.toscrape.com/",
+    "host": "quotes.toscrape.com",
+    "note": "a quote listing, built for scraping",
+    "observed_at": "2026-10-22T15:09:11+00:00",
+    "allowed": true,
+    "capabilities": [
+      "open_result_item"
+    ],
+    "categories": [
+      "navigate"
+    ],
+    "refused_codes": [],
+    "unbound": [],
+    "refused_above_low": 0,
+    "result_list": [
+      "(about)",
+      "(about)",
+      "(about)",
+      "(about)",
+      "(about)",
+      "(about)",
+      "(about)",
+      "(about)",
+      "(about)",
+      "(about)"
+    ],
+    "collections": 11,
+    "warnings": [],
+    "interactive_elements": 55,
+    "forms_seen": 0,
+    "error": null
+  },
+  {
+    "url": "https://books.toscrape.com/",
+    "host": "books.toscrape.com",
+    "note": "a product grid, built for scraping",
+    "observed_at": "2026-10-22T15:09:17+00:00",
+    "allowed": true,
+    "capabilities": [
+      "open_result_item"
+    ],
+    "categories": [
+      "navigate"
+    ],
+    "refused_codes": [
+      "generic_data_entry_form",
+      "generic_data_entry_form",
+      "generic_data_entry_form",
+      "generic_data_entry_form",
+      "generic_data_entry_form",
+      "generic_data_entry_form",
+      "generic_data_entry_form",
+      "generic_data_entry_form",
+      "generic_data_entry_form",
+      "generic_data_entry_form",
+      "generic_data_entry_form",
+      "generic_data_entry_form",
+      "generic_data_entry_form",
+      "generic_data_entry_form",
+      "generic_data_entry_form",
+      "generic_data_entry_form",
+      "generic_data_entry_form",
+      "generic_data_entry_form",
+      "generic_data_entry_form",
+      "generic_data_entry_form"
+    ],
+    "unbound": [],
+    "refused_above_low": 20,
+    "result_list": [
+      "A Light in the ...",
+      "Tipping the Velvet",
+      "Soumission",
+      "Sharp Objects",
+      "Sapiens: A Brief History ...",
+      "The Requiem Red",
+      "The Dirty Little Secrets ...",
+      "The Coming Woman: A ...",
+      "The Boys in the ...",
+      "The Black Maria",
+      "Starving Hearts (Triangular Trade ...",
+      "Shakespeare's Sonnets",
+      "Set Me Free",
+      "Scott Pilgrim's Precious Little ...",
+      "Rip it Up and ...",
+      "Our Band Could Be ...",
+      "Olio",
+      "Mesaerion: The Best Science ...",
+      "Libertarianism for Beginners",
+      "It's Only the Himalayas"
+    ],
+    "collections": 2,
+    "warnings": [],
+    "interactive_elements": 114,
+    "forms_seen": 20,
+    "error": null
+  },
+  {
+    "url": "https://webscraper.io/test-sites/e-commerce/allinone",
+    "host": "webscraper.io",
+    "note": "a test e-commerce page",
+    "observed_at": "2026-10-22T15:09:23+00:00",
+    "allowed": true,
+    "capabilities": [
+      "open_result_item"
+    ],
+    "categories": [
+      "navigate"
+    ],
+    "refused_codes": [],
+    "unbound": [],
+    "refused_above_low": 0,
+    "result_list": [
+      "Dell Inspiron...",
+      "Dell Latitude...",
+      "Asus ROG Strix..."
+    ],
+    "collections": 8,
+    "warnings": [],
+    "interactive_elements": 41,
+    "forms_seen": 0,
+    "error": null
+  },
+  {
+    "url": "https://www.python.org/",
+    "host": "www.python.org",
+    "note": "project home with search",
+    "observed_at": "2026-10-22T15:09:28+00:00",
+    "allowed": true,
+    "capabilities": [
+      "submit_search_form"
+    ],
+    "categories": [
+      "search"
+    ],
+    "refused_codes": [],
+    "unbound": [],
+    "refused_above_low": 0,
+    "result_list": [],
+    "collections": 25,
+    "warnings": [],
+    "interactive_elements": 149,
+    "forms_seen": 1,
+    "error": null
+  },
+  {
+    "url": "https://docs.python.org/3/",
+    "host": "docs.python.org",
+    "note": "documentation index with search",
+    "observed_at": "2026-10-22T15:09:32+00:00",
+    "allowed": true,
+    "capabilities": [
+      "open_result_item"
+    ],
+    "categories": [
+      "navigate"
+    ],
+    "refused_codes": [],
+    "unbound": [
+      "submit_search_form: risk rose from low to high on this page",
+      "submit_search_form_2: risk rose from low to high on this page"
+    ],
+    "refused_above_low": 0,
+    "result_list": [
+      "Python HOWTOs",
+      "Installing Python modules",
+      "Extending and embedding",
+      "Python's C API",
+      "FAQs",
+      "Deprecations"
+    ],
+    "collections": 15,
+    "warnings": [],
+    "interactive_elements": 78,
+    "forms_seen": 2,
+    "error": null
+  },
+  {
+    "url": "https://pypi.org/",
+    "host": "pypi.org",
+    "note": "a package index with search",
+    "observed_at": "2026-10-22T15:09:35+00:00",
+    "allowed": true,
+    "capabilities": [
+      "submit_search_form"
+    ],
+    "categories": [
+      "search"
+    ],
+    "refused_codes": [],
+    "unbound": [],
+    "refused_above_low": 0,
+    "result_list": [],
+    "collections": 10,
+    "warnings": [],
+    "interactive_elements": 57,
+    "forms_seen": 1,
+    "error": null
+  },
+  {
+    "url": "https://crates.io/",
+    "host": "crates.io",
+    "note": "a package index, client-rendered",
+    "observed_at": "2026-10-22T15:09:39+00:00",
+    "allowed": true,
+    "capabilities": [
+      "submit_search_form"
+    ],
+    "categories": [
+      "search"
+    ],
+    "refused_codes": [],
+    "unbound": [],
+    "refused_above_low": 0,
+    "result_list": [],
+    "collections": 13,
+    "warnings": [],
+    "interactive_elements": 89,
+    "forms_seen": 1,
+    "error": null
+  },
+  {
+    "url": "https://www.rust-lang.org/",
+    "host": "www.rust-lang.org",
+    "note": "project home",
+    "observed_at": "2026-10-22T15:09:44+00:00",
+    "allowed": true,
+    "capabilities": [],
+    "categories": [],
+    "refused_codes": [],
+    "unbound": [
+      "open_result_item: open_result_item.result_collection is stale: no candidate matched exactly once (structural_path=3)"
+    ],
+    "refused_above_low": 0,
+    "result_list": [
+      "Building Tools",
+      "Writing Web Apps",
+      "Working On Servers",
+      "Starting With Embedded"
+    ],
+    "collections": 8,
+    "warnings": [],
+    "interactive_elements": 37,
+    "forms_seen": 0,
+    "error": null
+  },
+  {
+    "url": "https://go.dev/",
+    "host": "go.dev",
+    "note": "project home with search",
+    "observed_at": "2026-10-22T15:09:48+00:00",
+    "allowed": true,
+    "capabilities": [],
+    "categories": [],
+    "refused_codes": [],
+    "unbound": [],
+    "refused_above_low": 0,
+    "result_list": [],
+    "collections": 26,
+    "warnings": [],
+    "interactive_elements": 138,
+    "forms_seen": 0,
+    "error": null
+  },
+  {
+    "url": "https://www.djangoproject.com/",
+    "host": "www.djangoproject.com",
+    "note": "project home with search",
+    "observed_at": "2026-10-22T15:09:53+00:00",
+    "allowed": true,
+    "capabilities": [
+      "submit_search_form",
+      "open_result_item"
+    ],
+    "categories": [
+      "search",
+      "navigate"
+    ],
+    "refused_codes": [],
+    "unbound": [],
+    "refused_above_low": 0,
+    "result_list": [
+      "Django security reporting update",
+      "Django security releases issued: 6.1.2, 6.0.9, and 5.2.18"
+    ],
+    "collections": 12,
+    "warnings": [],
+    "interactive_elements": 75,
+    "forms_seen": 1,
+    "error": null
+  },
+  {
+    "url": "https://flask.palletsprojects.com/en/stable/",
+    "host": "flask.palletsprojects.com",
+    "note": "documentation with search",
+    "observed_at": "2026-10-22T15:09:58+00:00",
+    "allowed": false,
+    "capabilities": [],
+    "categories": [],
+    "refused_codes": [],
+    "unbound": [],
+    "refused_above_low": 0,
+    "result_list": [],
+    "collections": 0,
+    "warnings": [],
+    "interactive_elements": 0,
+    "forms_seen": 0,
+    "error": "robots.txt disallows this path"
+  },
+  {
+    "url": "https://news.ycombinator.com/",
+    "host": "news.ycombinator.com",
+    "note": "a link listing, table layout",
+    "observed_at": "2026-10-22T15:10:00+00:00",
+    "allowed": true,
+    "capabilities": [
+      "navigate_next_page",
+      "open_result_item"
+    ],
+    "categories": [
+      "navigate",
+      "navigate"
+    ],
+    "refused_codes": [
+      "generic_data_entry_form"
+    ],
+    "unbound": [],
+    "refused_above_low": 0,
+    "result_list": [
+      "eMudhra to Exit Global SSL/TLS Certificate Business",
+      "What's Getting Pwned",
+      "Crystal 1.22.0 Is Released",
+      "Quad9 (DNS Resolver) to Exit France",
+      "What Is Gridifcation",
+      "Jailbreaking the Switch 2",
+      "Faster than earcut: triangulating 3.7M map polygons in 489 ms",
+      "VMMouse for NT 3.x: QEMU/VMware mouse integration driver",
+      "The Last Museum: Semantic search across 5.8M artworks from major museums",
+      "WorldTUI: I trained a 360M model to pretend to be a terminal",
+      "Startup taps underwater volcano as energy source in \"proof point\" test",
+      "The painter behind Manhattan\u2019s Gilded Age interiors",
+      "Amazon identifies Oct 17 PHP2Shell exploitation prior to public disclosure",
+      "The recently proposed o(n log n) integer multiplication algorithm [pdf]",
+      "Several Linux kernel vulnerabilities accidentally posted to public mailing list",
+      "Security Disclosure",
+      "SBD: We Have a Filesystem at Home",
+      "Eigenmoon: linear algebra puzzles by moonlight",
+      "Claude Duet",
+      "No more icons in every menu by default",
+      "Compromised LiteLLM 1.107.0 on PyPI Installs a Credential Stealer and Backdoor",
+      "GitLab critical patch release",
+      "Rust Style Guide",
+      "Using LLM for confidence scoring is a bad idea",
+      "The Robot I Didn't Expect to Build",
+      "OpenAI CLI",
+      "PingCap TiDB Leaks",
+      "What Is the Karakoram Anomaly?",
+      "Tiny possum and glider thought extinct for 6000 years found in remote West Papua",
+      "Meta ordered to pay $25B penalty in New Mexico Cambridge Analytica case"
+    ],
+    "collections": 34,
+    "warnings": [],
+    "interactive_elements": 231,
+    "forms_seen": 1,
+    "error": null
+  },
+  {
+    "url": "https://lobste.rs/",
+    "host": "lobste.rs",
+    "note": "a link listing",
+    "observed_at": "2026-10-22T15:10:05+00:00",
+    "allowed": false,
+    "capabilities": [],
+    "categories": [],
+    "refused_codes": [],
+    "unbound": [],
+    "refused_above_low": 0,
+    "result_list": [],
+    "collections": 0,
+    "warnings": [],
+    "interactive_elements": 0,
+    "forms_seen": 0,
+    "error": "robots.txt disallows this path"
+  },
+  {
+    "url": "https://developer.mozilla.org/en-US/docs/Web/HTML",
+    "host": "developer.mozilla.org",
+    "note": "a long documentation page",
+    "observed_at": "2026-10-22T15:10:08+00:00",
+    "allowed": true,
+    "capabilities": [],
+    "categories": [],
+    "refused_codes": [],
+    "unbound": [],
+    "refused_above_low": 0,
+    "result_list": [],
+    "collections": 17,
+    "warnings": [],
+    "interactive_elements": 378,
+    "forms_seen": 0,
+    "error": null
+  },
+  {
+    "url": "https://en.wikipedia.org/wiki/Web_scraping",
+    "host": "en.wikipedia.org",
+    "note": "an article with a search form",
+    "observed_at": "2026-10-22T15:10:13+00:00",
+    "allowed": false,
+    "capabilities": [],
+    "categories": [],
+    "refused_codes": [],
+    "unbound": [],
+    "refused_above_low": 0,
+    "result_list": [],
+    "collections": 0,
+    "warnings": [],
+    "interactive_elements": 0,
+    "forms_seen": 0,
+    "error": "robots.txt disallows this path"
+  },
+  {
+    "url": "https://www.gnu.org/",
+    "host": "www.gnu.org",
+    "note": "an old-fashioned static site",
+    "observed_at": "2026-10-22T15:10:15+00:00",
+    "allowed": true,
+    "capabilities": [],
+    "categories": [],
+    "refused_codes": [],
+    "unbound": [],
+    "refused_above_low": 0,
+    "result_list": [],
+    "collections": 0,
+    "warnings": [],
+    "interactive_elements": 0,
+    "forms_seen": 0,
+    "error": "driver_timeout: loading https://www.gnu.org/ exceeded 20000 ms"
+  },
+  {
+    "url": "https://www.debian.org/",
+    "host": "www.debian.org",
+    "note": "an old-fashioned static site with search",
+    "observed_at": "2026-10-22T15:12:24+00:00",
+    "allowed": true,
+    "capabilities": [
+      "open_result_item"
+    ],
+    "categories": [
+      "navigate"
+    ],
+    "refused_codes": [
+      "generic_data_entry_form"
+    ],
+    "unbound": [],
+    "refused_above_low": 1,
+    "result_list": [
+      "Updated Debian 13: 13.7 released",
+      "Debian 11 Long Term Support reaches end-of-life",
+      "DebConf26 closes in Santa Fe and DebConf27 announced",
+      "Security support for Bookworm handed over to the LTS team",
+      "Updated Debian 12: 12.15 released"
+    ],
+    "collections": 7,
+    "warnings": [],
+    "interactive_elements": 39,
+    "forms_seen": 1,
+    "error": null
+  },
+  {
+    "url": "https://www.w3.org/",
+    "host": "www.w3.org",
+    "note": "a standards body home page",
+    "observed_at": "2026-10-22T15:13:06+00:00",
+    "allowed": true,
+    "capabilities": [
+      "open_result_item"
+    ],
+    "categories": [
+      "navigate"
+    ],
+    "refused_codes": [],
+    "unbound": [],
+    "refused_above_low": 0,
+    "result_list": [
+      "W3C and the State of the Web in the AI Era",
+      "Web of Things Working Group recharter: New momentum for IoT interoperability",
+      "First Public Working Draft: Animation Triggers",
+      "Improved thread navigation in W3C's mailing list archives"
+    ],
+    "collections": 7,
+    "warnings": [],
+    "interactive_elements": 48,
+    "forms_seen": 0,
+    "error": null
+  },
+  {
+    "url": "https://arxiv.org/",
+    "host": "arxiv.org",
+    "note": "a preprint archive with search",
+    "observed_at": "2026-10-22T15:13:40+00:00",
+    "allowed": true,
+    "capabilities": [
+      "open_result_item"
+    ],
+    "categories": [
+      "navigate"
+    ],
+    "refused_codes": [
+      "ambiguous_submission_mechanism"
+    ],
+    "unbound": [],
+    "refused_above_low": 0,
+    "result_list": [
+      "Astrophysics",
+      "Condensed Matter",
+      "General Relativity and Quantum Cosmology",
+      "High Energy Physics - Experiment",
+      "High Energy Physics - Lattice",
+      "High Energy Physics - Phenomenology",
+      "High Energy Physics - Theory",
+      "Mathematical Physics",
+      "Nuclear Experiment",
+      "Nuclear Theory",
+      "Quantum Physics"
+    ],
+    "collections": 3,
+    "warnings": [],
+    "interactive_elements": 260,
+    "forms_seen": 1,
+    "error": null
+  },
+  {
+    "url": "https://www.openstreetmap.org/",
+    "host": "www.openstreetmap.org",
+    "note": "a map application",
+    "observed_at": "2026-10-22T15:14:06+00:00",
+    "allowed": true,
+    "capabilities": [
+      "submit_search_form"
+    ],
+    "categories": [
+      "search"
+    ],
+    "refused_codes": [],
+    "unbound": [
+      "open_result_item: risk rose from low to high on this page"
+    ],
+    "refused_above_low": 0,
+    "result_list": [
+      "Fastly",
+      "Terms of Use"
+    ],
+    "collections": 8,
+    "warnings": [],
+    "interactive_elements": 39,
+    "forms_seen": 1,
+    "error": null
+  },
+  {
+    "url": "https://huggingface.co/models",
+    "host": "huggingface.co",
+    "note": "a model listing, client-rendered",
+    "observed_at": "2026-10-22T15:14:27+00:00",
+    "allowed": true,
+    "capabilities": [],
+    "categories": [],
+    "refused_codes": [],
+    "unbound": [
+      "navigate_to_page: risk rose from low to high on this page",
+      "open_result_item: risk rose from low to high on this page"
+    ],
+    "refused_above_low": 0,
+    "result_list": [
+      "Text Generation",
+      "PyTorch",
+      "vLLM",
+      "Groq",
+      "Add your hardware"
+    ],
+    "collections": 10,
+    "warnings": [],
+    "interactive_elements": 130,
+    "forms_seen": 0,
+    "error": null
+  }
+]

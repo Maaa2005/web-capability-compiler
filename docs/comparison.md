@@ -6,9 +6,9 @@ worth nothing, so coverage comes first.
 ## Does it find anything on pages nobody here wrote?
 
 Twenty-two public pages, one visit each, `robots.txt` fetched and honoured per
-host. Observed **2026-10-22**, in a single run after the footer-column,
-link-run and story-row fixes below
-(`benchmarks/results/coverage-20261022-storyrows.json`).
+host. Observed **2026-10-22** (UTC), in a single run after the footer-column,
+link-run, story-row and after-footer fixes below
+(`benchmarks/results/coverage-20261022-afterfooter.json`).
 
 ```bash
 uv run python -m benchmarks.measure_coverage
@@ -35,9 +35,9 @@ link but only part of it: arxiv's 11 physics archives without mathematics,
 computer science and the rest, and the 6 index sections of one column of
 docs.python.org.
 
-Every one of the thirteen pages has at least one correct capability. One of them,
-`pypi.org`, also has a wrong one; see
-[Compiled, and wrong](#compiled-and-wrong). The run before the link-run fix
+Every one of the thirteen pages has at least one correct capability, and none
+now offers one known to be wrong; `pypi.org` did until the after-footer fix (see
+[Compiled, and wrong](#compiled-and-wrong)). The run before the link-run fix
 counted fourteen, and one of those (`go.dev`) was carried only by a wrong one.
 
 **The 21 refusals matter as much as the 13 successes.** Twenty of them are the
@@ -97,6 +97,19 @@ link-run file on one page:
 
 `webscraper.io` also lists different products; it does on every load.
 
+The legal notice after `pypi.org`'s footer then stopped being read as a result
+list ([`progress.md`](progress.md), "Links after the page's footer are not
+results"). The run after that fix (`coverage-20261022-afterfooter.json`, at 00:09
+on 2026-10-23 in Japan) has the same totals and differs from the story-row file
+on one page:
+
+| Page | After the story-row fix | After the after-footer fix |
+|---|---|---|
+| `pypi.org` | search, open a result (three links of the legal notice) | search |
+
+Hacker News's front page had moved between the two runs; 26 of its thirty
+stories are in both, and it compiles the same capabilities.
+
 The run also now records templates that compiled but did not bind, which the
 October 13 file did not, so the bindings below cannot be compared with it:
 
@@ -128,18 +141,22 @@ page had rendered. Fixed on 2026-10-22, above.
 
 ### Compiled, and wrong
 
-| Page | What "open a result" points at |
-|---|---|
-| `pypi.org` | three links of the legal notice under the footer (`trademarks`, …). It is a `div` after the page's `<footer>` and holds no `<nav>`, so nothing marks it as navigation, and its links sit in sentences, so no list of their own marks them |
+None in the latest run. Until the after-footer fix, `pypi.org`'s "open a
+result" pointed at three links of the legal notice under the footer
+(`trademarks`, …): a `div` after the page's `<footer>` that holds no `<nav>`, so
+nothing marked it as navigation, with its links in sentences, so no list of
+their own marked them. Links after the page's own footer are no longer results.
+The wider rule, counting only links inside `<main>`, also removes pypi's list
+but gives `djangoproject.com`, `www.w3.org` and `developer.mozilla.org` a wrong
+list each (see `docs/progress.md`); the narrower one leaves those three as they
+were.
 
-The page also has a correct capability, search, so it is not counted on a wrong
-one alone, but an agent offered this would still open the wrong thing. `go.dev`
-and `www.python.org` were in this table until the link-run fix, and
+pypi compiles no result list now only because the two lists left on its page,
+the banner's two links and the introduction's two, are the same size, and a tie
+compiles nothing. One more link in either would bring a wrong list back.
+`go.dev` and `www.python.org` were in this table until the link-run fix, and
 `news.ycombinator.com` until the story-row fix: its footer's eight links, and
-before that its thirty user names. The pypi row is kept visible here rather than
-filtered by a rule that breaks other pages: counting only links inside `<main>`
-removes it and gives `djangoproject.com`, `www.w3.org` and
-`developer.mozilla.org` a wrong list each (see `docs/progress.md`).
+before that its thirty user names.
 
 Two more compiled a wrong target that binding refused, so it was never offered:
 `www.openstreetmap.org` (the `Fastly` and `Terms of Use` links) and

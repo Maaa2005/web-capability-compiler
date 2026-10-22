@@ -120,13 +120,13 @@ def find_result_links(
     """The activation links of the collection that is the page's result list.
 
     A collection qualifies with two or more records whose activation link is a
-    non-pagination link outside any navigation landmark. Collections whose records
-    say something beyond their link are preferred to collections of bare links —
-    ten quotes over a ten-tag sidebar, twenty books over fifty category links —
-    and a page whose only repeated links are bare still gets a capability for
-    them, because a plain list of result links is a result list too. A collection
-    most of whose links head a list of their own is a row of footer columns, not a
-    result list, and does not qualify.
+    non-pagination link outside any navigation landmark and not after the page's
+    footer. Collections whose records say something beyond their link are
+    preferred to collections of bare links — ten quotes over a ten-tag sidebar,
+    twenty books over fifty category links — and a page whose only repeated links
+    are bare still gets a capability for them, because a plain list of result
+    links is a result list too. A collection most of whose links head a list of
+    their own is a row of footer columns, not a result list, and does not qualify.
 
     Within the preferred kind the largest wins, and only when one is largest. Two
     collections of equal size is a page with two result lists, and picking either
@@ -138,6 +138,8 @@ def find_result_links(
         if element.control_type is not ControlType.LINK:
             continue
         if element.in_navigation or element.is_pagination_control:
+            continue
+        if element.after_page_footer:
             continue
         path = _structural_path(element)
         if path is not None:

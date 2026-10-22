@@ -2239,7 +2239,7 @@ would win next, was not measured and is corrected there.
 Not tried: excluding what comes after the page's `<footer>`. The rule sees
 collections by structural path, which stops at the `<footer>` and so cannot say
 what follows it; knowing would take a new field on elements or records, a
-schema change (rule 7) made for one page.
+schema change (rule 7) made for one page. Tried on 2026-10-23, below.
 
 The two partial lists were diagnosed from the live pages and not changed. Both
 are one list laid out as several sibling lists, and a collection is one
@@ -2253,8 +2253,8 @@ lists would read both right, but a heading over a list, repeated, is also how a
 footer lays out its columns, which the rules depend on telling apart from a
 result list. It is left for a change that can be measured against that.
 
-Still open: `pypi.org`'s legal notice; `arxiv.org` and `docs.python.org`, where
-only part of the right list is found.
+Still open: `pypi.org`'s legal notice (closed on 2026-10-23, below); `arxiv.org`
+and `docs.python.org`, where only part of the right list is found.
 
 ### Joining sibling lists: argued and not done (2026-10-22)
 
@@ -2285,3 +2285,56 @@ read for this.
 
 A partial list of the right items is a working capability: the agent can open
 each item found. The limit stays as documented in the README.
+
+### Links after the page's footer are not results (2026-10-23)
+
+`pypi.org` compiled "open a result" over the three links of its legal notice
+(`trademarks`, `Python Software Foundation`, `Site map`). The notice is a `div`
+after the page's `<footer>`, its links sit in sentences, and no rule could see
+where it was, because a structural path stops at the `<footer>`. The decision
+was argued with a second model first; both ended on measuring the narrowest
+form and keeping it only if it passed a check fixed before the run.
+
+The page script now finds the page's own footer once: the last `<footer>` or
+`contentinfo` that no article, section or landmark encloses, the outermost of
+nested ones. Each element records `after_page_footer`, true when it follows
+that footer and is not inside it, and result links skip those elements. A
+footer above the content (`footers-before-results`), an article's own footer
+(`article-footer`) and cards each with a footer (`card-footers`) exclude
+nothing, and each has a fixture. `after-page-footer` reproduces pypi's layout
+and gave the notice's three links as the result list before the change.
+
+Schema change (specification rule 7): `NormalizedElement` gains
+`after_page_footer`, defaulting to false, so `PageSnapshot` changes with it.
+`SCHEMA_VERSION` is not bumped, as with `link_only` and the five observation
+fields before it: it tracks the specification document, and the store and the
+importer refuse any other version with no migration defined, so a bump would
+make every stored snapshot and exported template unreadable for a field they
+can do without. A snapshot stored earlier reads as false, which is how every
+page was read then. A build older than this one refuses a snapshot that carries
+the field, because models forbid unknown keys. Capability templates and
+exports do not carry it.
+
+Public pages (`benchmarks/results/coverage-20261022-afterfooter.json`, run at
+00:09 JST on 2026-10-23, against `coverage-20261022-storyrows.json`):
+
+- `pypi.org` no longer offers "open a result"; search remains, so it still
+  counts. 13 of 17 pages compile something and 21 candidates are refused, as
+  before.
+- No other page's result list changed. `djangoproject.com`, `www.w3.org` and
+  `developer.mozilla.org`, which the `<main>`-only rule broke, are unchanged,
+  as are `go.dev` and `www.python.org`, whose ties stay ties.
+- The check fixed beforehand said "identical" for every page but `webscraper.io`
+  and failed `news.ycombinator.com`: its front page had moved overnight. Both
+  runs list thirty story titles and 26 are in both, with the same capabilities,
+  so this is the page changing, not the rule. The check should have treated it
+  like `webscraper.io`, by count, and this is written here because the
+  criterion was changed after the run.
+- `www.gnu.org` timed out again and is not compared.
+
+pypi now compiles no result list because what is left ties: the banner's two
+links and the introduction's two. One more link in either would make that list
+win, and it would be wrong; the page has no list of results on its home page.
+A page whose real content follows a page-level footer, or whose last results
+come after the last card's footer at page level, would lose those links; no
+measured page does.

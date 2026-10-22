@@ -335,3 +335,78 @@ async def test_story_rows_are_the_result_list_and_open_by_their_title(
     template = build_result_item_template(snapshot.elements, snapshot.collections)
     assert template is not None
     assert template.targets["result_collection"].resolved_label == links[0].resolved_label
+
+
+async def test_a_legal_notice_after_the_page_footer_is_not_a_result_list(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """What comes after the page's footer is not a result list.
+
+    Found on pypi.org, whose home page lists no packages. Its legal notice is a
+    div placed after the page's ``<footer>``, three short paragraphs each with a
+    link in a sentence, and three records that say more than their links were
+    the largest such collection on the page: "open a result" opened
+    "trademarks". Without the notice, the banner's two links and the
+    introduction's two tie, and a tie is left uncompiled.
+    """
+    session_id = await _open(driver, f"{fixture_server}/after-page-footer/")
+    snapshot = await driver.snapshot(session_id)
+
+    assert any(c.record_count == 3 for c in snapshot.collections)
+    assert sum(c.record_count == 2 for c in snapshot.collections) >= 2
+
+    after = {e.resolved_label for e in snapshot.elements if e.after_page_footer}
+    assert after == {"trademarks", "Python Software Foundation", "Site map"}
+
+    assert find_result_links(snapshot.elements, snapshot.collections) == []
+
+
+async def test_only_the_last_page_footer_ends_the_page(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """A footer above the content does not put the content after the footer."""
+    session_id = await _open(driver, f"{fixture_server}/footers-before-results/")
+    snapshot = await driver.snapshot(session_id)
+
+    assert not any(e.after_page_footer for e in snapshot.elements)
+    links = find_result_links(snapshot.elements, snapshot.collections)
+    assert [link.resolved_label for link in links] == [
+        "Parser 2.0",
+        "Linter 1.4",
+        "Formatter 0.9",
+        "Bundler 3.1",
+    ]
+
+
+async def test_an_articles_footer_does_not_end_the_page(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """A footer inside an article closes the article, and what follows stays."""
+    session_id = await _open(driver, f"{fixture_server}/article-footer/")
+    snapshot = await driver.snapshot(session_id)
+
+    assert not any(e.after_page_footer for e in snapshot.elements)
+    links = find_result_links(snapshot.elements, snapshot.collections)
+    assert [link.resolved_label for link in links] == [
+        "Parser 2.0",
+        "Linter 1.4",
+        "Formatter 0.9",
+        "Bundler 3.1",
+    ]
+
+
+async def test_cards_with_footers_of_their_own_stay_a_result_list(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """Cards whose footers look like the page's still come before the last one."""
+    session_id = await _open(driver, f"{fixture_server}/card-footers/")
+    snapshot = await driver.snapshot(session_id)
+
+    assert not any(e.after_page_footer for e in snapshot.elements)
+    links = find_result_links(snapshot.elements, snapshot.collections)
+    assert [link.resolved_label for link in links] == [
+        "Trail Shoe",
+        "Road Shoe",
+        "Track Spike",
+        "Walking Shoe",
+    ]

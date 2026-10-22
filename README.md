@@ -97,13 +97,14 @@ paging and opening a story on `news.ycombinator.com`.
 basket" forms on a shop and one is a subscription form. A low-level agent sees
 those as buttons and can press them.
 
-Not every compiled capability is right. "Open a result" points at footer links
-on `pypi.org`; the page also has a correct one (search). Before the latest fixes,
-`go.dev`'s use-case columns, `python.org`'s "Use Python for…" rows and Hacker
-News's footer were taken as result lists too. `go.dev` and `python.org` no longer
-offer "open a result", and `go.dev`, which had nothing else, compiles nothing — a
-wrong capability became none, which is why the count fell from 14. Hacker News
-now opens its thirty stories, by their titles.
+Not every capability compiled along the way was right. "Open a result" was
+taken from `go.dev`'s use-case columns, `python.org`'s "Use Python for…" rows,
+Hacker News's footer and the legal notice under `pypi.org`'s footer. `go.dev`,
+`python.org` and `pypi.org` no longer offer it, and `go.dev`, which had nothing
+else, compiles nothing — a wrong capability became none, which is why the count
+fell from 14. Hacker News now opens its thirty stories, by their titles. pypi's
+list is gone only because the two lists left on its page tie, and one more link
+in either would bring a wrong one back.
 All of it is listed in [`docs/comparison.md`](docs/comparison.md) with where it
 found nothing, and why — named rather than averaged away.
 

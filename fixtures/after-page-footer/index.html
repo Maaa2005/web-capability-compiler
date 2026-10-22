@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Fixture: After the Page Footer</title></head>
+<body>
+  <!-- pypi.org in miniature. The home page has no list of packages, only a banner
+       of two links and an introduction of two, each a sentence around its link.
+       The page's footer is columns of navigation, which no rule takes. After the
+       footer comes the legal notice, a div of short paragraphs each with a link
+       in a sentence: three records that say more than their links, one more than
+       the banner and the introduction. The notice was the compiled result list,
+       opening "trademarks" as the first item. -->
+  <header>
+    <div class="banner">
+      <p>Find, install and publish Python packages. <a href="/search/">browse projects</a></p>
+      <p>Publishing as a team? <a href="/manage/organizations/">organization account</a></p>
+    </div>
+  </header>
+  <main>
+    <section class="introduction">
+      <div>
+        <p>Install packages with pip. <a href="/help/installing/">Learn about installing packages</a></p>
+        <p>Package your code and share it. <a href="/help/packaging/">Learn how to package your code</a></p>
+      </div>
+    </section>
+  </main>
+  <footer>
+    <nav aria-label="Help">
+      <h2>Help</h2>
+      <ul>
+        <li><a href="/help/installing/">Installing packages</a></li>
+        <li><a href="/help/uploading/">Uploading packages</a></li>
+        <li><a href="/help/">FAQs</a></li>
+      </ul>
+    </nav>
+    <nav aria-label="About">
+      <h2>About PyPI</h2>
+      <ul>
+        <li><a href="/stats/">Statistics</a></li>
+        <li><a href="/sponsors/">Sponsors</a></li>
+        <li><a href="/security/">Security</a></li>
+      </ul>
+    </nav>
+  </footer>
+  <div class="notice">
+    <p>"PyPI" and the blocks logos are registered <a href="/psf/trademarks/">trademarks</a> of the <a href="/psf/">Python Software Foundation</a>.</p>
+    <p>&copy; 2026 <a href="/psf-landing/">Python Software Foundation</a></p>
+    <p>All the pages, in one place: <a href="/sitemap/">Site map</a></p>
+  </div>
+</body>
+</html>

@@ -83,6 +83,19 @@ class NormalizedElement(WCCModel):
     indistinguishable from a two-item result list by shape alone.
     """
 
+    after_page_footer: bool = False
+    """Whether this comes after the page's own footer in document order.
+
+    The page's footer is the last ``<footer>`` or ``contentinfo`` that no article,
+    section or landmark encloses; links inside it are not after it. What follows
+    it is not the page's content: pypi.org's legal notice sits there, and its
+    three links in sentences were compiled as the page's result list.
+
+    Additive within schema 0.2.1, defaulting to false. A snapshot stored before
+    the field existed reads as nothing after the footer, which is how every page
+    was read then.
+    """
+
     is_pagination_control: bool = False
     pagination_rel: str | None = None
     """The ``rel`` value that made this a pagination control, when there was one.

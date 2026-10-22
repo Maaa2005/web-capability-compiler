@@ -131,6 +131,29 @@ _SHARED = r"""
     return parts.join('>');
   };
 
+  // The page's own footer, found once per evaluation. A footer inside an
+  // article, a section or any landmark closes that part and not the page, so only
+  // footers no such element encloses count; of nested ones the outermost, and of
+  // the rest the last, because a slim footer above the content does not end it.
+  // pypi.org puts its legal notice after this footer, and the notice's links were
+  // compiled as the page's result list. ``null`` when there is none, or when the
+  // page will not answer: then nothing counts as after it, which is how every
+  // page was read before.
+  const PAGE_FOOTER = (() => {
+    try {
+      const scoped = 'article, aside, main, nav, section, [role="article"], '
+        + '[role="complementary"], [role="main"], [role="navigation"], [role="region"]';
+      const pageLevel = Array.from(document.querySelectorAll('footer, [role="contentinfo"]'))
+        .filter((f) => !(f.parentElement && f.parentElement.closest(scoped)));
+      const outermost = pageLevel.filter((f) => !pageLevel.some((o) => o !== f && o.contains(f)));
+      return outermost.length ? outermost[outermost.length - 1] : null;
+    } catch (error) {
+      return null;
+    }
+  })();
+  const afterPageFooter = (el) => Boolean(PAGE_FOOTER) && !PAGE_FOOTER.contains(el)
+    && Boolean(PAGE_FOOTER.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING);
+
   // Where the form submits, resolved against the document base so the Python
   // layer can normalize one absolute URL instead of re-implementing relative
   // resolution. An empty action means "this document", which resolves to the
@@ -201,6 +224,7 @@ _SHARED = r"""
         || (tag === 'input' && (type === 'submit' || type === 'image'))),
       rel: el.getAttribute('rel'),
       in_navigation: Boolean(el.closest('nav, [role="navigation"]')),
+      after_page_footer: afterPageFooter(el),
       label_for: labelFor(el),
       wrapping_label: wrappingLabel(el),
       aria_labelledby: ariaLabelledBy(el),

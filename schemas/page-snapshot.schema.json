@@ -325,6 +325,11 @@
           "default": null,
           "title": "Accessible Name"
         },
+        "after_page_footer": {
+          "default": false,
+          "title": "After Page Footer",
+          "type": "boolean"
+        },
         "bounding_box": {
           "anyOf": [
             {
