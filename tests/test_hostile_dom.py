@@ -202,6 +202,32 @@ async def test_footer_columns_do_not_outrank_a_bare_result_list(
     ]
 
 
+async def test_a_row_of_columns_ending_in_a_more_card_does_not_outrank_a_result_list(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """The result list is the companies, not the first package of each column.
+
+    Found on go.dev: the row of use-case columns ends in a "More use cases" card
+    built like the columns but with no list under it. It is detected as the same
+    row, and one record heading nothing was enough to keep the row when every
+    record had to head a list of its own.
+    """
+    session_id = await _open(driver, f"{fixture_server}/use-case-columns/")
+    snapshot = await driver.snapshot(session_id)
+
+    row = next(c for c in snapshot.collections if c.record_count == 4)
+    assert [record.link_only for record in row.records] == [False, False, False, True]
+
+    links = find_result_links(snapshot.elements, snapshot.collections)
+    assert [link.resolved_label for link in links] == [
+        "Bitly",
+        "Cloudflare",
+        "Dropbox",
+        "Netflix",
+        "Uber",
+    ]
+
+
 async def test_a_result_lists_short_container_path_binds_to_one_element(
     driver: PlaywrightDriver, fixture_server: str
 ) -> None:

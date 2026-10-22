@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Fixture: Use-case Columns</title></head>
+<body>
+  <!-- go.dev in miniature. The result list is five bare company links. Beside it
+       is a row of use-case cards, each a heading over its own list of packages,
+       and the row ends in a "More use cases" card with no list under it. The
+       card is built like the others, so it is a record of the same row, and the
+       rule that removed footer columns when every record heads a list let this
+       row through: the compiled result list was the first package of each
+       column plus "More use cases". -->
+  <main>
+    <section>
+      <h2>Companies using Go</h2>
+      <ul>
+        <li><a href="/case-studies/bitly/">Bitly</a></li>
+        <li><a href="/case-studies/cloudflare/">Cloudflare</a></li>
+        <li><a href="/case-studies/dropbox/">Dropbox</a></li>
+        <li><a href="/case-studies/netflix/">Netflix</a></li>
+        <li><a href="/case-studies/uber/">Uber</a></li>
+      </ul>
+    </section>
+    <section>
+      <h2>Use cases</h2>
+      <ul>
+        <li>
+          <div><img alt="" src="data:,"></div>
+          <div>
+            <h3>Cloud &amp; Network Services</h3>
+            <ul>
+              <li><a href="/pkg/cloud/">cloud.google.com/go</a></li>
+              <li><a href="/pkg/aws/">aws/client</a></li>
+              <li><a href="/pkg/azure/">Azure/azure-sdk-for-go</a></li>
+            </ul>
+          </div>
+        </li>
+        <li>
+          <div><img alt="" src="data:,"></div>
+          <div>
+            <h3>Command-line Interfaces</h3>
+            <ul>
+              <li><a href="/pkg/cobra/">spf13/cobra</a></li>
+              <li><a href="/pkg/viper/">spf13/viper</a></li>
+              <li><a href="/pkg/cli/">urfave/cli</a></li>
+            </ul>
+          </div>
+        </li>
+        <li>
+          <div><img alt="" src="data:,"></div>
+          <div>
+            <h3>Web Development</h3>
+            <ul>
+              <li><a href="/pkg/net-http/">net/http</a></li>
+              <li><a href="/pkg/html-template/">html/template</a></li>
+              <li><a href="/pkg/database-sql/">database/sql</a></li>
+            </ul>
+          </div>
+        </li>
+        <li>
+          <div><img alt="" src="data:,"></div>
+          <div><a href="/solutions/use-cases/">More use cases</a></div>
+        </li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>

@@ -125,7 +125,7 @@ def find_result_links(
     ten quotes over a ten-tag sidebar, twenty books over fifty category links —
     and a page whose only repeated links are bare still gets a capability for
     them, because a plain list of result links is a result list too. A collection
-    whose every link heads a list of its own is a row of footer columns, not a
+    most of whose links head a list of their own is a row of footer columns, not a
     result list, and does not qualify.
 
     Within the preferred kind the largest wins, and only when one is largest. Two
@@ -177,18 +177,26 @@ def find_result_links(
 
 
 def _heads_of_other_lists(paths: tuple[str, ...], candidates: dict[tuple[str, ...], bool]) -> bool:
-    """Whether every one of these links is the first link of a list of its own.
+    """Whether most of these links are each the first link of a list of their own.
 
     A footer column is a heading over a list of links, so a row of columns is
     detected as cards that say something beyond their link — the heading — and
     each card's link is merely the first entry of its column. On crates.io that
     made "rust-lang.org, The Cargo Book, Usage Policy" the result list. The test is
-    per record: each link must sit in another detected list that shares nothing
-    else with this one. A list nested inside one larger list shares all its links
-    with it and is not excluded, and a quote card's author link is in no tag list.
+    per record: a link heads a list when it sits in another detected list that
+    shares nothing else with this one. A list nested inside one larger list shares
+    all its links with it and is not excluded, and a quote card's author link is
+    in no tag list.
+
+    More than half, not all. go.dev's row of use-case columns ends in a "More use
+    cases" card built like the columns with no list under it, and one record
+    heading nothing kept the whole row as the result list. A result list in which
+    one link also starts a list of related links is still mostly records that head
+    nothing, and stays.
     """
     mine = set(paths)
-    return all(any(set(other) & mine == {path} for other in candidates) for path in paths)
+    heads = sum(any(set(other) & mine == {path} for other in candidates) for path in paths)
+    return heads * 2 > len(paths)
 
 
 def _worst(members: list[NormalizedElement]) -> NormalizedElement:

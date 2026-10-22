@@ -179,6 +179,46 @@ def test_footer_columns_whose_links_each_head_a_list_are_not_the_result_list() -
     assert find_result_links(elements, collections) == crates
 
 
+def test_a_row_of_columns_ending_in_a_more_card_is_not_the_result_list() -> None:
+    """go.dev: three use-case columns, each a heading over a list of packages, and
+    a "More use cases" card built like them with no list under it. The card heads
+    nothing, and when every record had to head a list that one card kept the row,
+    so the first package of each column became the result list.
+    """
+    companies = [a_link(f"el_r{n}", f"main>ul>li[{n}]>a") for n in range(1, 6)]
+    columns = [
+        [a_link(f"el_f{c}{n}", f"section>ul>li[{c}]>div[2]>ul>li[{n}]>a") for n in (1, 2, 3)]
+        for c in (1, 2, 3)
+    ]
+    more = a_link("el_more", "section>ul>li[4]>div[2]>a", resolved_label="More use cases")
+    collections = [
+        a_list_of(companies, link_only=True, collection_id="companies"),
+        a_list_of([column[0] for column in columns] + [more], collection_id="use_cases"),
+        *(
+            a_list_of(column, link_only=True, collection_id=f"column_{c}")
+            for c, column in enumerate(columns)
+        ),
+    ]
+    elements = companies + [link for column in columns for link in column] + [more]
+    assert find_result_links(elements, collections) == companies
+
+
+def test_a_result_list_where_one_link_heads_another_list_is_still_a_candidate() -> None:
+    """One result whose link also starts a list of related links is one record
+    among three, not a row of columns. Fewer than half head a list, so it stays.
+    """
+    results = [a_link(f"el_{n}", f"main>ul>li[{n}]>a") for n in (1, 2, 3)]
+    related = [results[0]] + [a_link(f"el_s{n}", f"aside>ul>li[{n}]>a") for n in (2, 3)]
+    tags = [a_link(f"el_t{n}", f"aside>p>a[{n}]") for n in range(1, 6)]
+    collections = [
+        a_list_of(results, collection_id="results"),
+        a_list_of(related, link_only=True, collection_id="related"),
+        a_list_of(tags, link_only=True, collection_id="tags"),
+    ]
+    elements = results + related[1:] + tags
+    assert find_result_links(elements, collections) == results
+
+
 def test_a_list_inside_one_larger_list_is_still_a_candidate() -> None:
     """Sharing links with one other list is not heading lists of its own: the three
     featured results also appear in the full list of five, and win over it.
