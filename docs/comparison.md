@@ -137,8 +137,9 @@ one alone, but an agent offered this would still open the wrong thing. `go.dev`
 and `www.python.org` were in this table until the link-run fix, and
 `news.ycombinator.com` until the story-row fix: its footer's eight links, and
 before that its thirty user names. The pypi row is kept visible here rather than
-filtered by a rule that would only move the mistake: on `pypi.org` the next
-candidate is two paragraphs of introduction.
+filtered by a rule that breaks other pages: counting only links inside `<main>`
+removes it and gives `djangoproject.com`, `www.w3.org` and
+`developer.mozilla.org` a wrong list each (see `docs/progress.md`).
 
 Two more compiled a wrong target that binding refused, so it was never offered:
 `www.openstreetmap.org` (the `Fastly` and `Terms of Use` links) and

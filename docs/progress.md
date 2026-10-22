@@ -2212,3 +2212,34 @@ are the same: thirteen of seventeen pages (76%), twenty-one refusals.
 
 Still open: `pypi.org`'s legal footer, whose links sit in sentences; `arxiv.org`
 and `docs.python.org`, where only part of the right list is found.
+
+### `pypi.org`'s legal notice: one rule measured and not kept (2026-10-22)
+
+`pypi.org`'s "open a result" still points at three links of its legal notice. A
+fix was measured and is not in the code.
+
+The rule tried: on a page with a `<main>` landmark, only links inside it can be a
+result list. The notice is a `div` after the page's `<footer>`, so on `pypi.org`
+the rule leaves nothing, which is right. It was run over the robots-allowed
+coverage pages, and three got worse. The news lists of `djangoproject.com` and
+`www.w3.org`, the result list on each, sit outside `<main>`; inside it, the
+first page's list became "Forum - Post a question / Discord - Chat with us" and
+the second's "Ways to get involved / Members". `developer.mozilla.org`, which
+compiles no result list, gained one: "View this page on GitHub / Report a
+problem with this content". `webscraper.io`, `docs.python.org`,
+`www.rust-lang.org`, `arxiv.org` and `huggingface.co` were unchanged. One page
+fixed and three broken is not a fix.
+
+Without the notice, `pypi.org` would still compile nothing only by a tie. Two
+collections of two links remain, the banner's (`browse projects`, `organization
+account`) and the introduction's two "Learn …" links, and equal size is left
+uncompiled. The earlier note in `docs/comparison.md`, that the introduction
+would win next, was not measured and is corrected there.
+
+Not tried: excluding what comes after the page's `<footer>`. The rule sees
+collections by structural path, which stops at the `<footer>` and so cannot say
+what follows it; knowing would take a new field on elements or records, a
+schema change (rule 7) made for one page.
+
+Still open: `pypi.org`'s legal notice; `arxiv.org` and `docs.python.org`, where
+only part of the right list is found.
