@@ -6,8 +6,7 @@ worth nothing, so coverage comes first.
 ## Does it find anything on pages nobody here wrote?
 
 Twenty-two public pages, one visit each, `robots.txt` fetched and honoured per
-host. Observed **2026-10-13**; `books.toscrape.com` timed out on that run and was
-visited once more the same evening, and that visit is the one recorded.
+host. Observed **2026-10-22**, in a single run.
 
 ```bash
 uv run python -m benchmarks.measure_coverage
@@ -19,23 +18,45 @@ uv run python -m benchmarks.measure_coverage
 | skipped by `robots.txt` | 3 |
 | failed to load | 1 (`www.gnu.org`, timeout) |
 | **observed** | **18** |
-| had something a compiler could want | 16 |
-| **…and a capability was compiled** | **13 (81%)** |
+| had something a compiler could want | 17 |
+| **…and a capability was compiled** | **14 (82%)** |
 | state-changing candidates refused | **21** |
 
 The capabilities are real ones on real sites: search on `python.org`, `pypi.org`,
-`djangoproject.com` and `openstreetmap.org`; result-opening on
+`crates.io`, `djangoproject.com` and `openstreetmap.org`; result-opening on
 `books.toscrape.com`, `quotes.toscrape.com`, `arxiv.org`, `w3.org`, `debian.org`,
 `go.dev`, `docs.python.org` and `developer.mozilla.org`; next-page on
 `news.ycombinator.com`.
 
-**The 21 refusals matter as much as the 13 successes.** Twenty of them are the
+**The 21 refusals matter as much as the 14 successes.** Twenty of them are the
 "add to basket" forms on `books.toscrape.com` and one is a subscription form on
 `debian.org`. A low-level agent sees those as buttons and can press them. WCC
 classified them as state-changing, reported them, and did not offer them. That is
 the actual product; the token figures below are a side effect of it.
 
-### What changed since 2026-08-11
+### What changed since 2026-10-13
+
+Opening a page now waits for it to stop changing before the first observation
+([`progress.md`](progress.md), 2026-10-22). Before that, the first observation was
+taken at the load event, and a client-rendered page had not drawn anything yet.
+
+| Page | 2026-10-13 | 2026-10-22 | Reading |
+|---|---|---|---|
+| `crates.io` | 0 elements, nothing | 89 elements, search, open a result | the fix; "open a result" is wrong, see below |
+| `www.djangoproject.com` | search | search, open a result | "open a result" now binds, and it is wrong, see below |
+
+Element counts moved by one to five on six other pages; no other capability changed.
+The run also now records templates that compiled but did not bind, which the
+October 13 file did not, so the bindings below cannot be compared with it:
+
+| Page | Compiled, not bound | Why |
+|---|---|---|
+| `huggingface.co` | `open_result_item`, `navigate_to_page` | binding re-classified the risk on the live page and it rose from low to high |
+| `docs.python.org` | both search forms | the same |
+| `www.openstreetmap.org` | `open_result_item` | the same |
+| `www.rust-lang.org` | `open_result_item` | its container no longer resolved exactly once |
+
+### What changed from 2026-08-11 to 2026-10-13
 
 The August run observed 17 pages and compiled something on 11. "Open a result"
 now comes from a detected collection rather than from the largest group of
@@ -50,9 +71,9 @@ pages:
 | `www.djangoproject.com` | search, open a result | search | the only list outside navigation is the footer; its binding is refused |
 
 `crates.io` went from search and open-a-result to nothing because the page
-yielded **zero** elements this time, against 29 in August. It is client-rendered
-and the observation, not the compiler, came back empty; why it did is not yet
-investigated.
+yielded **zero** elements that time, against 29 in August. It is client-rendered
+and the observation, not the compiler, came back empty: it was read before the
+page had rendered. Fixed on 2026-10-22, above.
 
 ### Compiled, and wrong
 
@@ -60,8 +81,10 @@ investigated.
 |---|---|
 | `pypi.org` | three footer links (`trademarks`, …). The footer is a `div`, not a `<footer>`, so it is not excluded as navigation, and the home page has no result list to beat it |
 | `news.ycombinator.com` | the thirty user names. A story is three table rows and records are detected one row at a time; the title row's first link is the upvote arrow, so taking it would be worse |
+| `crates.io` | three footer links, one from each footer column (`rust-lang.org`, `The Cargo Book`, `Usage Policy`). The footer columns are detected as cards with a heading beyond their link, and cards that say something beyond their link are preferred to the page's real lists of ten crates, which are bare links |
+| `www.djangoproject.com` | five footer links, one from each footer column (`About Django`, `Join a Group`, …), for the same reason |
 
-Neither changes the page count — both pages also have a correct capability — but
+None of these changes the page count — every one of these pages also has a correct capability — but
 an agent offered these would open the wrong thing. They are kept visible here
 rather than filtered by a rule that would only move the mistake: on `pypi.org` the
 next candidate is two paragraphs of introduction.
@@ -74,10 +97,9 @@ are not the same event.
 | Page | Reading |
 |---|---|
 | `example.com` | correct — one paragraph and one link |
-| `www.rust-lang.org` | probably correct — no forms |
+| `www.rust-lang.org` | probably correct — no forms; "open a result" compiled and did not bind |
 | `webscraper.io` | **not investigated** — 41 elements, no forms, nothing compiled |
-| `crates.io` | **an observation failure** — zero elements, see above |
-| `huggingface.co` | **unexplained** — 130 elements, client-rendered, nothing compiled |
+| `huggingface.co` | **not yet explained** — 133 elements; "open a result" and "go to page" compiled, and binding refused both because their risk rose from low to high on the live page |
 
 # What one observation costs
 

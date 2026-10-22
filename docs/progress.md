@@ -1893,3 +1893,37 @@ test suite went from 80 s to 118 s. What it does not catch: a render scheduled
 later than the quiet period with nothing in flight looks like a finished page,
 which is the settle definition and is stated in the new fixture. `late-render`
 fails on the old code; `ticking-page` holds the best-effort half.
+
+### Coverage after the open settle (2026-10-22)
+
+The twenty-two-page run was repeated with the settle on open
+(`benchmarks/results/coverage-20261022.json`). Eighteen pages were observed, as
+before: three skipped by `robots.txt`, and `www.gnu.org` timed out at 20 s again.
+Seventeen had something to find, up from sixteen, and fourteen compiled a
+capability, up from thirteen (82%). Refusals are unchanged at twenty-one.
+
+Two pages changed. `crates.io` went from zero elements to 89 and compiled search
+and "open a result"; `www.djangoproject.com` gained "open a result" beside its
+search. Element counts moved by one to five on six other pages and no other
+capability changed.
+
+Both new "open a result" capabilities are wrong. Each points at footer links, one
+per footer column: `rust-lang.org`, `The Cargo Book`, `Usage Policy` on crates.io,
+and `About Django`, `Join a Group`, … on djangoproject. The footer columns are
+detected as cards whose records carry a heading beyond their link, and
+`find_result_links` prefers such records to bare links; crates.io's real lists of
+ten crates are bare, so the footer wins. Each card's activation link is also the
+first member of the column's own list, which is a different detected collection.
+That is the fix to try next, with the opposite case — result cards that contain a
+list of tags — in the fixture, because excluding those would be the same mistake
+in reverse. `pypi.org`'s footer target is a list of prose links and is not covered
+by it.
+
+The run now also records templates that compiled and did not bind. Binding
+refused `open_result_item` and `navigate_to_page` on `huggingface.co`,
+`open_result_item` on `www.openstreetmap.org`, and both search forms on
+`docs.python.org`, each because the risk read on the live page was higher than
+the compiled one. So huggingface does not compile nothing, as the 2026-10-13 run
+suggested; it compiles two templates and refuses them. Whether that refusal is
+right is not yet investigated. On `www.rust-lang.org` "open a result" compiled and
+its container was not found exactly once at binding.

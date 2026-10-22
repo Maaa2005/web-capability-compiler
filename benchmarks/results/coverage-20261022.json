@@ -1,0 +1,435 @@
+[
+  {
+    "url": "https://example.com/",
+    "host": "example.com",
+    "note": "one paragraph, one link",
+    "observed_at": "2026-10-22T07:09:18+00:00",
+    "allowed": true,
+    "capabilities": [],
+    "categories": [],
+    "refused_codes": [],
+    "unbound": [],
+    "refused_above_low": 0,
+    "interactive_elements": 1,
+    "forms_seen": 0,
+    "error": null
+  },
+  {
+    "url": "https://quotes.toscrape.com/",
+    "host": "quotes.toscrape.com",
+    "note": "a quote listing, built for scraping",
+    "observed_at": "2026-10-22T07:09:22+00:00",
+    "allowed": true,
+    "capabilities": [
+      "open_result_item"
+    ],
+    "categories": [
+      "navigate"
+    ],
+    "refused_codes": [],
+    "unbound": [],
+    "refused_above_low": 0,
+    "interactive_elements": 55,
+    "forms_seen": 0,
+    "error": null
+  },
+  {
+    "url": "https://books.toscrape.com/",
+    "host": "books.toscrape.com",
+    "note": "a product grid, built for scraping",
+    "observed_at": "2026-10-22T07:09:27+00:00",
+    "allowed": true,
+    "capabilities": [
+      "open_result_item"
+    ],
+    "categories": [
+      "navigate"
+    ],
+    "refused_codes": [
+      "generic_data_entry_form",
+      "generic_data_entry_form",
+      "generic_data_entry_form",
+      "generic_data_entry_form",
+      "generic_data_entry_form",
+      "generic_data_entry_form",
+      "generic_data_entry_form",
+      "generic_data_entry_form",
+      "generic_data_entry_form",
+      "generic_data_entry_form",
+      "generic_data_entry_form",
+      "generic_data_entry_form",
+      "generic_data_entry_form",
+      "generic_data_entry_form",
+      "generic_data_entry_form",
+      "generic_data_entry_form",
+      "generic_data_entry_form",
+      "generic_data_entry_form",
+      "generic_data_entry_form",
+      "generic_data_entry_form"
+    ],
+    "unbound": [],
+    "refused_above_low": 20,
+    "interactive_elements": 114,
+    "forms_seen": 20,
+    "error": null
+  },
+  {
+    "url": "https://webscraper.io/test-sites/e-commerce/allinone",
+    "host": "webscraper.io",
+    "note": "a test e-commerce page",
+    "observed_at": "2026-10-22T07:09:33+00:00",
+    "allowed": true,
+    "capabilities": [],
+    "categories": [],
+    "refused_codes": [],
+    "unbound": [],
+    "refused_above_low": 0,
+    "interactive_elements": 41,
+    "forms_seen": 0,
+    "error": null
+  },
+  {
+    "url": "https://www.python.org/",
+    "host": "www.python.org",
+    "note": "project home with search",
+    "observed_at": "2026-10-22T07:09:38+00:00",
+    "allowed": true,
+    "capabilities": [
+      "submit_search_form",
+      "open_result_item"
+    ],
+    "categories": [
+      "search",
+      "navigate"
+    ],
+    "refused_codes": [],
+    "unbound": [],
+    "refused_above_low": 0,
+    "interactive_elements": 149,
+    "forms_seen": 1,
+    "error": null
+  },
+  {
+    "url": "https://docs.python.org/3/",
+    "host": "docs.python.org",
+    "note": "documentation index with search",
+    "observed_at": "2026-10-22T07:09:42+00:00",
+    "allowed": true,
+    "capabilities": [
+      "open_result_item"
+    ],
+    "categories": [
+      "navigate"
+    ],
+    "refused_codes": [],
+    "unbound": [
+      "submit_search_form: risk rose from low to high on this page",
+      "submit_search_form_2: risk rose from low to high on this page"
+    ],
+    "refused_above_low": 0,
+    "interactive_elements": 78,
+    "forms_seen": 2,
+    "error": null
+  },
+  {
+    "url": "https://pypi.org/",
+    "host": "pypi.org",
+    "note": "a package index with search",
+    "observed_at": "2026-10-22T07:09:46+00:00",
+    "allowed": true,
+    "capabilities": [
+      "submit_search_form",
+      "open_result_item"
+    ],
+    "categories": [
+      "search",
+      "navigate"
+    ],
+    "refused_codes": [],
+    "unbound": [],
+    "refused_above_low": 0,
+    "interactive_elements": 57,
+    "forms_seen": 1,
+    "error": null
+  },
+  {
+    "url": "https://crates.io/",
+    "host": "crates.io",
+    "note": "a package index, client-rendered",
+    "observed_at": "2026-10-22T07:09:50+00:00",
+    "allowed": true,
+    "capabilities": [
+      "submit_search_form",
+      "open_result_item"
+    ],
+    "categories": [
+      "search",
+      "navigate"
+    ],
+    "refused_codes": [],
+    "unbound": [],
+    "refused_above_low": 0,
+    "interactive_elements": 89,
+    "forms_seen": 1,
+    "error": null
+  },
+  {
+    "url": "https://www.rust-lang.org/",
+    "host": "www.rust-lang.org",
+    "note": "project home",
+    "observed_at": "2026-10-22T07:09:54+00:00",
+    "allowed": true,
+    "capabilities": [],
+    "categories": [],
+    "refused_codes": [],
+    "unbound": [
+      "open_result_item: open_result_item.result_collection is stale: no candidate matched exactly once (structural_path=3)"
+    ],
+    "refused_above_low": 0,
+    "interactive_elements": 37,
+    "forms_seen": 0,
+    "error": null
+  },
+  {
+    "url": "https://go.dev/",
+    "host": "go.dev",
+    "note": "project home with search",
+    "observed_at": "2026-10-22T07:09:58+00:00",
+    "allowed": true,
+    "capabilities": [
+      "open_result_item"
+    ],
+    "categories": [
+      "navigate"
+    ],
+    "refused_codes": [],
+    "unbound": [],
+    "refused_above_low": 0,
+    "interactive_elements": 139,
+    "forms_seen": 0,
+    "error": null
+  },
+  {
+    "url": "https://www.djangoproject.com/",
+    "host": "www.djangoproject.com",
+    "note": "project home with search",
+    "observed_at": "2026-10-22T07:10:03+00:00",
+    "allowed": true,
+    "capabilities": [
+      "submit_search_form",
+      "open_result_item"
+    ],
+    "categories": [
+      "search",
+      "navigate"
+    ],
+    "refused_codes": [],
+    "unbound": [],
+    "refused_above_low": 0,
+    "interactive_elements": 75,
+    "forms_seen": 1,
+    "error": null
+  },
+  {
+    "url": "https://flask.palletsprojects.com/en/stable/",
+    "host": "flask.palletsprojects.com",
+    "note": "documentation with search",
+    "observed_at": "2026-10-22T07:10:08+00:00",
+    "allowed": false,
+    "capabilities": [],
+    "categories": [],
+    "refused_codes": [],
+    "unbound": [],
+    "refused_above_low": 0,
+    "interactive_elements": 0,
+    "forms_seen": 0,
+    "error": "robots.txt disallows this path"
+  },
+  {
+    "url": "https://news.ycombinator.com/",
+    "host": "news.ycombinator.com",
+    "note": "a link listing, table layout",
+    "observed_at": "2026-10-22T07:10:10+00:00",
+    "allowed": true,
+    "capabilities": [
+      "navigate_next_page",
+      "open_result_item"
+    ],
+    "categories": [
+      "navigate",
+      "navigate"
+    ],
+    "refused_codes": [
+      "generic_data_entry_form"
+    ],
+    "unbound": [],
+    "refused_above_low": 0,
+    "interactive_elements": 231,
+    "forms_seen": 1,
+    "error": null
+  },
+  {
+    "url": "https://lobste.rs/",
+    "host": "lobste.rs",
+    "note": "a link listing",
+    "observed_at": "2026-10-22T07:10:14+00:00",
+    "allowed": false,
+    "capabilities": [],
+    "categories": [],
+    "refused_codes": [],
+    "unbound": [],
+    "refused_above_low": 0,
+    "interactive_elements": 0,
+    "forms_seen": 0,
+    "error": "robots.txt disallows this path"
+  },
+  {
+    "url": "https://developer.mozilla.org/en-US/docs/Web/HTML",
+    "host": "developer.mozilla.org",
+    "note": "a long documentation page",
+    "observed_at": "2026-10-22T07:10:17+00:00",
+    "allowed": true,
+    "capabilities": [
+      "open_result_item"
+    ],
+    "categories": [
+      "navigate"
+    ],
+    "refused_codes": [],
+    "unbound": [],
+    "refused_above_low": 0,
+    "interactive_elements": 378,
+    "forms_seen": 0,
+    "error": null
+  },
+  {
+    "url": "https://en.wikipedia.org/wiki/Web_scraping",
+    "host": "en.wikipedia.org",
+    "note": "an article with a search form",
+    "observed_at": "2026-10-22T07:10:22+00:00",
+    "allowed": false,
+    "capabilities": [],
+    "categories": [],
+    "refused_codes": [],
+    "unbound": [],
+    "refused_above_low": 0,
+    "interactive_elements": 0,
+    "forms_seen": 0,
+    "error": "robots.txt disallows this path"
+  },
+  {
+    "url": "https://www.gnu.org/",
+    "host": "www.gnu.org",
+    "note": "an old-fashioned static site",
+    "observed_at": "2026-10-22T07:10:25+00:00",
+    "allowed": true,
+    "capabilities": [],
+    "categories": [],
+    "refused_codes": [],
+    "unbound": [],
+    "refused_above_low": 0,
+    "interactive_elements": 0,
+    "forms_seen": 0,
+    "error": "driver_timeout: loading https://www.gnu.org/ exceeded 20000 ms"
+  },
+  {
+    "url": "https://www.debian.org/",
+    "host": "www.debian.org",
+    "note": "an old-fashioned static site with search",
+    "observed_at": "2026-10-22T07:10:48+00:00",
+    "allowed": true,
+    "capabilities": [
+      "open_result_item"
+    ],
+    "categories": [
+      "navigate"
+    ],
+    "refused_codes": [
+      "generic_data_entry_form"
+    ],
+    "unbound": [],
+    "refused_above_low": 1,
+    "interactive_elements": 39,
+    "forms_seen": 1,
+    "error": null
+  },
+  {
+    "url": "https://www.w3.org/",
+    "host": "www.w3.org",
+    "note": "a standards body home page",
+    "observed_at": "2026-10-22T07:10:59+00:00",
+    "allowed": true,
+    "capabilities": [
+      "open_result_item"
+    ],
+    "categories": [
+      "navigate"
+    ],
+    "refused_codes": [],
+    "unbound": [],
+    "refused_above_low": 0,
+    "interactive_elements": 48,
+    "forms_seen": 0,
+    "error": null
+  },
+  {
+    "url": "https://arxiv.org/",
+    "host": "arxiv.org",
+    "note": "a preprint archive with search",
+    "observed_at": "2026-10-22T07:11:03+00:00",
+    "allowed": true,
+    "capabilities": [
+      "open_result_item"
+    ],
+    "categories": [
+      "navigate"
+    ],
+    "refused_codes": [
+      "ambiguous_submission_mechanism"
+    ],
+    "unbound": [],
+    "refused_above_low": 0,
+    "interactive_elements": 260,
+    "forms_seen": 1,
+    "error": null
+  },
+  {
+    "url": "https://www.openstreetmap.org/",
+    "host": "www.openstreetmap.org",
+    "note": "a map application",
+    "observed_at": "2026-10-22T07:11:09+00:00",
+    "allowed": true,
+    "capabilities": [
+      "submit_search_form"
+    ],
+    "categories": [
+      "search"
+    ],
+    "refused_codes": [],
+    "unbound": [
+      "open_result_item: risk rose from low to high on this page"
+    ],
+    "refused_above_low": 0,
+    "interactive_elements": 39,
+    "forms_seen": 1,
+    "error": null
+  },
+  {
+    "url": "https://huggingface.co/models",
+    "host": "huggingface.co",
+    "note": "a model listing, client-rendered",
+    "observed_at": "2026-10-22T07:11:17+00:00",
+    "allowed": true,
+    "capabilities": [],
+    "categories": [],
+    "refused_codes": [],
+    "unbound": [
+      "navigate_to_page: risk rose from low to high on this page",
+      "open_result_item: risk rose from low to high on this page"
+    ],
+    "refused_above_low": 0,
+    "interactive_elements": 133,
+    "forms_seen": 0,
+    "error": null
+  }
+]

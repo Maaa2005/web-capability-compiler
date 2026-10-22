@@ -78,28 +78,28 @@ about.
 ## What it does on pages nobody here wrote
 
 Twenty-two public pages, one visit each, `robots.txt` fetched and honoured per
-host. Observed 2026-10-13 — reproduce with `uv run python -m benchmarks.measure_coverage`.
+host. Observed 2026-10-22 — reproduce with `uv run python -m benchmarks.measure_coverage`.
 
 | | |
 |---|---|
 | observed (3 skipped by robots.txt, 1 timed out) | 18 |
-| had something a compiler could want | 16 |
-| **…and a capability was compiled** | **13 (81%)** |
+| had something a compiler could want | 17 |
+| **…and a capability was compiled** | **14 (82%)** |
 | **state-changing candidates refused** | **21** |
 
 The capabilities are ordinary ones on ordinary sites: search on `python.org`,
-`pypi.org`, `djangoproject.com`, `openstreetmap.org`; opening a result on
+`pypi.org`, `crates.io`, `djangoproject.com`, `openstreetmap.org`; opening a result on
 `books.toscrape.com`, `quotes.toscrape.com`, `arxiv.org`, `w3.org`, `debian.org`,
 `go.dev`, `docs.python.org`, `developer.mozilla.org`; paging on
 `news.ycombinator.com`.
 
-**The 21 refusals matter as much as the 13 successes.** Twenty are the "add to
+**The 21 refusals matter as much as the 14 successes.** Twenty are the "add to
 basket" forms on a shop and one is a subscription form. A low-level agent sees
 those as buttons and can press them.
 
-Not every compiled capability is right. On `pypi.org` "open a result" points at
-three footer links and on Hacker News at the thirty user names; neither page's
-count depends on it, and both are listed in
+Not every compiled capability is right. On `pypi.org`, `crates.io` and
+`djangoproject.com` "open a result" points at footer links and on Hacker News at
+the thirty user names; no page's count depends on it, and all four are listed in
 [`docs/comparison.md`](docs/comparison.md) with where it found nothing, and why —
 named rather than averaged away.
 
