@@ -84,7 +84,7 @@ host. Observed 2026-10-22 — reproduce with `uv run python -m benchmarks.measur
 |---|---|
 | observed (3 skipped by robots.txt, 1 timed out) | 18 |
 | had something a compiler could want | 17 |
-| **…and a capability was compiled** | **14 (82%)** |
+| **…and a capability was compiled** | **13 (76%)** |
 | **state-changing candidates refused** | **21** |
 
 The capabilities are ordinary ones on ordinary sites: search on `python.org`,
@@ -93,16 +93,18 @@ The capabilities are ordinary ones on ordinary sites: search on `python.org`,
 `djangoproject.com`, and on part of the lists of `arxiv.org` and `docs.python.org`;
 paging on `news.ycombinator.com`.
 
-**The 21 refusals matter as much as the 14 successes.** Twenty are the "add to
+**The 21 refusals matter as much as the 13 successes.** Twenty are the "add to
 basket" forms on a shop and one is a subscription form. A low-level agent sees
 those as buttons and can press them.
 
-Not every compiled capability is right. "Open a result" points at the first link
-of each use-case column on `go.dev`, at the first project of each "Use Python
-for…" row on `python.org`, at footer links on `pypi.org`, and at the thirty user
-names on Hacker News. `go.dev` has nothing else, so one of the 14 is counted on a
-wrong capability. All four are listed in [`docs/comparison.md`](docs/comparison.md)
-with where it found nothing, and why — named rather than averaged away.
+Not every compiled capability is right. "Open a result" points at footer links
+on `pypi.org` and on Hacker News; both pages also have a correct one (search,
+next page). Before the latest fix, `go.dev`'s use-case columns and
+`python.org`'s "Use Python for…" rows were taken as result lists too. Neither
+page offers "open a result" now, and `go.dev`, which had nothing else, compiles
+nothing — a wrong capability became none, which is why the count fell from 14.
+All of it is listed in [`docs/comparison.md`](docs/comparison.md) with where it
+found nothing, and why — named rather than averaged away.
 
 ---
 

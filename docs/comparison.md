@@ -6,8 +6,8 @@ worth nothing, so coverage comes first.
 ## Does it find anything on pages nobody here wrote?
 
 Twenty-two public pages, one visit each, `robots.txt` fetched and honoured per
-host. Observed **2026-10-22**, in a single run after the footer-column fix below
-(`benchmarks/results/coverage-20261022-footer.json`).
+host. Observed **2026-10-22**, in a single run after the footer-column and
+link-run fixes below (`benchmarks/results/coverage-20261022-linkruns.json`).
 
 ```bash
 uv run python -m benchmarks.measure_coverage
@@ -20,7 +20,7 @@ uv run python -m benchmarks.measure_coverage
 | failed to load | 1 (`www.gnu.org`, timeout) |
 | **observed** | **18** |
 | had something a compiler could want | 17 |
-| **…and a capability was compiled** | **14 (82%)** |
+| **…and a capability was compiled** | **13 (76%)** |
 | state-changing candidates refused | **21** |
 
 The capabilities are real ones on real sites: search on `python.org`, `pypi.org`,
@@ -33,11 +33,12 @@ link but only part of it: arxiv's 11 physics archives without mathematics,
 computer science and the rest, and the 6 index sections of one column of
 docs.python.org.
 
-Not all fourteen pages are carried by a correct capability. `go.dev`'s only
-capability is wrong, so the 14 includes one page that compiled something an agent
-should not use; see [Compiled, and wrong](#compiled-and-wrong).
+Every one of the thirteen pages has at least one correct capability. Two of them,
+`pypi.org` and `news.ycombinator.com`, also have a wrong one; see
+[Compiled, and wrong](#compiled-and-wrong). The run before the link-run fix
+counted fourteen, and one of those (`go.dev`) was carried only by a wrong one.
 
-**The 21 refusals matter as much as the 14 successes.** Twenty of them are the
+**The 21 refusals matter as much as the 13 successes.** Twenty of them are the
 "add to basket" forms on `books.toscrape.com` and one is a subscription form on
 `debian.org`. A low-level agent sees those as buttons and can press them. WCC
 classified them as state-changing, reported them, and did not offer them. That is
@@ -67,6 +68,21 @@ have the same totals and differ on four pages:
 | `www.djangoproject.com` | search, open a result (five footer links) | search, open a result (the two latest news posts) |
 | `developer.mozilla.org` | open a result (footer links) | nothing |
 | `webscraper.io` | nothing | open a result (the three products) |
+
+The coverage run now records the labels each result list was taken from, and
+reading them found two more wrong lists. Two fixes followed
+([`progress.md`](progress.md), "Every result list by its targets, and runs of
+links"), and the run after them (`coverage-20261022-linkruns.json`) differs from
+the footer run on three pages:
+
+| Page | After the footer fix | After the link-run fix |
+|---|---|---|
+| `go.dev` | open a result (the first package of each use-case column) | nothing |
+| `www.python.org` | search, open a result (the first project of each "Use Python for…" row) | search |
+| `news.ycombinator.com` | next page, open a result (the thirty user names) | next page, open a result (the footer's eight links) |
+
+The compiled count falls from fourteen to thirteen because `go.dev` had nothing
+else. That is a wrong capability becoming none, not lost coverage.
 
 The run also now records templates that compiled but did not bind, which the
 October 13 file did not, so the bindings below cannot be compared with it:
@@ -101,15 +117,13 @@ page had rendered. Fixed on 2026-10-22, above.
 
 | Page | What "open a result" points at |
 |---|---|
-| `go.dev` | the first package of each use-case column (`cloud.google.com/go`, `spf13/cobra`, `net/http`, …) plus a "More use cases" card. Each column is a heading over a list of packages, like a footer, but the extra card heads no list, so the footer rule does not remove the row |
-| `www.python.org` | the first project of each "Use Python for…" row (`Django`, `tkInter`, `PyTorch`, …). Each row is a run of sibling links rather than a list the collection detector reports, so nothing marks them as the heads of lists |
 | `pypi.org` | three footer links (`trademarks`, …). The footer is a `div`, not a `<footer>`, so it is not excluded as navigation, and its links sit in sentences, so no list of their own marks them |
-| `news.ycombinator.com` | the thirty user names. A story is three table rows and records are detected one row at a time; the title row's first link is the upvote arrow, so taking it would be worse |
+| `news.ycombinator.com` | the footer's eight links (`Guidelines`, `FAQ`, `Lists`, …). Until the link-run fix it was the thirty user names, which are now dropped because each heads its "user / hide / comments" run. The stories are not a candidate: a story is three table rows, records are detected one row at a time, and the title row's first link is the upvote arrow, so taking it would be worse |
 
-`go.dev`'s count depends on this: it is the page's only capability, so one of the
-fourteen pages is counted on a wrong capability. The other three also have a
-correct one — search on python.org and pypi, next-page on Hacker News — and an
-agent offered these would still open the wrong thing. They are kept visible here
+Both pages also have a correct capability — search on pypi, next-page on Hacker
+News — so neither is counted on a wrong one alone, but an agent offered these
+would still open the wrong thing. `go.dev` and `www.python.org` were in this
+table until the link-run fix. They are kept visible here
 rather than filtered by a rule that would only move the mistake: on `pypi.org` the
 next candidate is two paragraphs of introduction.
 

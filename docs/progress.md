@@ -2122,3 +2122,54 @@ Not measured by this run: capability evidence coverage, which the Phase 7 rules
 want at 100% and which the Phase 3 acceptance test enforces on four fixtures (not
 the large catalog); and any public site.
 
+
+### Every result list by its targets, and runs of links (2026-10-22)
+
+The previous section found go.dev and python.org wrong only by opening every
+target by hand. `benchmarks/measure_coverage.py` now records, per page, the labels
+of the result list "open a result" was compiled from, the number of collections,
+and the snapshot's warnings, and prints the first three labels of each list. A
+wrong list is now visible in the record rather than only to whoever reads it.
+
+Two fixes, each against a fixture that reproduced the page:
+
+- **go.dev's extra card** (`1045141`). A row of columns is dropped as a result
+  list when a strict majority of its records head a list of their own, rather than
+  every one of them. The "More use cases" card heads nothing, and one such card
+  kept the row. `use-case-columns` is go.dev in miniature.
+- **python.org's link runs** (`6d6d70d`). The collection detector now looks inside
+  `span`s and counts a child that is itself a link as content. Each "Use Python
+  for…" row is a label and a span of links; the runs were never reported, so
+  nothing marked each row's first link as the head of one. `link-run-rows` is
+  python.org in miniature. The quotes test now also asserts that each quote's own
+  tags are reported as a run, and that the result list is still the quotes.
+
+The twenty-two-page run was repeated
+(`benchmarks/results/coverage-20261022-linkruns.json`). Observed, skipped and
+failed pages are the same as before, `www.gnu.org` timing out in both. **The
+compiled count fell from fourteen to thirteen (76%)**, and "open a result" from
+twelve pages to ten. That is two wrong lists becoming none, not a loss:
+
+- `go.dev` compiles nothing; its two remaining candidates tie.
+- `www.python.org` keeps search and compiles no result list; news and events tie.
+
+Of the ten pages that still compile "open a result", nine were also observed with
+the old detector and take the same list under both; the tenth is Hacker News,
+below. So do the three whose list compiled but did not bind. The most collections on any
+page was 34 (Hacker News), so the limit of 50 was not reached and no page warned.
+The benchmark's three fixtures have no span and no container of bare links, so
+the runs of record are unaffected.
+
+**Hacker News is still wrong, differently.** Its submitter names are dropped,
+correctly: each is now the first link of its "user / hide / comments" run. What
+wins instead is the footer's run of links (`Guidelines`, `FAQ`, …), the largest
+list left that is nothing but links, because the story rows were never a
+candidate. Making them one means opening a story by its title link rather than its
+first link, the upvote arrow, which is a change to what gets clicked and is left
+to its own fixture. More generally, a footer written as a span of links is now a
+candidate on any page; where the real result list is also bare links, it competes
+by size.
+
+Still open: Hacker News's story rows; `pypi.org`'s footer, whose links sit in
+sentences; `arxiv.org` and `docs.python.org`, where only part of the right list is
+found.

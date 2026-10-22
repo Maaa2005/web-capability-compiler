@@ -40,6 +40,7 @@ from urllib.error import URLError
 from urllib.parse import urlsplit
 from urllib.robotparser import RobotFileParser
 
+from wcc.compiler.navigation import find_result_links
 from wcc.driver.base import DriverError, DriverSettings
 from wcc.driver.playwright_driver import PlaywrightDriver
 from wcc.enrich.enricher import Enricher
@@ -109,6 +110,16 @@ class SiteCoverage:
     whose refusal is the point: a state-changing form that was reported rather
     than compiled is the safety model working."""
 
+    result_list: list[str] = field(default_factory=list)
+    """The labels of the links taken as the page's result list, in order. A
+    capability name says that a result list was compiled, not which one: go.dev
+    and www.python.org compiled ``open_result_item`` over the wrong list, and a
+    run that recorded names alone could not show it."""
+
+    collections: int = 0
+    warnings: list[str] = field(default_factory=list)
+    """What the snapshot said it left out, such as collections over the limit."""
+
     interactive_elements: int = 0
     forms_seen: int = 0
     error: str | None = None
@@ -176,6 +187,13 @@ async def visit(url: str, note: str) -> SiteCoverage:
         result.forms_seen = len({e.form_key for e in elements if e.form_key})
 
         inspection = await coordinator.inspect_page(session.session_id)
+        snapshot = inspection.snapshot
+        result.collections = len(snapshot.collections)
+        result.warnings = list(snapshot.warnings)
+        result.result_list = [
+            link.resolved_label or link.accessible_name or ""
+            for link in find_result_links(snapshot.elements, snapshot.collections)
+        ]
         for binding in inspection.capabilities:
             template = inspection.templates[binding.template_id]
             result.capabilities.append(template.name)
@@ -219,6 +237,11 @@ def report(sites: list[SiteCoverage]) -> str:
             f"{site.forms_seen} | {found} | {len(site.refused_codes)} "
             f"({site.refused_above_low}) |"
         )
+    lines += ["", "Result lists, as taken (first three of each):", ""]
+    for site in sites:
+        if site.result_list:
+            shown = ", ".join(f"`{label[:40]}`" for label in site.result_list[:3])
+            lines.append(f"- `{site.host}` ({len(site.result_list)}): {shown}")
     return "\n".join(lines)
 
 
