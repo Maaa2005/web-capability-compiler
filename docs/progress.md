@@ -2255,3 +2255,33 @@ result list. It is left for a change that can be measured against that.
 
 Still open: `pypi.org`'s legal notice; `arxiv.org` and `docs.python.org`, where
 only part of the right list is found.
+
+### Joining sibling lists: argued and not done (2026-10-22)
+
+`docs.python.org` and `arxiv.org` find only part of their result list because
+the list is split across sibling `<ul>`s. Joining such siblings into one
+collection was argued with a second model, which read the code and this file
+and nothing live, and both ended on leaving it. No code changed and no page was
+read for this.
+
+- A join would also join lists that are separate. `www.python.org`'s news and
+  events tie and compile no result list (above). If the two share a tag and an
+  item shape, a join turns that refusal into one list of news and events.
+  Whether they do was not checked; it is the first fixture to write if this is
+  reopened.
+- It could undo the footer-column rule. A row of columns is dropped because each
+  column shares only its first link with the row (`_heads_of_other_lists`). If
+  a joined list replaced the columns, it would share every heading with the row,
+  and the row would qualify again.
+- It widens the saved container to the lists' common parent, and binding
+  re-reads risk from every element under that path, so whatever sits between
+  the lists joins that check.
+- The gain is small. On `arxiv.org` the seven one-item lists are not
+  collections at all (a list needs two items), so joining collections adds
+  nothing there; `docs.python.org` would reach about eleven of twelve.
+- "Says something beyond its link" separates footer entries from the docs
+  entries, but not from separate lists like news and events, and a row of
+  headed columns says something beyond its links too.
+
+A partial list of the right items is a working capability: the agent can open
+each item found. The limit stays as documented in the README.
