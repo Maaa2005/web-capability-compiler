@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Fixture: Ticking Page</title></head>
+<body>
+  <!-- Never goes quiet, like a carousel or a live clock. Opening it has to give
+       up on settling rather than on the page. -->
+  <main><h1>Now</h1><p id="clock"></p><a href="/">Home</a></main>
+  <script>
+    setInterval(() => {
+      document.getElementById('clock').textContent = String(Date.now());
+    }, 20);
+  </script>
+</body>
+</html>

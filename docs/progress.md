@@ -1866,3 +1866,30 @@ that code "About Django" may open and "Donate to Django" is refused as
 That a footer is chosen as the result list at all is a separate question and is
 unchanged. `tests/test_navigation.py` holds the footer case; it fails on the old
 code, which rated the list low.
+
+### Opening a page waits for it to render (2026-10-22)
+
+`crates.io` reported no elements because nothing was observed after it rendered.
+`open_session` returned when `page.goto` did, at the load event, and a
+client-rendered page is an empty shell then: no link, button, or input, and an
+empty `body.innerText`. Eight seconds later the same page had eighty-five links.
+No script was blocked and the page logged no error; the settle that actions wait
+for was simply never run on the first navigation.
+
+`PlaywrightDriver.open_session` now settles the page between `goto` and the peer
+audit drain, so the audit is still the last thing before the session ID is
+returned and covers a navigation the page starts while settling. It is best
+effort: a page that never goes quiet still opens, unsettled, once
+`settle_timeout_ms` runs out. The loop moved into `_wait_settled`, which takes the
+session itself, because the session is not registered until opening succeeds.
+
+On `crates.io` the coverage visit now sees 89 elements and one form and compiles
+`submit_search_form` and `open_result_item`. Settling did not change the element
+count on `huggingface.co/models` (130), `webscraper.io` (41), or
+`quotes.toscrape.com` (55), so their missing capabilities have another cause.
+
+What it costs: every open now waits at least the 400 ms quiet period, and the
+test suite went from 80 s to 118 s. What it does not catch: a render scheduled
+later than the quiet period with nothing in flight looks like a finished page,
+which is the settle definition and is stated in the new fixture. `late-render`
+fails on the old code; `ticking-page` holds the best-effort half.

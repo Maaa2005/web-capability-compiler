@@ -284,6 +284,13 @@ class PlaywrightDriver:
 
             try:
                 await page.goto(request.url, timeout=self._limits.page_load_timeout_ms)
+                # ``goto`` returns at the load event, which a client-rendered page
+                # reaches with an empty body: crates.io had no link, button, or
+                # input at that moment and eighty-nine a second later. The first
+                # observation is the one an agent decides from, so it waits for the
+                # same settle an action does. Best effort, because a page with a
+                # carousel never goes quiet and must still open.
+                await self._settled_quietly(session)
                 # The peer check runs on a response event, which means it can still
                 # be in flight here. Waiting for it before the session ID is handed
                 # back is what makes the boundary a boundary rather than a race:
@@ -438,7 +445,14 @@ class PlaywrightDriver:
         the wait rather than banking the progress: a render that triggers another
         fetch is not a settled page, however quiet the instant between them was.
         """
-        session = self._session(session_id)
+        await self._wait_settled(self._session(session_id), timeout_ms)
+
+    async def _wait_settled(self, session: _Session, timeout_ms: int) -> None:
+        """:meth:`wait_settled` for a session that may not be registered yet.
+
+        ``open_session`` settles the page before the session ID exists for a
+        caller, so the wait has to take the session itself rather than look it up.
+        """
         budget = min(timeout_ms, self._limits.settle_timeout_ms)
         quiet_period = self._limits.settle_quiet_period_ms / 1000
         loop = asyncio.get_running_loop()
@@ -881,7 +895,7 @@ class PlaywrightDriver:
             document_id=identity.document_id,
             snapshot_id=identity.snapshot_id,
             document_changed=before is not None and identity.document_id != before,
-            settled=await self._settled_quietly(session_id),
+            settled=await self._settled_quietly(session),
             navigation_events=list(session.events),
             error_code=error_code,
             error_message=error_message,
@@ -909,10 +923,10 @@ class PlaywrightDriver:
         else:  # pragma: no cover - ActionType is closed and fully covered above
             raise DriverNotReadyError(f"{action.action} has no driver implementation")
 
-    async def _settled_quietly(self, session_id: str) -> bool:
+    async def _settled_quietly(self, session: _Session) -> bool:
         """Report whether the page settled, without turning a busy page into an error."""
         try:
-            await self.wait_settled(session_id, self._limits.settle_timeout_ms)
+            await self._wait_settled(session, self._limits.settle_timeout_ms)
         except DriverTimeoutError:
             return False
         return True

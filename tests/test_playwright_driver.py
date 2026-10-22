@@ -777,6 +777,40 @@ async def test_settling_waits_for_the_dom_to_stop_changing(
     assert await page.evaluate("() => document.querySelectorAll('div').length") >= 6
 
 
+async def test_open_session_waits_for_a_client_rendered_page(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """The first observation is of the rendered page, not the shell before it.
+
+    ``goto`` returns at the load event. A client-rendered page is empty then, and
+    opening used to hand the session back at exactly that moment, so crates.io
+    reported no elements at all. Nothing is settled explicitly here: opening is
+    what has to have waited.
+    """
+    session_id = await _open(driver, f"{fixture_server}/late-render/")
+
+    labels = {e.resolved_label for e in await driver.extract_elements(session_id)}
+    assert {"Search crates", "serde", "tokio"} <= labels
+
+
+async def test_a_page_that_never_stops_changing_still_opens(fixture_server: str) -> None:
+    """Settling at open is best effort: a carousel must not make a page unopenable."""
+    impatient = PlaywrightDriver(
+        UrlPolicy(),
+        DriverSettings(
+            allow_private_network=True,
+            limits=ResourceLimits(settle_timeout_ms=600),
+        ),
+    )
+    try:
+        info = await impatient.open_session(
+            OpenSessionRequest(url=f"{fixture_server}/ticking-page/")
+        )
+        assert info.status is SessionStatus.ACTIVE
+    finally:
+        await impatient.shutdown()
+
+
 async def test_a_page_that_never_stops_changing_times_out(
     driver: PlaywrightDriver, fixture_server: str
 ) -> None:

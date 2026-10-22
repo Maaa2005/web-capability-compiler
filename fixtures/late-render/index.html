@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Fixture: Late Render</title></head>
+<body>
+  <!-- A client-rendered shell. The load event fires on an empty body; the app
+       draws its controls a moment later, as crates.io does once its bundle has
+       booted. The delay sits inside the settle quiet period on purpose: a
+       render later than that, with nothing in flight, is indistinguishable from
+       a finished page, and the driver does not claim otherwise. -->
+  <div id="app"></div>
+  <script>
+    window.addEventListener('load', () => {
+      setTimeout(() => {
+        document.getElementById('app').innerHTML = `
+          <form role="search" action="/late-render/" method="get">
+            <label for="q">Search crates</label>
+            <input type="search" id="q" name="q">
+            <button type="submit">Search</button>
+          </form>
+          <ul aria-label="New crates">
+            <li><a href="/crates/1">serde</a></li>
+            <li><a href="/crates/2">tokio</a></li>
+          </ul>`;
+      }, 200);
+    });
+  </script>
+</body>
+</html>
