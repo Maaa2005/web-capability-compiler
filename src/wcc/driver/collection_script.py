@@ -74,12 +74,29 @@ EXTRACT_COLLECTIONS = r"""
     return parts.join('>');
   };
 
+  // The link that stands for a record: its first link that names something, or
+  // its first link when none does. A Hacker News story row starts with its upvote
+  // arrow, a link whose only content is an empty div titled "upvote", so the
+  // story opened by its first link was a vote. The name is read narrowly — the
+  // link's text, its aria-label, or an image's alt — because a title on something
+  // inside the link is a tooltip, not what the link says it opens.
+  const named = (link) => Boolean(
+    (link.textContent || '').trim() ||
+    (link.getAttribute('aria-label') || '').trim() ||
+    Array.from(link.querySelectorAll('img[alt]')).some((img) => img.getAttribute('alt').trim())
+  );
+  const recordLink = (el) => {
+    if (el.matches('a[href]')) return el;
+    const links = Array.from(el.querySelectorAll('a[href]'));
+    return links.find(named) || links[0] || null;
+  };
+
   // Where activating this record would click. A record with no link of its own is
   // reported without one rather than with its container's: opening "the record"
   // by clicking a block that merely contains a link is how an automation activates
   // whichever child happens to sit under the cursor.
   const activationPathOf = (el) => {
-    const link = el.matches('a[href]') ? el : el.querySelector('a[href]');
+    const link = recordLink(el);
     return link ? structuralPath(link) : null;
   };
 
@@ -105,8 +122,8 @@ EXTRACT_COLLECTIONS = r"""
     const fields = {};
     const heading = el.querySelector('h1,h2,h3,h4,h5,h6,[role="heading"]');
     if (heading) fields.title = clean(heading);
-    const link = el.querySelector('a[href]');
-    if (link) {
+    const link = recordLink(el);
+    if (link && link !== el) {
       fields.link_text = clean(link);
       fields.href = link.getAttribute('href') || '';
     }
@@ -117,7 +134,8 @@ EXTRACT_COLLECTIONS = r"""
     return fields;
   };
 
-  // The largest run of siblings that share one shape (specification 8.4).
+  // The runs of siblings that share one shape and are long enough to be a
+  // repetition (specification 8.4), in the order they first appear.
   //
   // Replaces two opposite mistakes that turned out to have one root. Card and
   // list detection required *every* child to match, so one pagination link, one
@@ -125,31 +143,33 @@ EXTRACT_COLLECTIONS = r"""
   // and real pages essentially always have that extra sibling. Table detection
   // checked shapes not at all, so Hacker News's spacer and navigation rows became
   // records alongside the stories.
-  //
-  // A repeated structure is a *majority* of similar siblings, not all of them and
-  // not any of them. Returning the dominant group states that once, for all three
-  // callers.
-  const dominantGroup = (children) => {
+  const repeatedGroups = (children) => {
     const groups = new Map();
     for (const child of children) {
       const key = shape(child);
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(child);
     }
-    let best = [];
-    for (const group of groups.values()) {
-      if (group.length > best.length) best = group;
-    }
     // Two is a repetition; one is a thing. The fraction stops three lookalikes
     // among twenty unrelated divs from becoming a collection.
     //
-    // A quarter, not a majority. A majority was tried first and deleted Hacker
-    // News, whose table alternates a story row, a subtext row and a spacer row —
-    // so the stories are exactly a third of the rows and a majority rule throws
-    // away the collection along with the spacers. Alternating rows are a normal
-    // way to build a listing, and a threshold that cannot see one is measuring
-    // its own strictness.
-    if (best.length < 2 || best.length * 4 < children.length) return null;
+    // A quarter, not a majority. A majority was tried first and could never see
+    // a listing built from alternating rows, like Hacker News's story, subtext
+    // and spacer: the stories are a third of the rows. A quarter keeps them in
+    // reach, but it does not decide between them, and the largest run there was
+    // not the stories; tables keep every run that passes (see below).
+    return Array.from(groups.values()).filter(
+      (group) => group.length >= 2 && group.length * 4 >= children.length
+    );
+  };
+
+  // The largest such run, the first on a tie. Lists and cards report one
+  // collection per container.
+  const dominantGroup = (children) => {
+    let best = null;
+    for (const group of repeatedGroups(children)) {
+      if (!best || group.length > best.length) best = group;
+    }
     return best;
   };
 
@@ -177,31 +197,60 @@ EXTRACT_COLLECTIONS = r"""
     });
   };
 
+  // A table's own rows, not every row inside it. Hacker News lays its page out
+  // in a table and its stories out in another one nested inside, and reading the
+  // nested rows as the outer table's made the page's spacers its largest group.
+  //
+  // Rows that hold nothing are layout: a spacer says nothing and opens nothing,
+  // and counted as rows they outvote the records they separate. A row holding a
+  // table of its own is layout too, its rows read where they belong.
+  //
+  // Every repeated run is reported, not only the largest. One listing can be
+  // built from interleaved rows — on Hacker News a story row and its subtext
+  // row — and the "More" row, built like a subtext, made the subtexts one longer
+  // than the stories. Which run is the result list is not a question of length,
+  // and choosing here would answer it before the evidence that can.
+  const hasContent = (row) => Boolean(
+    clean(row) || row.querySelector('a[href],img,input,select,textarea,button')
+  );
   for (const table of document.querySelectorAll('table')) {
-    const headers = Array.from(table.querySelectorAll('thead th')).map(clean);
-    const allRows = Array.from(table.querySelectorAll('tbody tr'));
+    const headers = Array.from(table.querySelectorAll('thead th'))
+      .filter((th) => th.closest('table') === table)
+      .map(clean);
+    const allRows = Array.from(table.tBodies)
+      .flatMap((body) => Array.from(body.rows))
+      .filter((row) => hasContent(row) && !row.querySelector('table'));
     if (allRows.length < 2) continue;
-    const rows = dominantGroup(allRows);
-    if (!rows) continue;
-    collections.push({
-      kind: 'table',
-      label: clean(table.querySelector('caption')) || null,
-      order_is_meaningful: true,
-      records: rows.map((row, index) => {
-        const cells = Array.from(row.children).map(clean);
-        const fields = {};
-        cells.forEach((cell, i) => {
-          fields[headers[i] || ('column_' + (i + 1))] = cell;
-        });
-        return {
-          ordinal: index,
-          fields,
-          shape: shape(row),
-          activation_path: activationPathOf(row),
-          link_only: linkOnly(row),
-        };
-      }),
-    });
+    for (const rows of repeatedGroups(allRows)) {
+      collections.push({
+        kind: 'table',
+        label: clean(table.querySelector('caption')) || null,
+        order_is_meaningful: true,
+        records: rows.map((row, index) => {
+          const cells = Array.from(row.children).map(clean);
+          const fields = {};
+          cells.forEach((cell, i) => {
+            fields[headers[i] || ('column_' + (i + 1))] = cell;
+          });
+          // The record's link names it, as it does a card's. Without it a story
+          // row was labelled by its first cell, the rank: entity "3." rather than
+          // the title an agent would ask for. A header that already says
+          // link_text or href keeps its column.
+          const link = recordLink(row);
+          if (link) {
+            if (!('link_text' in fields)) fields.link_text = clean(link);
+            if (!('href' in fields)) fields.href = link.getAttribute('href') || '';
+          }
+          return {
+            ordinal: index,
+            fields,
+            shape: shape(row),
+            activation_path: activationPathOf(row),
+            link_only: linkOnly(row),
+          };
+        }),
+      });
+    }
   }
 
   for (const list of document.querySelectorAll('ul,ol')) {

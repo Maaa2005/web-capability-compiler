@@ -2173,3 +2173,42 @@ by size.
 Still open: Hacker News's story rows; `pypi.org`'s footer, whose links sit in
 sentences; `arxiv.org` and `docs.python.org`, where only part of the right list is
 found.
+
+### Hacker News's stories are its result list (2026-10-22)
+
+Hacker News compiled "open a result" against its footer. The stories were never a
+candidate, for three reasons found against `story-rows`, Hacker News in
+miniature, and each fixed in the collection detector:
+
+- **A table's own rows.** The page lays itself out in one table and its stories in
+  a table nested inside, and the outer table read the nested rows as its own. Its
+  largest group was the spacers. A table now reads only its own rows, and skips
+  rows that hold nothing (a spacer) and rows that hold a table (layout).
+- **Every repeated run of a table.** A story is a title row, a subtext row and a
+  spacer, so the stories are a third of the rows. The detector kept only the
+  largest group, and the "More" row, built like a subtext, made the subtexts one
+  longer than the stories. A table now reports every run that passes the
+  repetition test; the subtexts then drop out under the existing rule, since
+  each one's user link heads its "user / hide / comments" run.
+- **The link that names the record.** A story row's first link is its upvote
+  arrow, an empty link around a styled div. A record now opens by its first link
+  with text, an `aria-label` or an image `alt`, and falls back to its first link
+  only when none has one. Without this the result list would have been the five
+  upvote links; the hostile-DOM test fails if it is removed.
+
+A table row with a link also carries `link_text` and `href` now, as a card does,
+so a story is labelled by its title instead of its rank ("3."). That changes the
+identity of any table record holding a link, so a collection hash recorded
+before this change reads as changed once. `test_a_story_row_is_named_and_opened_by_its_title`
+opens a story by its title through the coordinator and checks that the page went
+to the story, not the vote.
+
+The twenty-two-page run was repeated
+(`benchmarks/results/coverage-20261022-storyrows.json`). Against the link-run
+file the only change is Hacker News: its result list is the thirty story titles,
+and both capabilities (next page, open a result) are correct.
+`webscraper.io` lists different products, as it does on every load. The totals
+are the same: thirteen of seventeen pages (76%), twenty-one refusals.
+
+Still open: `pypi.org`'s legal footer, whose links sit in sentences; `arxiv.org`
+and `docs.python.org`, where only part of the right list is found.

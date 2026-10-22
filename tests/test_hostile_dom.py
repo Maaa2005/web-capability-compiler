@@ -284,3 +284,54 @@ async def test_a_result_lists_short_container_path_binds_to_one_element(
         c.key for c in container.locator_chain.candidates if c.kind is LocatorKind.STRUCTURAL_PATH
     ]
     assert paths == [chain.primary.key]
+
+
+async def test_story_rows_are_the_result_list_and_open_by_their_title(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """The result list is the stories, opened by their titles, not the footer.
+
+    Found on news.ycombinator.com, whose stories are three rows each of one
+    table: the story, its subtext and an empty spacer. The outer table counted
+    the inner table's rows as its own, so its largest group was the spacers; the
+    inner table's largest was the subtexts, one ahead of the stories because the
+    "More" row is built like a subtext. The stories were never a collection, and
+    the compiled result list was the eight footer links. A story row's first link
+    is also its upvote arrow, so a story opened by its first link would have
+    voted.
+    """
+    session_id = await _open(driver, f"{fixture_server}/story-rows/")
+    snapshot = await driver.snapshot(session_id)
+
+    links = find_result_links(snapshot.elements, snapshot.collections)
+    assert [link.resolved_label for link in links] == [
+        "Writing a compiler in a weekend",
+        "What is gridification",
+        "Ask: What are you building this month?",
+        "Tables were never only for data",
+        "A short history of the hyperlink",
+    ]
+
+    votes = {
+        _path
+        for element in snapshot.elements
+        if any(
+            c.kind is LocatorKind.ID_ATTRIBUTE and c.key.startswith("up_")
+            for c in element.locator_chain.candidates
+        )
+        for _path in (
+            c.key for c in element.locator_chain.candidates if c.kind is LocatorKind.STRUCTURAL_PATH
+        )
+    }
+    assert len(votes) == 5
+    activations = {
+        record.activation_locator.primary.key
+        for collection in snapshot.collections
+        for record in collection.records
+        if record.activation_locator is not None
+    }
+    assert not activations & votes
+
+    template = build_result_item_template(snapshot.elements, snapshot.collections)
+    assert template is not None
+    assert template.targets["result_collection"].resolved_label == links[0].resolved_label

@@ -214,6 +214,36 @@ async def test_an_entity_reference_opens_the_result_it_names(
     await coordinator.close_session(session.session_id)
 
 
+async def test_a_story_row_is_named_and_opened_by_its_title(
+    driver: PlaywrightDriver, fixture_server: str, store: Store
+) -> None:
+    """A table row is an entity an agent can ask for by what it says.
+
+    Each Hacker News story is a table row that begins with its rank and its
+    upvote arrow. Named by its first cell, the story was entity "3."; opened by
+    its first link, it would have been voted on. It is named and opened by its
+    title.
+    """
+    coordinator = Coordinator(driver, store)
+    session = await coordinator.open_session(
+        OpenSessionRequest(url=f"{fixture_server}/story-rows/")
+    )
+    inspection = await coordinator.inspect_page(session.session_id)
+    capability_id, _ = _named(inspection, "open_result_item")
+    wanted = next(
+        e for e in inspection.ir.entities if e.label == "Ask: What are you building this month?"
+    )
+
+    result = await coordinator.execute(
+        session.session_id, capability_id, {"entity_id": wanted.entity_id}
+    )
+
+    assert result.status is ExecutionStatus.SUCCEEDED, result.error
+    page = driver._session(session.session_id).page  # noqa: SLF001
+    assert page.url.endswith("/story-rows/item?id=103")
+    await coordinator.close_session(session.session_id)
+
+
 async def test_an_entity_from_another_session_is_refused(
     driver: PlaywrightDriver, fixture_server: str, store: Store
 ) -> None:

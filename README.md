@@ -91,18 +91,19 @@ The capabilities are ordinary ones on ordinary sites: search on `python.org`,
 `pypi.org`, `crates.io`, `djangoproject.com`, `openstreetmap.org`; opening a result on
 `books.toscrape.com`, `quotes.toscrape.com`, `webscraper.io`, `w3.org`, `debian.org`,
 `djangoproject.com`, and on part of the lists of `arxiv.org` and `docs.python.org`;
-paging on `news.ycombinator.com`.
+paging and opening a story on `news.ycombinator.com`.
 
 **The 21 refusals matter as much as the 13 successes.** Twenty are the "add to
 basket" forms on a shop and one is a subscription form. A low-level agent sees
 those as buttons and can press them.
 
 Not every compiled capability is right. "Open a result" points at footer links
-on `pypi.org` and on Hacker News; both pages also have a correct one (search,
-next page). Before the latest fix, `go.dev`'s use-case columns and
-`python.org`'s "Use Python for…" rows were taken as result lists too. Neither
-page offers "open a result" now, and `go.dev`, which had nothing else, compiles
-nothing — a wrong capability became none, which is why the count fell from 14.
+on `pypi.org`; the page also has a correct one (search). Before the latest fixes,
+`go.dev`'s use-case columns, `python.org`'s "Use Python for…" rows and Hacker
+News's footer were taken as result lists too. `go.dev` and `python.org` no longer
+offer "open a result", and `go.dev`, which had nothing else, compiles nothing — a
+wrong capability became none, which is why the count fell from 14. Hacker News
+now opens its thirty stories, by their titles.
 All of it is listed in [`docs/comparison.md`](docs/comparison.md) with where it
 found nothing, and why — named rather than averaged away.
 
