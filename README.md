@@ -78,11 +78,11 @@ about.
 ## What it does on pages nobody here wrote
 
 Twenty-two public pages, one visit each, `robots.txt` fetched and honoured per
-host. Observed 2026-10-22 — reproduce with `uv run python -m benchmarks.measure_coverage`.
+host. Observed 2026-10-23 — reproduce with `uv run python -m benchmarks.measure_coverage`.
 
 | | |
 |---|---|
-| observed (3 skipped by robots.txt, 1 timed out) | 18 |
+| observed (5 skipped by robots.txt) | 17 |
 | had something a compiler could want | 17 |
 | **…and a capability was compiled** | **13 (76%)** |
 | **state-changing candidates refused** | **21** |

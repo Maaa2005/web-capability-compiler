@@ -6,9 +6,9 @@ worth nothing, so coverage comes first.
 ## Does it find anything on pages nobody here wrote?
 
 Twenty-two public pages, one visit each, `robots.txt` fetched and honoured per
-host. Observed **2026-10-22** (UTC), in a single run after the footer-column,
-link-run, story-row and after-footer fixes below
-(`benchmarks/results/coverage-20261022-afterfooter.json`).
+host. Observed **2026-10-23** (UTC), in a single run after the footer-column,
+link-run, story-row and after-footer fixes and the `robots.txt` change below
+(`benchmarks/results/coverage-20261023.json`).
 
 ```bash
 uv run python -m benchmarks.measure_coverage
@@ -17,9 +17,9 @@ uv run python -m benchmarks.measure_coverage
 | | |
 |---|---|
 | pages visited | 22 |
-| skipped by `robots.txt` | 3 |
-| failed to load | 1 (`www.gnu.org`, timeout) |
-| **observed** | **18** |
+| skipped by `robots.txt` | 5 |
+| failed to load | 0 |
+| **observed** | **17** |
 | had something a compiler could want | 17 |
 | **…and a capability was compiled** | **13 (76%)** |
 | state-changing candidates refused | **21** |
@@ -110,6 +110,18 @@ on one page:
 Hacker News's front page had moved between the two runs; 26 of its thirty
 stories are in both, and it compiles the same capabilities.
 
+A `robots.txt` that cannot be read now disallows the page, as RFC 9309 says
+([`progress.md`](progress.md), "An unreadable `robots.txt` disallows"). In the
+run after that change (`coverage-20261023.json`), two pages are skipped that
+were not before, both for reasons local to this machine: `www.gnu.org`, which
+does not answer this line and used to fail by timeout, and `example.com`, whose
+certificate chain this machine's Python does not trust. `example.com` was the
+one page with nothing to find, so 13 of 17 is unchanged. Every observed page
+compiles, binds and refuses what it did in the after-footer run.
+`webscraper.io` shows other products, and Hacker News's front page had turned
+over in the ten hours between the runs: 5 of its thirty stories are in both,
+and all thirty are in the top 45 of Hacker News's own API read minutes after.
+
 The run also now records templates that compiled but did not bind, which the
 October 13 file did not, so the bindings below cannot be compared with it:
 
@@ -169,7 +181,7 @@ are not the same event.
 
 | Page | Reading |
 |---|---|
-| `example.com` | correct — one paragraph and one link |
+| `example.com` | correct — one paragraph and one link (in the runs that observed it; the 2026-10-23 run skips it, see above) |
 | `www.rust-lang.org` | probably correct — no forms; "open a result" compiled over four "Building Tools, Writing Web Apps, …" cards and its container did not resolve exactly once at binding |
 | `developer.mozilla.org` | a miss — 378 elements, no forms; the only "open a result" it ever compiled was the footer; why nothing else on the page qualifies is not yet investigated |
 | `huggingface.co` | correct refusal of a wrong target — 133 elements; "open a result" compiled over the sidebar's filters and "go to page" beside it, and binding refused both because their risk rose from low to high on the live page |

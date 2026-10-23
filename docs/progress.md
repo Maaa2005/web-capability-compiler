@@ -2389,3 +2389,34 @@ Two options make a narrowed run possible: `--only HOST` measures the pages on
 one host, and `--load-timeout-ms N` sets the page-load limit. Such a run is a
 diagnosis, not a measurement, so its file name carries the host and limit and
 never replaces the day's full run.
+
+### The full run after the `robots.txt` change came out as predicted (2026-10-23)
+
+`coverage-20261023.json` is the full run at `5880516`, made at 01:03 UTC. What it
+had to show was written down before it ran: five pages skipped, each for its
+expected reason; none failed; 17 observed; 13 of them compile something; 21
+refused; every page's capabilities and result list as in
+`coverage-20261022-afterfooter.json`, except that Hacker News, whose front page
+moves, had to keep its capabilities and most of its thirty stories.
+
+The totals are those, and the five reasons are the expected ones: 403 from
+`flask.palletsprojects.com` and `en.wikipedia.org`, a disallowed path on
+`lobste.rs`, no answer from `www.gnu.org` within 20 seconds, and "certificate
+not trusted on this machine" for `example.com`. Every observed page compiles,
+binds and refuses what it did before, with the same categories, forms and
+collections. Two result lists differ, and neither is the code.
+`webscraper.io` features three products and changes them between loads: 2 of
+the 3 are in both runs, and a fetch a few minutes later showed three others.
+Hacker News shares 5 of its thirty stories with the earlier run, made ten hours
+before.
+
+So Hacker News failed its criterion as written. The criterion was meant to tell
+the front page's stories from anything else on the page, and over ten hours the
+front page turns over, so it could not tell them apart. Checked a different way:
+all thirty titles are in the top 45 of `topstories` from Hacker News's own API,
+read minutes after the run. That check replaces the criterion after the run,
+and it is stated here as such. Comparing a moving page by overlap only works
+when the runs are close together; a later criterion for Hacker News should name
+the API check from the start.
+
+The run of record in `README.md` and `docs/comparison.md` is now this file.
