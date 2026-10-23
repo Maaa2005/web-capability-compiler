@@ -2410,7 +2410,13 @@ the 3 are in both runs, and a fetch a few minutes later showed three others.
 Hacker News shares 5 of its thirty stories with the earlier run, made ten hours
 before.
 
-So Hacker News failed its criterion as written. The criterion was meant to tell
+So two pages failed their criteria as written, not one. `webscraper.io` was
+held to "same result list", which a page that changes its products on every
+load cannot meet; the check before the earlier run had left it out by count,
+and this one should have too. It is not replaced by another check here: the
+three it lists are its featured products by count, and that held.
+
+Hacker News failed its criterion as written too. The criterion was meant to tell
 the front page's stories from anything else on the page, and over ten hours the
 front page turns over, so it could not tell them apart. Checked a different way:
 all thirty titles are in the top 45 of `topstories` from Hacker News's own API,
