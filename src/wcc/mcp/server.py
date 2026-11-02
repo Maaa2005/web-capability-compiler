@@ -23,8 +23,8 @@ one coordinator for the process; the coordinator serializes work per session.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -51,7 +51,8 @@ from wcc.models.execution import ExecutionResult
 from wcc.models.session import OpenSessionRequest
 from wcc.policy.url_policy import UrlPolicy
 from wcc.runtime.coordinator import Coordinator, Inspection
-from wcc.store.store import Store
+from wcc.store.guard import SensitiveValueError
+from wcc.store.store import Store, StoreError
 
 SERVER_NAME = "wcc"
 
@@ -80,6 +81,28 @@ class ToolError(_SdkToolError):
     travel inside :class:`~wcc.models.execution.ExecutionResult`, because there
     the call was well formed and the *page* was the problem.
     """
+
+
+@contextmanager
+def _reported() -> Iterator[None]:
+    """Turn every failure WCC itself can raise into a message the agent can read.
+
+    Newer SDKs show a client only the text of their own ``ToolError``; anything
+    else becomes ``Error executing tool <name>`` with the reason withheld. A
+    driver error can come out of any tool, not only the ones that open or inspect:
+    a page that navigated to a refused document after inspection fails the
+    pre-execution read of ``execute_capability`` with ``session_failed``, and a
+    store that refuses to persist a value fails any tool that saves. Programming
+    errors are deliberately not caught here — those are bugs, not reasons.
+    """
+    try:
+        yield
+    except ToolError:
+        raise
+    except DriverError as failed:
+        raise ToolError(f"{failed.code}: {failed.message}") from failed
+    except (StoreError, SensitiveValueError) as failed:
+        raise ToolError(f"{type(failed).__name__}: {failed}") from failed
 
 
 @dataclass
@@ -144,11 +167,9 @@ def build_server(service: Service) -> MCPServer:
         ),
     )
     async def open_session(url: str) -> SessionView:
-        try:
+        with _reported():
             session = await service.coordinator.open_session(OpenSessionRequest(url=url))
             snapshot = await service.driver.snapshot(session.session_id)
-        except DriverError as refused:
-            raise ToolError(f"{refused.code}: {refused.message}") from refused
         return session_view(session, snapshot)
 
     @server.tool(
@@ -225,7 +246,8 @@ def build_server(service: Service) -> MCPServer:
         capability_id: str,
         arguments: dict[str, Any] | None = None,
     ) -> ExecutionResult:
-        return await service.coordinator.execute(session_id, capability_id, arguments or {})
+        with _reported():
+            return await service.coordinator.execute(session_id, capability_id, arguments or {})
 
     @server.tool(
         name="get_execution_result",
@@ -235,7 +257,8 @@ def build_server(service: Service) -> MCPServer:
         ),
     )
     async def get_execution_result(session_id: str, execution_id: str) -> ExecutionResult:
-        result = service.coordinator.execution_result(session_id, execution_id)
+        with _reported():
+            result = service.coordinator.execution_result(session_id, execution_id)
         if result is None:
             raise ToolError(f"{execution_id} is not an execution of {session_id}")
         return result
@@ -252,23 +275,25 @@ def build_server(service: Service) -> MCPServer:
             session_id
         )
         service.inspections.pop(session_id, None)
-        try:
-            await service.coordinator.close_session(session_id)
-        except DriverError:
-            # Idempotent by specification 12.6. A session the driver no longer
-            # holds is a session that is closed, which is the state the caller
-            # asked for; reporting a failure would make a correct retry look wrong.
-            return ClosedSessionView(session_id=session_id, status="closed", already_closed=True)
+        with _reported():
+            try:
+                await service.coordinator.close_session(session_id)
+            except DriverError:
+                # Idempotent by specification 12.6. A session the driver no longer
+                # holds is a session that is closed, which is the state the caller
+                # asked for; reporting a failure would make a correct retry look
+                # wrong.
+                return ClosedSessionView(
+                    session_id=session_id, status="closed", already_closed=True
+                )
         return ClosedSessionView(session_id=session_id, status="closed", already_closed=not known)
 
     return server
 
 
 async def _inspect(service: Service, session_id: str) -> Inspection:
-    try:
+    with _reported():
         inspection = await service.coordinator.inspect_page(session_id)
-    except DriverError as failed:
-        raise ToolError(f"{failed.code}: {failed.message}") from failed
     service.inspections[session_id] = inspection
     return inspection
 

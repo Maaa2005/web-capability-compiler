@@ -2470,3 +2470,40 @@ code before it was changed.
 - **Drift between the lock and the newest dependencies is now visible.** CI has a
   separate `latest-deps` job, allowed to fail, that resolves without the lock and
   runs only `tests/test_mcp_server.py` and `tests/test_cli.py`.
+
+### Second review of `fix/mcp-errors-ws-ssrf` (2026-11-02)
+
+An independent second review found two things; both were checked first.
+
+- **Unconverted driver errors still hid their reason (confirmed).** The first fix
+  converted `DriverError` in `open_session` and `inspect_page` only. If a page
+  navigates to a refused document after inspection, the pre-execution read of
+  `execute_capability` raises `SessionFailedError`, which escaped as-is and reached
+  the agent as a bare "Error executing tool execute_capability" on `mcp` 2.3. All
+  tool handlers now run inside one `_reported()` context in `wcc.mcp.server`, which
+  turns any `DriverError` (every driver error and `BindingRefused` subclass it),
+  `StoreError`, and `SensitiveValueError` into the server's `ToolError` with the
+  real reason. Other exceptions are deliberately left to propagate as bugs.
+  `close_session` still answers a `DriverError` as already closed (specification
+  12.6) but no longer does so for a store failure. Refusals inside
+  `execute_capability` still travel as `ExecutionResult`, unchanged. New tests in
+  `tests/test_mcp_server.py` go through `server.call_tool`: a session failed by an
+  `about:blank` commit after inspection, on `execute_capability` and
+  `inspect_page`, and store and persistence errors on each tool. Five of them fail
+  with the conversion removed.
+- **The WebSocket guard is bypassable (confirmed, not fixed).** Playwright 1.62
+  replaces `WebSocket` in the page's main world, and the replacement object has a
+  public `_apiConnect()` that opens the native connection. An offline test
+  (`test_a_hostile_page_cannot_force_a_refused_web_socket_open`) calls it right
+  after `new WebSocket(...)` on a refused loopback destination: the server sees one
+  handshake. It is marked `xfail(strict=True)`, so a fix, or a Playwright change,
+  fails the suite and prompts a README update. Two further probes (not kept as
+  tests) also reached the server: calling the global `__pwWebSocketDispatch` with
+  the socket's public `_id`, and a `new WebSocket` inside a `Worker`. The first
+  shows why an init script that wraps `_apiConnect` would not be a real fix: the
+  page can reach the same path another way, and Playwright's own calls cannot be
+  told apart from the page's. So no init-script change was made. `route_web_socket`
+  stays as a best-effort layer. The hostname is also checked, not the address
+  Chromium connects to, unlike HTTP. README now says exactly that and no longer
+  lists WebSockets among the closed holes; real protection needs a network-level
+  proxy, which WCC does not have.

@@ -477,6 +477,40 @@ async def test_an_allowed_web_socket_still_connects_through(
     assert not any(event.blocked for event in driver.drain_navigation_events(session_id))
 
 
+_OPEN_A_WEB_SOCKET_AND_FORCE_IT = """(url) => new Promise((resolve) => {
+    const socket = new WebSocket(url);
+    // Playwright's replacement WebSocket exposes the method its own routing uses to
+    // open the real connection. Nothing stops page script from calling it first.
+    let forced = null;
+    try { socket._apiConnect(); forced = true; } catch (e) { forced = String(e); }
+    setTimeout(() => resolve({forced}), 1000);
+})"""
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Known gap, not a goal: Playwright's in-page WebSocket replacement exposes "
+        "_apiConnect(), so a hostile page opens the native connection without waiting "
+        "for the route decision. route_web_socket is a best-effort layer; closing this "
+        "needs network-level enforcement. If this starts passing, update the README."
+    ),
+)
+async def test_a_hostile_page_cannot_force_a_refused_web_socket_open(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """Documents the bypass the review found; strict, so a fix is noticed."""
+    session_id = await _open(driver, f"{fixture_server}/search-page/")
+    driver._session(session_id).allow_private_network = False  # noqa: SLF001
+    page = driver._session(session_id).page  # noqa: SLF001
+
+    async with _HandshakeServer() as server:
+        await page.evaluate(_OPEN_A_WEB_SOCKET_AND_FORCE_IT, f"ws://127.0.0.1:{server.port}/")
+        await asyncio.sleep(0.2)
+
+        assert server.handshakes == 0
+
+
 SENTINELS = (
     "SENTINEL-CARD-4111",
     "SENTINEL-CVC-737",

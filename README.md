@@ -190,9 +190,17 @@ Details, and what this does not show:
   egress proxy or firewall if internal services are reachable.** Everything else in
   that family is closed — decimal/octal/hex IP forms, IPv4-mapped IPv6, IPv6
   loopback and unspecified, `0.0.0.0`, `localhost` aliases, trailing dots, embedded
-  credentials, non-HTTP schemes, redirects, page-initiated subresources, and
-  page-initiated WebSockets (`ws://` and `wss://` are judged by the same URL policy
-  as HTTP).
+  credentials, non-HTTP schemes, redirects, and page-initiated subresources.
+- **WebSocket checks are best-effort, and a hostile page can bypass them.** The
+  URL of a page-initiated `ws://` or `wss://` socket is judged against the same
+  policy as HTTP, and a refused socket is closed. That check is weaker than the
+  HTTP one: Playwright replaces `WebSocket` inside the page, and page script can
+  open the real connection through that replacement without waiting for the
+  decision; sockets created inside Workers are not covered at all; and the check
+  looks at the hostname in the URL, not at the address Chromium then connects to,
+  so a DNS answer that changes between the check and the connection gets through.
+  Full protection would need a network-level proxy, which WCC does not have. The
+  egress proxy or firewall advice above applies here too.
 - **The MCP server is not a polite crawler.** At runtime it does not read
   `robots.txt`, has no per-host rate limit, and identifies itself with Playwright's
   default Chromium user agent. Those manners exist only in the benchmark script. You
