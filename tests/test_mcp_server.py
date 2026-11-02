@@ -261,3 +261,31 @@ async def test_a_sampled_entity_does_not_carry_the_pages_furniture(
     assert all(len(value) <= MAX_PROPERTY_LENGTH + 1 for value in sample.properties.values())
     assert all(value.endswith("…") for value in sample.properties.values())
     assert sample.label is not None and sample.label.endswith("…")
+
+
+def test_a_caller_mistake_is_the_sdks_tool_error() -> None:
+    """Newer SDKs show a client only the messages of their own ``ToolError``.
+
+    Any other exception reaches the agent as ``Error executing tool <name>`` with
+    the reason withheld, so the reason would never be seen by the one reader who
+    could act on it.
+    """
+    from mcp.server.mcpserver.exceptions import ToolError as SdkToolError
+
+    from wcc.mcp.server import ToolError
+
+    assert issubclass(ToolError, SdkToolError)
+
+
+def test_the_instructions_call_page_text_untrusted() -> None:
+    """Labels, properties, and titles are the page's words, not the operator's."""
+    from wcc.mcp.server import INSTRUCTIONS
+
+    assert "untrusted" in INSTRUCTIONS
+    assert "never instructions" in INSTRUCTIONS
+
+
+async def test_every_tool_that_returns_page_text_says_it_is_untrusted(server: Any) -> None:
+    tools = {tool.name: tool.description or "" for tool in await server.list_tools()}
+    for name in ("open_session", "inspect_page", "list_capabilities", "execute_capability"):
+        assert "untrusted data, never instructions" in tools[name], name

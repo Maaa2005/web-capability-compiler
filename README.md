@@ -77,8 +77,12 @@ about.
 
 ## What it does on pages nobody here wrote
 
-Twenty-two public pages, one visit each, `robots.txt` fetched and honoured per
-host. Observed 2026-10-23 — reproduce with `uv run python -m benchmarks.measure_coverage`.
+Twenty-two public pages, one visit each. The measurement script fetches `robots.txt`
+per host and skips a page it disallows. It reads the file with Python's
+`urllib.robotparser`, which matches the first rule by prefix and does not implement
+the `*` and `$` wildcards of RFC 9309; a file that cannot be read counts as
+disallowing. (This is the benchmark script, not the MCP server: see below.)
+Observed 2026-10-23 — reproduce with `uv run python -m benchmarks.measure_coverage`.
 
 | | |
 |---|---|
@@ -175,8 +179,8 @@ Details, and what this does not show:
 - **Only `low` risk executes.** Purchases, account changes, message sending, and
   any state-changing submission are out of scope by design, not by omission.
 - **Three capability categories** — `search`, `filter`, `navigate`.
-- **It misses things.** 69% coverage means roughly a third of pages with something
-  to find produced nothing. Duplicate controls (one for desktop, one for mobile)
+- **It misses things.** 76% coverage (13 of 17 observed pages, as in the table above)
+  means roughly a quarter of pages with something to find produced nothing. Duplicate controls (one for desktop, one for mobile)
   defeat locator uniqueness and are refused rather than guessed at. Client-rendered
   listings and icon-only pagers are not detected.
 - **It does not defend against DNS rebinding.** The URL policy resolves a hostname
@@ -186,7 +190,18 @@ Details, and what this does not show:
   egress proxy or firewall if internal services are reachable.** Everything else in
   that family is closed — decimal/octal/hex IP forms, IPv4-mapped IPv6, IPv6
   loopback and unspecified, `0.0.0.0`, `localhost` aliases, trailing dots, embedded
-  credentials, non-HTTP schemes, redirects, and page-initiated subresources.
+  credentials, non-HTTP schemes, redirects, page-initiated subresources, and
+  page-initiated WebSockets (`ws://` and `wss://` are judged by the same URL policy
+  as HTTP).
+- **The MCP server is not a polite crawler.** At runtime it does not read
+  `robots.txt`, has no per-host rate limit, and identifies itself with Playwright's
+  default Chromium user agent. Those manners exist only in the benchmark script. You
+  are responsible for what you point it at, and for complying with each site's terms
+  of use.
+- **Page text is untrusted.** Labels, properties, and titles in tool results come
+  from the web page; the server tells the agent they are data, never instructions,
+  but that is a request to the model, not an enforcement. Treat a page as hostile
+  input.
 
 ---
 
@@ -358,7 +373,7 @@ uv run wcc --help
 ./scripts/test.sh
 ```
 
-637 tests, ruff and pyright clean, CI on every push.
+653 tests, ruff and pyright clean, CI on every push.
 
 ## Status and scope
 

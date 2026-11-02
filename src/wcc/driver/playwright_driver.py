@@ -34,6 +34,7 @@ from playwright.async_api import (
     Request,
     Response,
     Route,
+    WebSocketRoute,
     async_playwright,
 )
 from playwright.async_api import (
@@ -173,6 +174,22 @@ def _redirect_depth(request: Request) -> int:
         depth += 1
         hop = hop.redirected_from
     return depth
+
+
+_WEBSOCKET_SCHEMES = {"ws": "http", "wss": "https"}
+
+
+def _http_equivalent(url: str) -> str:
+    """Name the HTTP(S) URL a WebSocket URL is judged as.
+
+    The policy admits ``http`` and ``https`` only, so a ``ws://`` address would be
+    refused for its scheme rather than for where it points. A WebSocket handshake
+    is an HTTP request to the same host and port, which is the destination the
+    policy has to judge; every other part of the URL is kept.
+    """
+    parts = urlsplit(url)
+    scheme = _WEBSOCKET_SCHEMES.get(parts.scheme.lower())
+    return parts._replace(scheme=scheme).geturl() if scheme else url
 
 
 def _event_kind(request: Request) -> str:
@@ -1160,6 +1177,31 @@ class PlaywrightDriver:
             await route.continue_()
 
         await session.context.route("**/*", on_route)
+
+        async def on_web_socket(ws: WebSocketRoute) -> None:
+            """Judge a WebSocket the way ``on_route`` judges a request.
+
+            ``context.route`` never sees a WebSocket, so without this a page could
+            open ``ws://127.0.0.1:...`` and talk to a service the URL policy exists
+            to keep it away from. A denied socket is closed without ever being
+            connected to its server; an allowed one is connected through unchanged.
+            """
+            try:
+                self._guard.check(
+                    _http_equivalent(ws.url),
+                    allow_private_network=session.allow_private_network,
+                )
+            except NavigationBlockedError as blocked:
+                session.events.append(
+                    NavigationEvent(
+                        kind="subresource", url=ws.url, blocked=True, reason=blocked.message
+                    )
+                )
+                await ws.close(code=1008, reason="blocked by the URL policy")
+                return
+            ws.connect_to_server()
+
+        await session.context.route_web_socket("**/*", on_web_socket)
 
         def on_new_page(page: Page) -> None:
             """Refuse a popup, tab, or window and close it (specification 10.2)."""

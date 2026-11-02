@@ -2426,3 +2426,47 @@ when the runs are close together; a later criterion for Hacker News should name
 the API check from the start.
 
 The run of record in `README.md` and `docs/comparison.md` is now this file.
+
+### Review findings fixed: MCP error text, WebSocket SSRF, prompt-injection notice, docs (2026-11-02)
+
+A review of `fix/mcp-errors-ws-ssrf` found five things, each checked against the
+code before it was changed.
+
+- **Tool errors reached agents as "Error executing tool X" (high).** The README
+  installs with `uvx --from git+...`, which ignores `uv.lock` and takes the newest
+  `mcp`. Newer SDKs show a client only the message of the SDK's own `ToolError`;
+  any other exception is reduced to its tool name. `wcc.mcp.server.ToolError` now
+  subclasses `mcp.server.mcpserver.exceptions.ToolError`, which is the whole change
+  to the server's errors. `pyproject.toml` requires `mcp>=2.2` (the code imports
+  `mcp.server.mcpserver`, which exists only in 2.x; the class was confirmed present
+  in 2.2.0 in a scratch environment), and `uv.lock` was refreshed with
+  `uv lock --upgrade-package mcp` (2.0.0 to 2.3.0).
+- **WebSockets bypassed the URL policy (medium).** `context.route("**/*")` never
+  sees a WebSocket, so page script could open `ws://127.0.0.1:...`. The driver now
+  also registers `context.route_web_socket("**/*")` (present in the locked
+  Playwright 1.62.0). The handler judges the socket's URL with the same guard as
+  HTTP, after mapping `ws` to `http` and `wss` to `https` because the policy admits
+  only those schemes. A denied socket is closed (code 1008) without ever being
+  connected to its server and is recorded as a blocked `subresource` event; an
+  allowed one is connected through. Offline tests: a loopback socket is blocked
+  once the private-network allowance is withdrawn and the server sees no
+  handshake; a metadata address is blocked under any allowance; an allowed socket
+  still reaches its server. The first two fail with the registration removed.
+- **Page text could pose as instructions (medium, text only).** The server
+  instructions and the descriptions of `open_session`, `inspect_page`,
+  `list_capabilities`, and `execute_capability` now say that labels, properties,
+  and titles come from the web page and are untrusted data, never instructions.
+  No schema changed. This asks the model to behave; it does not enforce anything.
+- **README and AGENTS.md were inconsistent with the record.** "69% coverage" now
+  reads 76% (13 of 17), matching the table; the test count is the collected count;
+  the limitations now say that the MCP server does not read `robots.txt`, has no
+  per-host rate limit, and uses Playwright's default user agent, and that users are
+  responsible for each site's terms. The benchmark script reads `robots.txt` with
+  `urllib.robotparser` (first match by prefix, no `*` or `$`), which is narrower
+  than RFC 9309; the README and the `robots_refusal` docstring now say that. The
+  module docstring and `docs/comparison.md` only say that an unreadable file
+  disallows, which is what RFC 9309 section 2.3.1.4 says, so they stay. `AGENTS.md` said "Phase 0 is complete"; it now says
+  Phases 0-6 of 7.
+- **Drift between the lock and the newest dependencies is now visible.** CI has a
+  separate `latest-deps` job, allowed to fail, that resolves without the lock and
+  runs only `tests/test_mcp_server.py` and `tests/test_cli.py`.
