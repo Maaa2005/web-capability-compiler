@@ -324,7 +324,10 @@ class PlaywrightDriver:
                     raise NavigationBlockedError(
                         blocked.reason or f"navigation to {blocked.url} was refused"
                     ) from exc
-                raise
+                # Playwright's own message can carry a multi-line call log; the
+                # first line is the reason, the rest is its internals.
+                reason = (str(exc).splitlines() or [type(exc).__name__])[0]
+                raise DriverError(f"navigation to {request.url} failed: {reason}") from exc
 
             self._sessions[session_id] = session
             await self.identify(session_id)

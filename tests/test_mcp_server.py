@@ -443,6 +443,51 @@ def test_the_instructions_call_page_text_untrusted() -> None:
     assert "never instructions" in INSTRUCTIONS
 
 
+@pytest.mark.parametrize(
+    "url",
+    ["http://example.com:99999/", "http://[::1", "http://example.com:abc/"],
+)
+async def test_a_url_the_parser_rejects_is_refused_with_its_reason(server: Any, url: str) -> None:
+    """Review finding: these reached the agent as a bare "Error executing tool".
+
+    A bad port or an unterminated IPv6 literal raised ``ValueError`` out of
+    ``urlsplit``, which nothing converted. The policy now refuses them.
+    """
+    shown = await _failed_error(server, "open_session", url=url)
+
+    assert "navigation_blocked" in shown
+    assert "is not a valid URL" in shown
+
+
+async def test_a_navigation_the_browser_rejects_is_reported_with_its_reason(
+    tmp_path: Path,
+) -> None:
+    """A URL the policy admits but Playwright refuses must not lose its reason.
+
+    The guard here admits everything, so ``:99999`` reaches Playwright, which raises
+    its own ``Error``. The driver wraps that into ``DriverError`` for ``_reported``.
+    """
+
+    class AdmitAll:
+        def check(self, url: str, *, allow_private_network: bool = False) -> None:
+            return None
+
+    driver = PlaywrightDriver(AdmitAll(), DriverSettings(allow_private_network=True))
+    store = Store(tmp_path / "wcc.db")
+    try:
+        server = build_server(
+            Service(driver=driver, store=store, coordinator=Coordinator(driver, store))
+        )
+        shown = await _failed_error(server, "open_session", url="http://example.com:99999/")
+    finally:
+        await driver.shutdown()
+        store.close()
+
+    assert "driver_error" in shown
+    assert "navigation to http://example.com:99999/ failed" in shown
+    assert "invalid URL" in shown
+
+
 async def test_every_tool_that_returns_page_text_says_it_is_untrusted(server: Any) -> None:
     tools = {tool.name: tool.description or "" for tool in await server.list_tools()}
     for name in ("open_session", "inspect_page", "list_capabilities", "execute_capability"):

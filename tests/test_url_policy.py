@@ -163,3 +163,12 @@ def test_a_name_resolving_to_nothing_is_refused() -> None:
     """An empty answer must not fall through the per-address loop as success."""
     with pytest.raises(NavigationBlockedError, match="no addresses"):
         UrlPolicy(resolver=lambda _: []).check("https://empty.example/")
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["http://example.com:99999/", "http://example.com:abc/", "http://[::1", "http://[zz]/"],
+)
+def test_a_url_the_parser_cannot_read_is_refused_not_raised_as_value_error(url: str) -> None:
+    with pytest.raises(NavigationBlockedError, match="not a valid URL"):
+        _policy().check(url)

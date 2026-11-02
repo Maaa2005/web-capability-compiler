@@ -73,7 +73,14 @@ class UrlPolicy:
 
     def check(self, url: str, *, allow_private_network: bool = False) -> None:
         """Raise :class:`NavigationBlockedError` unless ``url`` may be navigated to."""
-        parts = urlsplit(url)
+        try:
+            parts = urlsplit(url)
+            # ``port`` parses lazily and is where an out-of-range or non-numeric port
+            # raises; reading it here means a URL the parser cannot make sense of is
+            # refused with a reason instead of failing later inside the browser.
+            parts.port  # noqa: B018
+        except ValueError as exc:
+            raise NavigationBlockedError(f"{url!r} is not a valid URL: {exc}") from exc
 
         if parts.scheme.lower() not in ALLOWED_SCHEMES:
             raise NavigationBlockedError(
