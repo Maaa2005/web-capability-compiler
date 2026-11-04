@@ -11,6 +11,8 @@ is a documented setup step that ``wcc install-browser`` (task T9) will automate.
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
 from collections.abc import AsyncIterator
 from urllib.parse import urlsplit
 
@@ -352,6 +354,226 @@ async def test_a_subresource_to_a_refused_destination_is_blocked(
     assert reached is False
     events = driver.drain_navigation_events(session_id)
     assert any(event.kind == "subresource" and event.blocked for event in events)
+
+
+class _HandshakeServer:
+    """A loopback WebSocket endpoint that only counts handshakes.
+
+    It answers the upgrade and holds the socket open, which is all the tests need:
+    whether a page's socket reached this server at all is the question, and a
+    handshake is the proof that it did.
+    """
+
+    def __init__(self) -> None:
+        self.handshakes = 0
+        self._writers: list[asyncio.StreamWriter] = []
+        self._server: asyncio.Server | None = None
+        self.port = 0
+
+    async def __aenter__(self) -> _HandshakeServer:
+        self._server = await asyncio.start_server(self._serve, "127.0.0.1", 0)
+        self.port = self._server.sockets[0].getsockname()[1]
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        assert self._server is not None
+        self._server.close()
+        # ``wait_closed`` waits for open connections, and this server holds them.
+        for writer in self._writers:
+            writer.close()
+        await self._server.wait_closed()
+
+    async def _serve(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        self._writers.append(writer)
+        try:
+            head = await reader.readuntil(b"\r\n\r\n")
+            key = next(
+                line.split(b":", 1)[1].strip()
+                for line in head.split(b"\r\n")
+                if line.lower().startswith(b"sec-websocket-key:")
+            )
+            accept = base64.b64encode(
+                hashlib.sha1(key + b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest()
+            )
+            self.handshakes += 1
+            writer.write(
+                b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
+                b"Connection: Upgrade\r\nSec-WebSocket-Accept: " + accept + b"\r\n\r\n"
+            )
+            await writer.drain()
+            await reader.read()
+        except (asyncio.IncompleteReadError, ConnectionError, StopIteration):
+            pass
+        finally:
+            writer.close()
+
+
+_OPEN_A_WEB_SOCKET = """(url) => new Promise((resolve) => {
+    let opened = false;
+    const socket = new WebSocket(url);
+    socket.onopen = () => { opened = true; };
+    socket.onerror = () => resolve({opened, closed: true});
+    socket.onclose = () => resolve({opened, closed: true});
+    setTimeout(() => resolve({opened, closed: false}), 3000);
+})"""
+
+
+async def test_a_web_socket_to_a_refused_destination_is_blocked(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """``context.route`` does not see WebSockets, so they need their own guard.
+
+    The page itself is served from loopback under the developer allowance. The
+    allowance is then withdrawn for the session, the state a real session is in
+    when it was opened on a public site, and the page opens a socket to a loopback
+    service. The server must never see the handshake.
+    """
+    session_id = await _open(driver, f"{fixture_server}/search-page/")
+    driver._session(session_id).allow_private_network = False  # noqa: SLF001
+    page = driver._session(session_id).page  # noqa: SLF001
+
+    async with _HandshakeServer() as server:
+        outcome = await page.evaluate(_OPEN_A_WEB_SOCKET, f"ws://127.0.0.1:{server.port}/")
+        await asyncio.sleep(0.2)
+
+        assert outcome["closed"] is True
+        assert server.handshakes == 0
+
+    events = driver.drain_navigation_events(session_id)
+    assert any(
+        event.kind == "subresource"
+        and event.blocked
+        and (event.url or "").startswith("ws://127.0.0.1")
+        for event in events
+    )
+
+
+async def test_a_web_socket_to_a_metadata_address_is_blocked_under_any_allowance(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    session_id = await _open(driver, f"{fixture_server}/search-page/")
+    page = driver._session(session_id).page  # noqa: SLF001
+
+    outcome = await page.evaluate(_OPEN_A_WEB_SOCKET, "ws://169.254.169.254/")
+
+    assert outcome["closed"] is True
+    events = driver.drain_navigation_events(session_id)
+    assert any(event.kind == "subresource" and event.blocked for event in events)
+
+
+async def test_an_allowed_web_socket_still_connects_through(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """The guard must not turn every socket into a refusal."""
+    session_id = await _open(driver, f"{fixture_server}/search-page/")
+    page = driver._session(session_id).page  # noqa: SLF001
+
+    async with _HandshakeServer() as server:
+        outcome = await page.evaluate(_OPEN_A_WEB_SOCKET, f"ws://127.0.0.1:{server.port}/")
+
+        assert outcome["opened"] is True
+        assert server.handshakes == 1
+
+    assert not any(event.blocked for event in driver.drain_navigation_events(session_id))
+
+
+_OPEN_A_WEB_SOCKET_AND_FORCE_IT = """(url) => new Promise((resolve) => {
+    const socket = new WebSocket(url);
+    // Playwright's replacement WebSocket exposes the method its own routing uses to
+    // open the real connection. Nothing stops page script from calling it first.
+    let forced = null;
+    try { socket._apiConnect(); forced = true; } catch (e) { forced = String(e); }
+    setTimeout(() => resolve({forced}), 1000);
+})"""
+
+
+async def test_a_hostile_page_cannot_force_a_refused_web_socket_open(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """The bypass the review found: page script forcing Playwright's own socket open.
+
+    Not stopped by ``route_web_socket``, which the page can step around. Stopped by
+    the egress proxy, which the connection has to pass whatever script asked for it.
+    """
+    session_id = await _open(driver, f"{fixture_server}/search-page/")
+    driver._session(session_id).allow_private_network = False  # noqa: SLF001
+    page = driver._session(session_id).page  # noqa: SLF001
+
+    async with _HandshakeServer() as server:
+        await page.evaluate(_OPEN_A_WEB_SOCKET_AND_FORCE_IT, f"ws://127.0.0.1:{server.port}/")
+        await asyncio.sleep(0.2)
+
+        assert server.handshakes == 0
+
+
+_OPEN_A_WEB_SOCKET_IN_A_WORKER = """(url) => new Promise((resolve) => {
+    const code = `
+        const socket = new WebSocket(${JSON.stringify(url)});
+        socket.onopen = () => postMessage('open');
+        socket.onerror = () => postMessage('error');
+        socket.onclose = () => postMessage('close');
+    `;
+    const worker = new Worker(URL.createObjectURL(new Blob([code])));
+    worker.onmessage = (event) => resolve(event.data);
+    setTimeout(() => resolve('silent'), 3000);
+})"""
+
+
+async def test_a_worker_cannot_open_a_web_socket_to_a_refused_address(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """Workers are outside ``route_web_socket``; the proxy sees them like anything else."""
+    session_id = await _open(driver, f"{fixture_server}/search-page/")
+    driver._session(session_id).allow_private_network = False  # noqa: SLF001
+    page = driver._session(session_id).page  # noqa: SLF001
+
+    async with _HandshakeServer() as server:
+        outcome = await page.evaluate(
+            _OPEN_A_WEB_SOCKET_IN_A_WORKER, f"ws://127.0.0.1:{server.port}/"
+        )
+
+        assert outcome != "open"
+        assert server.handshakes == 0
+
+
+async def test_an_admitted_web_socket_is_carried_through_the_proxy(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """The refusals above would also hold for a proxy that carries nothing."""
+    session_id = await _open(driver, f"{fixture_server}/search-page/")
+    page = driver._session(session_id).page  # noqa: SLF001
+
+    async with _HandshakeServer() as server:
+        await page.evaluate(
+            "(url) => { window.__socket = new WebSocket(url); }", f"ws://127.0.0.1:{server.port}/"
+        )
+        for _ in range(100):
+            if server.handshakes:
+                break
+            await asyncio.sleep(0.05)
+
+        assert server.handshakes == 1
+
+
+async def test_a_page_reaches_nothing_when_its_name_resolves_to_a_refused_address(
+    fixture_server: str,
+) -> None:
+    """A rebinding answer is stopped before the connection, not noticed after it."""
+
+    class AdmitsNamesRefusesLoopback:
+        def check(self, url: str, *, allow_private_network: bool) -> None:
+            del allow_private_network
+            if (urlsplit(url).hostname or "") == "127.0.0.1":
+                raise NavigationBlockedError("127.0.0.1 is a loopback address")
+
+    port = urlsplit(fixture_server).port
+    driver = PlaywrightDriver(AdmitsNamesRefusesLoopback(), DriverSettings())
+    try:
+        with pytest.raises(NavigationBlockedError) as refused:
+            await driver.open_session(OpenSessionRequest(url=f"http://localhost:{port}/x"))
+        assert "127.0.0.1" in str(refused.value)
+    finally:
+        await driver.shutdown()
 
 
 SENTINELS = (
@@ -1061,3 +1283,20 @@ async def test_the_page_text_is_what_a_reader_sees_and_where(
     assert url.endswith("/product-list/?keyword=earbuds")
     assert "3 results" in text
     assert "result-count" not in text
+
+
+async def test_a_context_that_skips_the_proxy_cannot_resolve_any_name(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """Fail closed: the proxy is not the only thing standing between a page and DNS."""
+    from playwright.async_api import Error as PlaywrightError
+
+    port = urlsplit(fixture_server).port
+    browser = await driver._browser(headless=True)  # noqa: SLF001
+    context = await browser.new_context()
+    try:
+        page = await context.new_page()
+        with pytest.raises(PlaywrightError, match="ERR_NAME_NOT_RESOLVED"):
+            await page.goto(f"http://localhost:{port}/search-page/")
+    finally:
+        await context.close()

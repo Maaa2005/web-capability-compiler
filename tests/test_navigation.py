@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from factories import a_path_chain, an_element
 from wcc.compiler.navigation import (
     build_pagination_templates,
@@ -327,3 +329,55 @@ def test_two_controls_claiming_next_produce_no_capability() -> None:
         for element_id, path in (("el_a", "nav>a[1]"), ("el_b", "footer>a[1]"))
     ]
     assert build_pagination_templates(controls) == []
+
+
+@pytest.mark.parametrize(
+    ("winner", "runner_up", "clear"),
+    [
+        (7, 5, True),
+        (6, 5, False),
+        (10, 8, True),
+        (9, 8, False),
+        (3, 1, True),
+        (2, 1, True),
+        (5, 4, True),  # the crates.io fixture
+        (30, 3, True),
+        (5, 5, False),
+    ],
+)
+def test_a_result_list_must_be_clearly_larger_than_the_next(
+    winner: int, runner_up: int, clear: bool
+) -> None:
+    from wcc.compiler.navigation import _wins_clearly
+
+    assert _wins_clearly(winner, runner_up) is clear
+
+
+def _two_lists(first: int, second: int, shared: int = 0) -> list[str]:
+    """Labels of the links ``find_result_links`` picks from two lists of these sizes."""
+    from wcc.compiler.navigation import find_result_links
+
+    a = [a_link(f"a{i}", f"main>ul[1]>li[{i + 1}]>a") for i in range(first)]
+    fresh = [a_link(f"b{i}", f"main>ul[2]>li[{i + 1}]>a") for i in range(second - shared)]
+    b = a[:shared] + fresh
+    chosen = find_result_links(a + fresh, [a_list_of(a), a_list_of(b, collection_id="coll_2")])
+    return [link.element_id for link in chosen]
+
+
+@pytest.mark.parametrize(
+    ("first", "second", "shared", "picked"),
+    [
+        (6, 5, 0, 0),  # too close: two result lists
+        (5, 5, 0, 0),
+        (10, 8, 0, 10),  # exactly 1.25 times
+        (10, 9, 0, 0),
+        (6, 5, 5, 6),  # the second is inside the first: one list
+        (20, 19, 18, 20),  # the same list seen from two levels, one link short
+        (6, 6, 1, 0),  # five links of its own: a rival
+        (7, 2, 0, 7),
+    ],
+)
+def test_find_result_links_applies_the_margin_to_the_links_a_rival_adds(
+    first: int, second: int, shared: int, picked: int
+) -> None:
+    assert len(_two_lists(first, second, shared)) == picked

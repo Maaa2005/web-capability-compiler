@@ -128,10 +128,12 @@ def find_result_links(
     links is a result list too. A collection most of whose links head a list of
     their own is a row of footer columns, not a result list, and does not qualify.
 
-    Within the preferred kind the largest wins, and only when one is largest. Two
-    collections of equal size is a page with two result lists, and picking either
-    would attach ``open_result_item`` to a collection the agent did not mean. That
-    case is left uncompiled rather than guessed.
+    Within the preferred kind the largest wins, and only when it is clearly
+    largest: at least 1.25 times the next list. Two
+    lists of equal or nearly equal size are a page with two result lists, and
+    picking either would attach ``open_result_item`` to a collection the agent did
+    not mean. That case is left uncompiled rather than guessed. A list whose links
+    are all inside the winner is part of it, not a rival.
     """
     links: dict[str, NormalizedElement] = {}
     for element in elements:
@@ -172,10 +174,30 @@ def find_result_links(
         tier = [paths for paths, is_bare in candidates.items() if is_bare is bare]
         if not tier:
             continue
-        largest = max(len(paths) for paths in tier)
-        winners = [paths for paths in tier if len(paths) == largest]
-        return [links[path] for path in winners[0]] if len(winners) == 1 else []
+        winner = max(tier, key=len)
+        # A rival counts only for the links it has that the winner does not: the
+        # same list found at two container levels, one link short, is the winner.
+        chosen = set(winner)
+        rivals = [len(set(paths) - chosen) for paths in tier if paths is not winner]
+        if max(rivals, default=0) and not _wins_clearly(len(winner), max(rivals)):
+            return []
+        return [links[path] for path in winner]
     return []
+
+
+#: How far ahead of the next list the winner must be: at least 1.25 times as many
+#: links, the ratio test Lowe uses for matches (accept the best only when the
+#: second best is at most 0.8 of it) and close to Readability's 0.75 cut-off for a
+#: "close" candidate. A ratio only, because the `footer-columns` fixture, which
+#: reproduces crates.io, has a five-link result list beside four-link columns and
+#: an added minimum gap of two would refuse it. At these sizes a ratio is a coarse
+#: tool (3 against 2 passes, 6 against 5 does not); the number is judgement, not
+#: measured, and no implementation read states a reason for its own.
+_MARGIN_RATIO = 1.25
+
+
+def _wins_clearly(winner: int, runner_up: int) -> bool:
+    return winner >= runner_up * _MARGIN_RATIO
 
 
 def _heads_of_other_lists(paths: tuple[str, ...], candidates: dict[tuple[str, ...], bool]) -> bool:
