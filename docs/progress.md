@@ -2507,3 +2507,25 @@ An independent second review found two things; both were checked first.
   Chromium connects to, unlike HTTP. README now says exactly that and no longer
   lists WebSockets among the closed holes; real protection needs a network-level
   proxy, which WCC does not have.
+
+### The result list needs a margin over the next list (2026-11-04)
+
+`find_result_links` chose the largest list in its tier and refused only an exact
+tie, so six links beat five and `open_result_item` was attached to a list the page
+may not have meant. The winner must now have at least 1.25 times the links of the
+largest list that is not inside it (a list whose links are all in the winner is part
+of it, not a rival). Otherwise nothing is compiled.
+
+Sources: Lowe's ratio test (reject when best/second best distance ratio > 0.8, so
+best >= 1.25 x second); Readability counts a candidate within 0.75 of the top as
+close, and always returns the top anyway; Chromium's dom-distiller returns nothing
+when there are several `article` elements; Playwright's strict mode refuses an
+ambiguous locator. None of them states why its threshold is what it is. A difference
+test on counts (binomial, five percent) would need 13 against 5 or 20 against 10,
+which would drop real lists, so it was not used.
+
+An absolute minimum gap of two links was tried first and refused the `footer-columns`
+fixture (five results against four-link columns), so it was dropped; at these sizes
+the ratio is coarse (3 against 2 passes, 6 against 5 does not). The numbers are
+judgement. Not run: the live 22-site measurement, so no page's coverage change has
+been measured. `pypi.org` and the other tied pages stay uncompiled as before.

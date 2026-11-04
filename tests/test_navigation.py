@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from factories import a_path_chain, an_element
 from wcc.compiler.navigation import (
     build_pagination_templates,
@@ -327,3 +329,25 @@ def test_two_controls_claiming_next_produce_no_capability() -> None:
         for element_id, path in (("el_a", "nav>a[1]"), ("el_b", "footer>a[1]"))
     ]
     assert build_pagination_templates(controls) == []
+
+
+@pytest.mark.parametrize(
+    ("winner", "runner_up", "clear"),
+    [
+        (7, 5, True),
+        (6, 5, False),
+        (10, 8, True),
+        (9, 8, False),
+        (3, 1, True),
+        (2, 1, True),
+        (5, 4, True),  # the crates.io fixture
+        (30, 3, True),
+        (5, 5, False),
+    ],
+)
+def test_a_result_list_must_be_clearly_larger_than_the_next(
+    winner: int, runner_up: int, clear: bool
+) -> None:
+    from wcc.compiler.navigation import _wins_clearly
+
+    assert _wins_clearly(winner, runner_up) is clear
