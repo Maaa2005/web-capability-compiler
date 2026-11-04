@@ -32,7 +32,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError as _SdkToolError
 
 from wcc import __version__
-from wcc.config import build_enricher, driver_settings
+from wcc.config import build_enricher, driver_settings, nat64_prefixes
 from wcc.driver.base import DriverError
 from wcc.driver.playwright_driver import PlaywrightDriver
 from wcc.mcp.views import (
@@ -128,7 +128,7 @@ def build_service(store: Store | None = None) -> Service:
     """Assemble the runtime, retiring anything a previous process left behind."""
     opened = store or Store()
     opened.expire_bindings_from_previous_runs()
-    driver = PlaywrightDriver(UrlPolicy(), driver_settings())
+    driver = PlaywrightDriver(UrlPolicy(nat64_prefixes=nat64_prefixes()), driver_settings())
     # The store is the enrichment cache: a page class outlives the process, and so
     # should the model call that named it.
     enricher = build_enricher(opened)

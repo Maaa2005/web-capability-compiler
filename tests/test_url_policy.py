@@ -65,6 +65,39 @@ def test_restricted_address_ranges_are_refused(address: str, category: str) -> N
 
 
 @pytest.mark.parametrize(
+    ("address", "category"),
+    [
+        # NAT64 well-known prefix (RFC 6052): ``ipaddress`` calls these global.
+        ("64:ff9b::7f00:1", "loopback"),
+        ("64:ff9b::a00:5", "private"),
+        # 6to4 (RFC 3056) forwards to the embedded IPv4 address.
+        ("2002:7f00:1::", "loopback"),
+        ("2002:c0a8:101::1", "private"),
+        # Deprecated spaces that ``ipaddress`` reports as global.
+        ("::127.0.0.1", "reserved"),
+        ("::1.2.3.4", "reserved"),
+        ("192.88.99.1", "reserved"),
+    ],
+)
+def test_ipv6_forms_that_carry_an_ipv4_destination_are_judged_by_it(
+    address: str, category: str
+) -> None:
+    with pytest.raises(NavigationBlockedError, match=category):
+        _policy((address,)).check("https://tunnel.example/")
+
+
+@pytest.mark.parametrize("address", ["64:ff9b::a9fe:a9fe", "2002:a9fe:a9fe::"])
+def test_metadata_reached_through_a_tunnel_prefix_stays_refused(address: str) -> None:
+    with pytest.raises(NavigationBlockedError, match="metadata"):
+        _policy((address,)).check("https://tunnel.example/", allow_private_network=True)
+
+
+def test_a_public_address_behind_nat64_is_still_allowed() -> None:
+    """NAT64 is how IPv6-only networks reach IPv4 sites; the embedded address decides."""
+    _policy(("64:ff9b::5db8:d822",)).check("https://example.com/")  # 93.184.216.34
+
+
+@pytest.mark.parametrize(
     "address",
     ["169.254.169.254", "100.100.100.200", "fd00:ec2::254"],
 )
@@ -172,3 +205,17 @@ def test_a_name_resolving_to_nothing_is_refused() -> None:
 def test_a_url_the_parser_cannot_read_is_refused_not_raised_as_value_error(url: str) -> None:
     with pytest.raises(NavigationBlockedError, match="not a valid URL"):
         _policy().check(url)
+
+
+def test_an_operator_nat64_prefix_can_be_named_so_its_embedded_address_is_judged() -> None:
+    import ipaddress
+
+    answer = ("2a00:1450:4001::7f00:1",)
+    UrlPolicy(resolver=lambda hostname: list(answer)).check("https://dns64.example/")  # unknowable
+
+    named = UrlPolicy(
+        resolver=lambda hostname: list(answer),
+        nat64_prefixes=(ipaddress.IPv6Network("2a00:1450:4001::/96"),),
+    )
+    with pytest.raises(NavigationBlockedError, match="loopback"):
+        named.check("https://dns64.example/")

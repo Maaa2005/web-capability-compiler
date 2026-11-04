@@ -2535,3 +2535,57 @@ Review finding fixed (11/4): a rival list counts only for the links the winner l
 Second round (11/4, Codex): the margin only applies when the compiler runs, and a stored template that still binds is reused without it. That is the stored-template versioning PR's job: raise `COMPILER_REVISION` to 2 when this PR is merged after it (listed in the approval queue). Added `find_result_links` tests for the boundary (10 against 8 passes, 10 against 9 and 6 against 5 do not), containment (a list inside the winner is not a rival) and partial overlap (only the links a rival adds count).
 
 Public pages with the margin (`benchmarks/results/coverage-20261104-margin.json`, run 2026-11-04 through the benchmark's own `robots.txt` handling and pauses, against `coverage-20261104-egress-proxy.json` taken minutes earlier on the branch below it): **one page changed.** `docs.python.org/3/` no longer compiles "open a result": its list of six links (`Python HOWTOs`, `Installing Python modules`, …) has a sibling list too close in size, which is the two-column case already recorded as one list split in two. Every other page's capabilities and result list are identical (Hacker News differs only in the stories beyond the first three, as the front page moves). So **12 of 17 pages (71%)**, down from 13 (76%), and 21 refusals as before; README and `docs/comparison.md` now say 71%. The cost is real and was measured; the page it costs was only ever half-right (six links of a two-column list), so the margin is doing what it was added for.
+
+### Egress proxy: WebSocket and DNS rebinding closed at the socket (2026-11-04)
+
+The two holes the README listed as "not fixable in-process" were both fixable in
+process, by moving the check from the page's requests to the connection. Each
+session's context now uses a proxy on `127.0.0.1` (`wcc.driver.egress_proxy`).
+
+How it was chosen (ten sources read, one per source type and topic; notes in the PR):
+
+- Chromium applies a configured proxy per URL, and `ws:`/`wss:` go through an HTTP
+  proxy by `CONNECT` (`net/docs/proxy.md`, RFC 6455 4.1). It skips the proxy for
+  `localhost`, `127.0.0.0/8`, `169.254.0.0/16` and link-local IPv6 unless
+  `<-loopback>` is in the bypass list; Playwright adds that itself when a proxy is
+  set. Probed here: a context-level proxy receives `127.0.0.1` and `localhost`
+  requests on Chromium 151.
+- Name resolution for an HTTP proxy is the proxy's. The design is Smokescreen's and
+  Advocate's: resolve, judge every address, connect to the judged address by
+  literal. OWASP's SSRF cheat sheet asks for exactly that.
+- `ipaddress.is_global` is not a policy. On Python 3.12.10, `64:ff9b::7f00:1`,
+  `::127.0.0.1` and `192.88.99.1` are reported global. The URL policy now unwraps
+  NAT64 and 6to4 to the embedded IPv4 address and refuses `::/96` and the 6to4 relay
+  range.
+- A refused plain-HTTP request is answered by hanging up, not by a 403 page:
+  Chromium shows a proxy's 403 body as the destination's page and the navigation
+  "succeeds". `CONNECT` is answered with 403, which Chromium reports as a tunnel
+  failure.
+- Behind the proxy `_audit_peer` is skipped, because the peer Chromium reports is
+  the proxy itself. The judgement is made before the connection exists.
+
+Not chosen: wrapping `_apiConnect` in an init script (the page reaches the same path
+through `__pwWebSocketDispatch`; see the entry above), `iptables` or a network
+namespace (Linux only, needs privilege, cannot ship in a Python package), a
+mitmproxy add-on (a heavy dependency for a CONNECT filter), and judging URL text
+(the proxy sees what `getaddrinfo` returned, which is what the connection uses).
+
+Tests: the previously `xfail(strict=True)` WebSocket bypass now passes; a Worker's
+WebSocket to a refused address never handshakes; an admitted WebSocket still does
+(so the refusals are not a proxy that carries nothing); 33 socket-level proxy tests
+cover refusal of any bad address in an answer, one lookup per connection,
+alternative IP spellings, per-connection reading of the private-network allowance,
+header rewriting, malformed requests and shutdown. With the proxy off, the Worker
+and forced-socket tests fail again.
+
+Not verified: UDP/WebTransport/QUIC behaviour (no primary source found; the
+WebRTC flag exists in Chromium 151's binary but its effect was not exercised), a
+machine behind a mandatory corporate proxy (WCC's proxy connects directly), and
+the live 22-site measurement, which was not run.
+
+
+Review findings (11/4, two reviewers). Fixed: a tunnel now ends when either direction ends (5 s grace, then both cancelled), so a dead side does not hold a descriptor and a plain request cannot be followed by a second one on the same connection; connect failures (502/503) on plain HTTP hang up instead of returning an error page; the WebRTC switch is given in both spellings Chromium sources use. Open: idle time is still measured per direction; no overall deadline on name resolution and connection (a slow resolver can occupy the shared executor); `close()` does not wait for the listener and a failing `context.close()` can skip the proxy close on the open-failure path; DNS64/NAT64 networks with an operator-specific prefix are not recognised (only 64:ff9b::/96 and 6to4 are unwrapped), and the proxy judges bare addresses, so hostname rules are not applied there; `http://h:0/` is read as port 80; no fail-closed `--host-resolver-rules` backstop or real-browser test that an unproxied path cannot connect; the WebRTC/UDP/WebTransport effect is unverified.
+
+Second round on the review findings (11/4), each written as a failing test first. Fixed: idle is measured over the whole tunnel (a server streaming to a silent browser is busy); resolving and connecting share a 30 s deadline and at most 32 lookups run at once; `close()` waits for the listener and refuses connections that arrive while closing; the open-failure path and `shutdown` close every proxy even when a context close fails; `http://h:0/` and bare line breaks in a request head are refused; a DNS64/NAT64 network's own /96 prefix can be named with `WCC_NAT64_PREFIXES` (an address says nothing about being synthesised, so it cannot be guessed: `…::1` hosts are common); browser-side name resolution is switched off (`--host-resolver-rules=MAP * ~NOTFOUND`), with a real-browser test that a context outside the proxy cannot resolve `localhost`. Decision, not a fix: the proxy judges addresses, not hostnames; the metadata hostnames resolve to metadata addresses or nothing, and the hostname rule still applies to page requests at `context.route`. Still unverified: effect of the WebRTC switch, UDP/WebTransport/QUIC.
+
+Public pages through the proxy (`benchmarks/results/coverage-20261104-egress-proxy.json`, run 2026-11-04 with the benchmark's `robots.txt` handling and pauses): 22 visited, 5 skipped by `robots.txt` or unreachable `robots.txt` (as on 2026-10-23), 0 failed, 17 observed, 13 with a capability (76%), 21 refusals. The same numbers as `coverage-20261023.json`, so the proxy changes nothing the compiler sees on real sites, including HTTPS, redirects and subresources.

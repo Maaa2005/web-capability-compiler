@@ -183,24 +183,24 @@ Details, and what this does not show:
   means roughly three in ten pages with something to find produced nothing. Duplicate controls (one for desktop, one for mobile)
   defeat locator uniqueness and are refused rather than guessed at. Client-rendered
   listings and icon-only pagers are not detected.
-- **It does not defend against DNS rebinding.** The URL policy resolves a hostname
-  and checks every address; Chromium then resolves it independently when it
-  connects. WCC audits the peer afterwards and kills the session, but the request
-  has already gone. This is not fixable inside the process. **Run it behind an
-  egress proxy or firewall if internal services are reachable.** Everything else in
-  that family is closed — decimal/octal/hex IP forms, IPv4-mapped IPv6, IPv6
-  loopback and unspecified, `0.0.0.0`, `localhost` aliases, trailing dots, embedded
-  credentials, non-HTTP schemes, redirects, and page-initiated subresources.
-- **WebSocket checks are best-effort, and a hostile page can bypass them.** The
-  URL of a page-initiated `ws://` or `wss://` socket is judged against the same
-  policy as HTTP, and a refused socket is closed. That check is weaker than the
-  HTTP one: Playwright replaces `WebSocket` inside the page, and page script can
-  open the real connection through that replacement without waiting for the
-  decision; sockets created inside Workers are not covered at all; and the check
-  looks at the hostname in the URL, not at the address Chromium then connects to,
-  so a DNS answer that changes between the check and the connection gets through.
-  Full protection would need a network-level proxy, which WCC does not have. The
-  egress proxy or firewall advice above applies here too.
+- **Traffic goes through a filtering proxy, with limits.** Each session's browser
+  context is pointed at a small proxy that WCC runs on `127.0.0.1`. For every
+  connection it resolves the name itself, checks **every** address against the URL
+  policy, and connects to one of those addresses by literal, so a DNS answer that
+  changes after the check has nothing to change. HTTPS, `ws://`, `wss://` and
+  Worker traffic all pass it, as does loopback, which Chromium would otherwise
+  skip. Decimal/octal/hex IP forms, IPv4-mapped IPv6, NAT64 and 6to4 forms,
+  `0.0.0.0`, `localhost` aliases, trailing dots, embedded credentials, non-HTTP
+  schemes, redirects and page-initiated subresources are refused by what they
+  resolve to. What it does not cover: UDP (WebRTC's non-proxied UDP is switched
+  off with a Chromium flag; WebTransport/HTTP/3 behaviour with an HTTP proxy is
+  undocumented and untested here), and a machine that reaches the network only
+  through its own proxy, because WCC's proxy connects directly. For that case, or to
+  compare, on a DNS64/NAT64 network name its own /96 prefix in `WCC_NAT64_PREFIXES` (comma-separated); to turn the proxy off set `WCC_EGRESS_PROXY=0`: WCC then checks page requests by URL and
+  audits the connected peer afterwards, which cannot see WebSockets and cannot
+  stop the first request. Run it behind an egress firewall as well if internal
+  services are reachable; a proxy that shares the process is not a substitute for
+  network isolation.
 - **The MCP server is not a polite crawler.** At runtime it does not read
   `robots.txt`, has no per-host rate limit, and identifies itself with Playwright's
   default Chromium user agent. Those manners exist only in the benchmark script. You
