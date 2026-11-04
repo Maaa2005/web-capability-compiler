@@ -2536,6 +2536,36 @@ Second round (11/4, Codex): the margin only applies when the compiler runs, and 
 
 Public pages with the margin (`benchmarks/results/coverage-20261104-margin.json`, run 2026-11-04 through the benchmark's own `robots.txt` handling and pauses, against `coverage-20261104-egress-proxy.json` taken minutes earlier on the branch below it): **one page changed.** `docs.python.org/3/` no longer compiles "open a result": its list of six links (`Python HOWTOs`, `Installing Python modules`, …) has a sibling list too close in size, which is the two-column case already recorded as one list split in two. Every other page's capabilities and result list are identical (Hacker News differs only in the stories beyond the first three, as the front page moves). So **12 of 17 pages (71%)**, down from 13 (76%), and 21 refusals as before; README and `docs/comparison.md` now say 71%. The cost is real and was measured; the page it costs was only ever half-right (six links of a two-column list), so the margin is doing what it was added for.
 
+### Stored templates carry the compiler revision (2026-11-04)
+
+`inspect_page` looks up stored templates first and compiles only when none binds, so
+a compiler fix reached only pages never seen before: the footer rule, the story-row
+rule and the rest did not apply to a page class already in the store. Database
+revision 6 adds `capability_templates.compiler_revision` (default 0, set by hand-raised
+`wcc.compiler.revision.COMPILER_REVISION`, currently 1). `find_templates` leaves out
+compiled templates from an earlier revision; imported ones are never judged by it.
+Rows are kept, not deleted (deleting cascades to bindings and a template's history is
+the only record of how it fared). If a page is compiled again to the identical template
+the old row is made current, so its usage statistics survive; otherwise a new row is
+added. Existing rows read as revision 0, so the first inspection after upgrading
+recompiles each compiled page class once.
+
+Chosen after reading how others do it. Rustc and mypy write the tool version into the
+artifact and discard on mismatch; ruff and ESLint put it in the key or directory and
+ignore the old entry; Stagehand ignores a cache entry whose schema number differs;
+GitLab treats an old `cached_markdown_version` like NULL and regenerates on read; a
+hand-raised integer is preferred to a code hash in the one design document found
+("forgetting to raise it is a correctness bug"). No source covers keeping usage
+statistics across a recompile or exempting imported artifacts; those two follow from
+the table's provenance column and are WCC's own. Not chosen: a column on the model
+(a schema change, rule 7), deleting stale rows, a purge command. Stale rows accumulate
+until `wcc clear-data`. Not tested: an end-to-end `inspect_page` over a stale row (the
+coordinator calls the default lookup); the live 22-site run.
+
+Review findings (two reviewers' worth, 11/4): fixed — the migration checks `PRAGMA table_info` before `ALTER` (two processes opening an old database together), and `wcc export` includes stale templates (a session bound to them exports what it saw). Open — an imported template that still binds stops `inspect_page` from compiling, so a stale compiled row beside it stays hidden (the coordinator's reuse rule, unchanged here); an identical recompile returns the old row with its old evidence; `COMPILER_REVISION` is raised by hand with nothing that notices a missed bump.
+
+Second round (11/4, Codex and Claude both found these two). Fixed: a stale compiled template now forces a recompile even when an imported template still binds (`Store.has_stale_templates`; afterwards `retire_stale_templates` marks the replaced rows -1 so reuse resumes — one failing coordinator test first); `wcc export` goes back to current templates only and, when only stale ones exist, says to inspect the page again (exporting the old and the new together, and re-importing the old as "imported", made it worse). Still open: an identical recompile returns the old row with its old evidence; `COMPILER_REVISION` is raised by hand and nothing notices a missed bump — PR "result list margin" changes what the compiler produces, so raise it to 2 when that PR is merged after this one.
+
 ### Egress proxy: WebSocket and DNS rebinding closed at the socket (2026-11-04)
 
 The two holes the README listed as "not fixable in-process" were both fixable in
@@ -2589,3 +2619,5 @@ Review findings (11/4, two reviewers). Fixed: a tunnel now ends when either dire
 Second round on the review findings (11/4), each written as a failing test first. Fixed: idle is measured over the whole tunnel (a server streaming to a silent browser is busy); resolving and connecting share a 30 s deadline and at most 32 lookups run at once; `close()` waits for the listener and refuses connections that arrive while closing; the open-failure path and `shutdown` close every proxy even when a context close fails; `http://h:0/` and bare line breaks in a request head are refused; a DNS64/NAT64 network's own /96 prefix can be named with `WCC_NAT64_PREFIXES` (an address says nothing about being synthesised, so it cannot be guessed: `…::1` hosts are common); browser-side name resolution is switched off (`--host-resolver-rules=MAP * ~NOTFOUND`), with a real-browser test that a context outside the proxy cannot resolve `localhost`. Decision, not a fix: the proxy judges addresses, not hostnames; the metadata hostnames resolve to metadata addresses or nothing, and the hostname rule still applies to page requests at `context.route`. Still unverified: effect of the WebRTC switch, UDP/WebTransport/QUIC.
 
 Public pages through the proxy (`benchmarks/results/coverage-20261104-egress-proxy.json`, run 2026-11-04 with the benchmark's `robots.txt` handling and pauses): 22 visited, 5 skipped by `robots.txt` or unreachable `robots.txt` (as on 2026-10-23), 0 failed, 17 observed, 13 with a capability (76%), 21 refusals. The same numbers as `coverage-20261023.json`, so the proxy changes nothing the compiler sees on real sites, including HTTPS, redirects and subresources.
+
+`COMPILER_REVISION` is 2 from the result-list margin on: stored page classes compiled under revision 1 are compiled again on their next inspection, so the margin reaches pages already in the store.

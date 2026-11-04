@@ -450,3 +450,36 @@ def test_an_unbound_template_reaches_the_agent_as_a_refusal() -> None:
     assert [(r.candidate_key, r.code) for r in view.refused] == [("tpl_1", "binding_refused")]
     assert view.refused[0].message.startswith("open_result_item: the container is stale")
     assert len(view.refused[0].message) <= MAX_REFUSAL_LENGTH + 1
+
+
+async def test_a_stale_compiled_template_is_recompiled_even_when_an_imported_one_binds(
+    store: Store,
+) -> None:
+    """Imported templates are exempt from the revision, and must not hide the rest."""
+    import sqlite3
+
+    from wcc.store.database import connect
+
+    stale = store.save_template(a_template())
+    imported = store.save_template(
+        a_template(template_id="tmpl_imported", name="imported_search", provenance="imported")
+    )
+    with connect(store.path) as connection:
+        connection.execute(
+            "UPDATE capability_templates SET compiler_revision = 0 WHERE template_id = ?",
+            (stale.template_id,),
+        )
+        connection.commit()
+    assert imported.provenance == "imported"
+    assert isinstance(connection, sqlite3.Connection)
+
+    page = a_page()
+    driver = FakeDriver([page, page])
+    coordinator = Coordinator(driver, store)
+    await coordinator.open_session(OpenSessionRequest(url=f"{ORIGIN}{ROUTE}"))
+
+    first = await coordinator.inspect_page("sess_1")
+    second = await coordinator.inspect_page("sess_1")
+
+    assert not first.reused, "the stale compiled row must not be hidden by the imported one"
+    assert second.reused, "once compiled again the old row is retired and reuse resumes"
