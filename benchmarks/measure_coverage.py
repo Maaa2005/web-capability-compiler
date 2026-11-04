@@ -151,8 +151,10 @@ class SiteCoverage:
 def robots_refusal(url: str) -> str | None:
     """Why ``robots.txt`` does not let this agent fetch this path, or ``None``.
 
-    Read as RFC 9309 section 2.3.1 says, which is the standard library's reading
-    except in one place. A missing file (a 4xx other than 401 and 403) restricts
+    Rules are matched by ``urllib.robotparser``: the first rule whose path is a
+    prefix wins, and the ``*`` and ``$`` wildcards of RFC 9309 are not supported,
+    so this is narrower than the RFC's longest-match reading. Fetch failures follow
+    RFC 9309 section 2.3.1. A missing file (a 4xx other than 401 and 403) restricts
     nothing. An unreachable one — a 5xx, or no answer at all — is a file whose
     contents are unknown, and the standard says to assume complete disallow. This
     used to treat a network failure as permission, so a host that could not be

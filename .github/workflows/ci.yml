@@ -49,3 +49,30 @@ jobs:
 
       - name: Tests
         run: uv run pytest
+
+  # Not a gate. The README installs with `uvx --from git+...`, which ignores
+  # uv.lock, so users run whatever is newest. This job shows when the newest
+  # dependencies and the locked ones have drifted apart; it is allowed to fail so
+  # that an upstream release cannot block a merge, and kept small so it stays quick.
+  latest-deps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Resolve the newest dependencies, ignoring the committed lock
+        run: |
+          uv lock --upgrade
+          uv sync --all-extras --dev
+          uv pip list | grep -iE '^(mcp|playwright|pydantic) '
+
+      - name: Install Chromium
+        run: uv run wcc install-browser
+
+      - name: MCP server and CLI tests
+        run: uv run pytest tests/test_mcp_server.py tests/test_cli.py

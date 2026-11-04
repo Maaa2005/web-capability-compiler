@@ -34,6 +34,7 @@ from playwright.async_api import (
     Request,
     Response,
     Route,
+    WebSocketRoute,
     async_playwright,
 )
 from playwright.async_api import (
@@ -175,6 +176,22 @@ def _redirect_depth(request: Request) -> int:
     return depth
 
 
+_WEBSOCKET_SCHEMES = {"ws": "http", "wss": "https"}
+
+
+def _http_equivalent(url: str) -> str:
+    """Name the HTTP(S) URL a WebSocket URL is judged as.
+
+    The policy admits ``http`` and ``https`` only, so a ``ws://`` address would be
+    refused for its scheme rather than for where it points. A WebSocket handshake
+    is an HTTP request to the same host and port, which is the destination the
+    policy has to judge; every other part of the URL is kept.
+    """
+    parts = urlsplit(url)
+    scheme = _WEBSOCKET_SCHEMES.get(parts.scheme.lower())
+    return parts._replace(scheme=scheme).geturl() if scheme else url
+
+
 def _event_kind(request: Request) -> str:
     """Name a refused request so the runtime can tell a hop from a subresource."""
     if request.resource_type != "document":
@@ -307,7 +324,10 @@ class PlaywrightDriver:
                     raise NavigationBlockedError(
                         blocked.reason or f"navigation to {blocked.url} was refused"
                     ) from exc
-                raise
+                # Playwright's own message can carry a multi-line call log; the
+                # first line is the reason, the rest is its internals.
+                reason = (str(exc).splitlines() or [type(exc).__name__])[0]
+                raise DriverError(f"navigation to {request.url} failed: {reason}") from exc
 
             self._sessions[session_id] = session
             await self.identify(session_id)
@@ -1160,6 +1180,31 @@ class PlaywrightDriver:
             await route.continue_()
 
         await session.context.route("**/*", on_route)
+
+        async def on_web_socket(ws: WebSocketRoute) -> None:
+            """Judge a WebSocket the way ``on_route`` judges a request.
+
+            ``context.route`` never sees a WebSocket, so without this a page could
+            open ``ws://127.0.0.1:...`` and talk to a service the URL policy exists
+            to keep it away from. A denied socket is closed without ever being
+            connected to its server; an allowed one is connected through unchanged.
+            """
+            try:
+                self._guard.check(
+                    _http_equivalent(ws.url),
+                    allow_private_network=session.allow_private_network,
+                )
+            except NavigationBlockedError as blocked:
+                session.events.append(
+                    NavigationEvent(
+                        kind="subresource", url=ws.url, blocked=True, reason=blocked.message
+                    )
+                )
+                await ws.close(code=1008, reason="blocked by the URL policy")
+                return
+            ws.connect_to_server()
+
+        await session.context.route_web_socket("**/*", on_web_socket)
 
         def on_new_page(page: Page) -> None:
             """Refuse a popup, tab, or window and close it (specification 10.2)."""
