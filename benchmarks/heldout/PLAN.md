@@ -126,9 +126,9 @@ the first annotator's.
 
 | Type | WCC offered it when |
 |---|---|
-| search | a bound capability has category `search` |
+| search | a bound capability has category `search`, or category `filter` with a free-text argument (a string without a fixed list of values) |
 | result list | `open_result_item` is bound. Its labels are the result list WCC took. |
-| next page | `navigate_to_page` is bound |
+| next page | `navigate_next_page` or `navigate_to_page` is bound |
 
 Matching to a label:
 
@@ -242,3 +242,11 @@ sites were blocked here:
 - 2026-11-04, after drawing `sample.json` and before any visit: added the rule
   that a stratum which runs out of candidates is reported short rather than
   topped up. The plan had not said what happens then.
+- 2026-11-04, before any visit: the table of what counts as WCC's answer had
+  two errors, found by a dry run of the harness on this project's own fixtures.
+  No held-out page had been visited.
+  - **Next page.** WCC compiles a `rel="next"` link as `navigate_next_page`, and
+    numbered links as `navigate_to_page`. The table named only the second.
+  - **Search.** A form WCC classifies as a filter but which has a free-text box
+    lets an agent search by words, which is what Q1 asks. The table counted
+    only category `search`.

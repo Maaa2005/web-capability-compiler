@@ -117,3 +117,13 @@ TITLE_CONTAINMENT_MIN_CHARS = 10
 
 #: Pages in the optional agreement check, drawn with SEED from the scored pages.
 AGREEMENT_PAGES = 15
+
+# -- what counts as WCC offering each type -------------------------------------
+
+#: Q1 is answered by a search capability, or by a filter capability with a
+#: free-text argument: either lets an agent search the site by words.
+SEARCH_CATEGORY = "search"
+FILTER_CATEGORY = "filter"
+RESULT_LIST_NAME = "open_result_item"
+#: Q3 is answered by either way WCC compiles "go to the next page".
+NEXT_PAGE_NAMES: tuple[str, ...] = ("navigate_next_page", "navigate_to_page")
