@@ -2533,3 +2533,5 @@ the table's provenance column and are WCC's own. Not chosen: a column on the mod
 (a schema change, rule 7), deleting stale rows, a purge command. Stale rows accumulate
 until `wcc clear-data`. Not tested: an end-to-end `inspect_page` over a stale row (the
 coordinator calls the default lookup); the live 22-site run.
+
+Review findings (two reviewers' worth, 11/4): fixed — the migration checks `PRAGMA table_info` before `ALTER` (two processes opening an old database together), and `wcc export` includes stale templates (a session bound to them exports what it saw). Open — an imported template that still binds stops `inspect_page` from compiling, so a stale compiled row beside it stays hidden (the coordinator's reuse rule, unchanged here); an identical recompile returns the old row with its old evidence; `COMPILER_REVISION` is raised by hand with nothing that notices a missed bump.

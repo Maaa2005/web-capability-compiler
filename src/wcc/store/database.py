@@ -134,9 +134,15 @@ def _add_compiler_revision(connection: sqlite3.Connection) -> None:
     a compiler nobody recorded, and the point of the column is that a compiled
     template of unknown age is compiled again rather than trusted.
     """
-    connection.execute(
-        "ALTER TABLE capability_templates ADD COLUMN compiler_revision INTEGER NOT NULL DEFAULT 0"
-    )
+    # Looked at, not assumed: two processes can both read the old revision before
+    # either migrates, and a repeated ALTER fails where the earlier revisions'
+    # IF NOT EXISTS statements did not.
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(capability_templates)")}
+    if "compiler_revision" not in columns:
+        connection.execute(
+            "ALTER TABLE capability_templates "
+            "ADD COLUMN compiler_revision INTEGER NOT NULL DEFAULT 0"
+        )
 
 
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {

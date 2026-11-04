@@ -160,7 +160,9 @@ def _export(session_id: str, output: Path) -> int:
             )
             return EXIT_ENVIRONMENT_UNFIT
         origin, route = page
-        templates = store.find_templates(origin, route)
+        # Stale ones too: a session that inspected before an upgrade is bound to them,
+        # and an export is of what that session saw.
+        templates = store.find_templates(origin, route, include_stale=True)
 
     if not templates:
         print(f"no templates are stored for {origin}{route}", file=sys.stderr)
