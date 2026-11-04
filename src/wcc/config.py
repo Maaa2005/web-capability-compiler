@@ -12,6 +12,7 @@ is where it legitimately comes from instead.
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import os
 
@@ -24,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 ALLOW_PRIVATE_NETWORK_ENV = "WCC_ALLOW_PRIVATE_NETWORK"
 EGRESS_PROXY_ENV = "WCC_EGRESS_PROXY"
+NAT64_PREFIXES_ENV = "WCC_NAT64_PREFIXES"
 ENRICHMENT_ENV = "WCC_ENRICHMENT"
 ENRICHMENT_MODEL_ENV = "WCC_ENRICHMENT_MODEL"
 API_KEY_ENV = "ANTHROPIC_API_KEY"
@@ -54,6 +56,21 @@ def egress_proxy(environ: dict[str, str] | None = None) -> bool:
     """
     env = os.environ if environ is None else environ
     return env.get(EGRESS_PROXY_ENV, "").strip().lower() not in _FALSY
+
+
+def nat64_prefixes(environ: dict[str, str] | None = None) -> tuple[ipaddress.IPv6Network, ...]:
+    """Operator NAT64 /96 prefixes from a comma-separated list; a bad entry is an error.
+
+    Quietly skipping an entry that does not parse would leave the address range it
+    was meant to cover judged as an ordinary host.
+    """
+    env = os.environ if environ is None else environ
+    names = [part.strip() for part in env.get(NAT64_PREFIXES_ENV, "").split(",") if part.strip()]
+    networks = tuple(ipaddress.IPv6Network(name) for name in names)
+    for network in networks:
+        if network.prefixlen != 96:
+            raise ValueError(f"{NAT64_PREFIXES_ENV}: {network} is not a /96")
+    return networks
 
 
 def driver_settings(environ: dict[str, str] | None = None) -> DriverSettings:

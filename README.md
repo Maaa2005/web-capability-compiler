@@ -196,7 +196,7 @@ Details, and what this does not show:
   off with a Chromium flag; WebTransport/HTTP/3 behaviour with an HTTP proxy is
   undocumented and untested here), and a machine that reaches the network only
   through its own proxy, because WCC's proxy connects directly. For that case, or to
-  compare, set `WCC_EGRESS_PROXY=0`: WCC then checks page requests by URL and
+  compare, on a DNS64/NAT64 network name its own /96 prefix in `WCC_NAT64_PREFIXES` (comma-separated); to turn the proxy off set `WCC_EGRESS_PROXY=0`: WCC then checks page requests by URL and
   audits the connected peer afterwards, which cannot see WebSockets and cannot
   stop the first request. Run it behind an egress firewall as well if internal
   services are reachable; a proxy that shares the process is not a substitute for

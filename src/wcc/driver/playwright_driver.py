@@ -88,6 +88,11 @@ _LAUNCH_ARGS = [
     "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
 ]
 
+#: Behind the proxy the browser never needs to resolve a name itself (an HTTP proxy
+#: resolves for it). Making every browser-side lookup fail means a path that
+#: somehow skips the proxy gets "name not resolved" and not a connection.
+_NO_LOCAL_DNS = ["--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE 127.0.0.1"]
+
 _DOCUMENT_TOKEN = "__wccDocumentToken"
 _MUTATION_CLOCK = "__wccLastMutation"
 _IDENTITY_READ_ATTEMPTS = 3
@@ -357,10 +362,12 @@ class PlaywrightDriver:
             # Includes cancellation: a context whose ID was never returned can never
             # be closed by the caller, so it must not outlive this call.
             self._sessions.pop(session_id, None)
-            if context is not None:
-                await context.close()
-            if egress is not None:
-                await egress.close()
+            try:
+                if context is not None:
+                    await context.close()
+            finally:
+                if egress is not None:
+                    await egress.close()
             raise
         finally:
             self._reserved.discard(session_id)
@@ -490,14 +497,20 @@ class PlaywrightDriver:
         """Close every session and release the browser processes."""
         if not await self.drain_cleanups():
             self._abandon_cleanups()
+        failures: list[BaseException] = []
         for session_id in list(self._sessions):
-            await self.close_session(session_id)
+            try:
+                await self.close_session(session_id)
+            except Exception as exc:
+                failures.append(exc)
         for browser in self._browsers.values():
             await browser.close()
         self._browsers.clear()
         if self._playwright is not None:
             await self._playwright.stop()
             self._playwright = None
+        if failures:
+            raise failures[0]
 
     # -- observation -------------------------------------------------------
 
@@ -1112,7 +1125,8 @@ class PlaywrightDriver:
             browser = self._browsers.get(headless)
             if browser is None:
                 browser = await self._playwright.chromium.launch(
-                    headless=headless, args=_LAUNCH_ARGS
+                    headless=headless,
+                    args=[*_LAUNCH_ARGS, *(_NO_LOCAL_DNS if self._settings.egress_proxy else [])],
                 )
                 self._browsers[headless] = browser
             return browser

@@ -342,3 +342,100 @@ async def test_closing_the_proxy_cuts_open_tunnels(started: list[EgressProxy]) -
 
         assert await asyncio.wait_for(reader.read(), 5) == b""
         writer.close()
+
+
+async def _streamer(chunks: int, gap_s: float) -> tuple[asyncio.Server, int, list[str]]:
+    """Sends a byte every ``gap_s`` and ignores input; stops if the client half-closes."""
+    events: list[str] = []
+
+    async def serve(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        async def watch() -> None:
+            if await reader.read(1024) == b"":
+                events.append("client-eof")
+
+        watcher = asyncio.ensure_future(watch())
+        try:
+            for _ in range(chunks):
+                if events:
+                    break
+                writer.write(b"x")
+                await writer.drain()
+                await asyncio.sleep(gap_s)
+        finally:
+            watcher.cancel()
+            writer.close()
+
+    server = await asyncio.start_server(serve, "127.0.0.1", 0)
+    return server, server.sockets[0].getsockname()[1], events
+
+
+async def test_a_tunnel_that_is_busy_in_one_direction_is_not_idle(
+    started: list[EgressProxy],
+) -> None:
+    """Silence from the browser while the server streams is not an idle connection."""
+    server, port, events = await _streamer(chunks=8, gap_s=0.3)
+    try:
+        proxy, _ = _make({"stream.test": ["127.0.0.1"]})
+        proxy._idle_timeout_s = 1.0  # noqa: SLF001
+        client = await _start(started, proxy)
+        reader, writer = await client.send(f"CONNECT stream.test:{port} HTTP/1.1\r\n\r\n".encode())
+        assert await _status(reader) == b"HTTP/1.1 200 Connection Established"
+        await reader.readline()
+
+        received = await asyncio.wait_for(reader.read(), 10)
+        writer.close()
+    finally:
+        server.close()
+
+    assert len(received) == 8
+    assert events == []
+
+
+async def test_a_name_that_never_resolves_is_given_up_on(started: list[EgressProxy]) -> None:
+    async def hang(host: str, port: int) -> list[str]:
+        del host, port
+        await asyncio.sleep(3600)
+        return []
+
+    refusals: Refusals = []
+    proxy = EgressProxy(
+        UrlPolicy(),
+        allow_private_network=lambda: False,
+        on_refused=lambda url, reason: refusals.append((url, reason)),
+        resolver=hang,
+        connect_deadline_s=0.5,
+    )
+    client = await _start(started, proxy)
+
+    reader, writer = await client.send(b"CONNECT slow.test:443 HTTP/1.1\r\n\r\n")
+
+    assert await _status(reader) == b"HTTP/1.1 403 Forbidden"
+    writer.close()
+    assert "did not finish" in refusals[0][1]
+
+
+async def test_a_closed_proxy_no_longer_accepts(started: list[EgressProxy]) -> None:
+    proxy, _ = _make({})
+    client = await _start(started, proxy)
+
+    await proxy.close()
+
+    with pytest.raises(OSError):
+        await asyncio.open_connection("127.0.0.1", client.port)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        pytest.param(b"GET http://x.test:0/ HTTP/1.1\r\n\r\n", id="port-zero"),
+        pytest.param(b"GET http://x.test/ HTTP/1.1\r\nA: b\nC: d\r\n\r\n", id="bare-newline"),
+    ],
+)
+async def test_ambiguous_plain_requests_are_refused(started: list[EgressProxy], raw: bytes) -> None:
+    proxy, _ = _make({"x.test": ["127.0.0.1"]})
+    client = await _start(started, proxy)
+
+    reader, writer = await client.send(raw)
+
+    assert (await _status(reader)).startswith(b"HTTP/1.1 400")
+    writer.close()

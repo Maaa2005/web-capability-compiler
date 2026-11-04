@@ -70,6 +70,13 @@ class UrlPolicy:
     """
 
     resolver: Resolver = field(default=resolve_addresses)
+    nat64_prefixes: tuple[ipaddress.IPv6Network, ...] = ()
+    """Operator-specific NAT64 /96 prefixes (RFC 6052), besides ``64:ff9b::/96``.
+
+    A DNS64 network synthesises addresses under its own prefix, and nothing in an
+    address says it is one: ``2001:db8::1`` is an ordinary host. Naming the prefix
+    is the only safe way to judge the IPv4 address inside it.
+    """
 
     def check(self, url: str, *, allow_private_network: bool = False) -> None:
         """Raise :class:`NavigationBlockedError` unless ``url`` may be navigated to."""
@@ -109,7 +116,7 @@ class UrlPolicy:
 
     def _check_address(self, hostname: str, raw: str, *, allow_private_network: bool) -> None:
         try:
-            address = _normalize_address(raw)
+            address = _normalize_address(raw, self.nat64_prefixes)
         except ValueError as exc:
             raise NavigationBlockedError(
                 f"{hostname!r} resolved to {raw!r}, which is not an IP address"
@@ -143,7 +150,9 @@ _V4_COMPATIBLE = ipaddress.ip_network("::/96")
 _SIX_TO_FOUR_RELAY = ipaddress.ip_network("192.88.99.0/24")
 
 
-def _normalize_address(raw: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
+def _normalize_address(
+    raw: str, nat64_prefixes: tuple[ipaddress.IPv6Network, ...] = ()
+) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
     """Parse ``raw`` and unwrap the IPv6 forms that carry an IPv4 destination.
 
     ``::ffff:169.254.169.254`` and ``169.254.169.254`` are the same destination, so
@@ -157,7 +166,7 @@ def _normalize_address(raw: str) -> ipaddress.IPv4Address | ipaddress.IPv6Addres
     if isinstance(address, ipaddress.IPv6Address):
         if address.ipv4_mapped is not None:
             return address.ipv4_mapped
-        if address in _NAT64_WELL_KNOWN:
+        if address in _NAT64_WELL_KNOWN or any(address in net for net in nat64_prefixes):
             return ipaddress.IPv4Address(int(address) & 0xFFFFFFFF)
         if address in _SIX_TO_FOUR:
             return ipaddress.IPv4Address((int(address) >> 80) & 0xFFFFFFFF)

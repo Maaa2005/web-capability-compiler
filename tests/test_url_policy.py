@@ -205,3 +205,17 @@ def test_a_name_resolving_to_nothing_is_refused() -> None:
 def test_a_url_the_parser_cannot_read_is_refused_not_raised_as_value_error(url: str) -> None:
     with pytest.raises(NavigationBlockedError, match="not a valid URL"):
         _policy().check(url)
+
+
+def test_an_operator_nat64_prefix_can_be_named_so_its_embedded_address_is_judged() -> None:
+    import ipaddress
+
+    answer = ("2a00:1450:4001::7f00:1",)
+    UrlPolicy(resolver=lambda hostname: list(answer)).check("https://dns64.example/")  # unknowable
+
+    named = UrlPolicy(
+        resolver=lambda hostname: list(answer),
+        nat64_prefixes=(ipaddress.IPv6Network("2a00:1450:4001::/96"),),
+    )
+    with pytest.raises(NavigationBlockedError, match="loopback"):
+        named.check("https://dns64.example/")

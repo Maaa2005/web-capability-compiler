@@ -1283,3 +1283,20 @@ async def test_the_page_text_is_what_a_reader_sees_and_where(
     assert url.endswith("/product-list/?keyword=earbuds")
     assert "3 results" in text
     assert "result-count" not in text
+
+
+async def test_a_context_that_skips_the_proxy_cannot_resolve_any_name(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """Fail closed: the proxy is not the only thing standing between a page and DNS."""
+    from playwright.async_api import Error as PlaywrightError
+
+    port = urlsplit(fixture_server).port
+    browser = await driver._browser(headless=True)  # noqa: SLF001
+    context = await browser.new_context()
+    try:
+        page = await context.new_page()
+        with pytest.raises(PlaywrightError, match="ERR_NAME_NOT_RESOLVED"):
+            await page.goto(f"http://localhost:{port}/search-page/")
+    finally:
+        await context.close()

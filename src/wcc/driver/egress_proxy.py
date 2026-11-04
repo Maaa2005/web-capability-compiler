@@ -53,6 +53,11 @@ _CONNECT_TIMEOUT_S = 15.0
 #: Silence on an established tunnel. Long enough for a WebSocket that pings once a
 #: minute, short enough that a dead peer does not hold a descriptor for ever.
 _IDLE_TIMEOUT_S = 300.0
+#: Resolving and connecting together. ``getaddrinfo`` has no timeout of its own and
+#: runs on a shared thread pool, so a name that never answers is cut off here and
+#: only a few lookups may be in flight at once.
+_CONNECT_DEADLINE_S = 30.0
+_MAX_RESOLVING = 32
 _MAX_CONNECTIONS = 256
 _CHUNK = 64 * 1024
 #: How long one direction may keep going after the other has ended.
@@ -100,12 +105,16 @@ class EgressProxy:
         on_refused: Refusal,
         resolver: Resolver = resolve_host,
         idle_timeout_s: float = _IDLE_TIMEOUT_S,
+        connect_deadline_s: float = _CONNECT_DEADLINE_S,
     ) -> None:
         self._guard = guard
         self._allow_private_network = allow_private_network
         self._on_refused = on_refused
         self._resolver = resolver
         self._idle_timeout_s = idle_timeout_s
+        self._connect_deadline_s = connect_deadline_s
+        self._resolving = asyncio.Semaphore(_MAX_RESOLVING)
+        self._closed = False
         self._server: asyncio.Server | None = None
         self._tasks: set[asyncio.Task[None]] = set()
         self.server_url: str = ""
@@ -121,14 +130,17 @@ class EgressProxy:
 
     async def close(self) -> None:
         """Stop listening and cut every open tunnel."""
-        if self._server is not None:
-            self._server.close()
-            self._server = None
+        self._closed = True
+        server, self._server = self._server, None
+        if server is not None:
+            server.close()
         tasks = list(self._tasks)
         for task in tasks:
             task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+        if server is not None:
+            await server.wait_closed()
 
     # -- one client connection ---------------------------------------------
 
@@ -137,7 +149,7 @@ class EgressProxy:
         if task is not None:
             self._tasks.add(task)
         try:
-            if len(self._tasks) > _MAX_CONNECTIONS:
+            if self._closed or len(self._tasks) > _MAX_CONNECTIONS:
                 await self._reply(writer, 503, "too many connections")
                 return
             await self._serve(reader, writer)
@@ -164,8 +176,14 @@ class EgressProxy:
                 host, port, path = _split_absolute(target)
                 shown = f"http://{host}:{port}{path}"
             target = shown
-            addresses = await self._admit(host, port)
-            upstream = await self._connect(addresses, port, shown)
+            try:
+                upstream = await asyncio.wait_for(
+                    self._admit_and_connect(host, port, shown), self._connect_deadline_s
+                )
+            except TimeoutError as exc:
+                raise _Refused(
+                    403, f"{shown} did not finish resolving and connecting in time"
+                ) from exc
         except _Refused as refused:
             if refused.status == 403:
                 self._on_refused(target, refused.reason)
@@ -187,9 +205,10 @@ class EgressProxy:
             else:
                 upstream_writer.write(_forward_head(method, path, lines))
                 await upstream_writer.drain()
+            activity = [asyncio.get_running_loop().time()]
             await self._tunnel(
-                asyncio.ensure_future(self._pump(reader, upstream_writer)),
-                asyncio.ensure_future(self._pump(upstream_reader, writer)),
+                asyncio.ensure_future(self._pump(reader, upstream_writer, activity)),
+                asyncio.ensure_future(self._pump(upstream_reader, writer, activity)),
             )
         finally:
             await _close(upstream_writer)
@@ -210,6 +229,12 @@ class EgressProxy:
             for pump in pumps:
                 pump.cancel()
             await asyncio.gather(*pumps, return_exceptions=True)
+
+    async def _admit_and_connect(
+        self, host: str, port: int, shown: str
+    ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+        addresses = await self._admit(host, port)
+        return await self._connect(addresses, port, shown)
 
     async def _read_head(self, reader: asyncio.StreamReader) -> bytes:
         try:
@@ -233,7 +258,8 @@ class EgressProxy:
             addresses = [literal]
         else:
             try:
-                addresses = await self._resolver(host, port)
+                async with self._resolving:
+                    addresses = await self._resolver(host, port)
             except NavigationBlockedError as exc:
                 raise _Refused(403, exc.message) from exc
         if not addresses:
@@ -270,15 +296,29 @@ class EgressProxy:
 
     # -- moving bytes ------------------------------------------------------
 
-    async def _pump(self, source: asyncio.StreamReader, sink: asyncio.StreamWriter) -> None:
+    async def _pump(
+        self, source: asyncio.StreamReader, sink: asyncio.StreamWriter, activity: list[float]
+    ) -> None:
+        """Copy until EOF. Idle means the whole tunnel was silent, not this direction.
+
+        A server streaming to a browser that sends nothing is busy, and half-closing
+        the upstream because the browser was quiet would cut the stream.
+        """
+        loop = asyncio.get_running_loop()
         try:
             while True:
-                data = await asyncio.wait_for(source.read(_CHUNK), self._idle_timeout_s)
+                try:
+                    data = await asyncio.wait_for(source.read(_CHUNK), self._idle_timeout_s)
+                except TimeoutError:
+                    if loop.time() - activity[0] < self._idle_timeout_s:
+                        continue
+                    break
                 if not data:
                     break
+                activity[0] = loop.time()
                 sink.write(data)
                 await sink.drain()
-        except (TimeoutError, ConnectionError, OSError):
+        except (ConnectionError, OSError):
             pass
         finally:
             # Half-close, so the other direction can finish what it is sending.
@@ -325,6 +365,8 @@ def _parse_head(head: bytes) -> tuple[str, str, list[tuple[str, str]]]:
     except UnicodeDecodeError as exc:  # pragma: no cover - latin-1 decodes every byte
         raise _Refused(400, "unreadable request") from exc
     request_line, *header_lines = text.split("\r\n")
+    if any("\n" in line or "\r" in line for line in [request_line, *header_lines]):
+        raise _Refused(400, "bare line break in the request head")
     parts = request_line.split(" ")
     if len(parts) != 3 or not parts[2].startswith("HTTP/1."):
         raise _Refused(400, "malformed request line")
@@ -367,6 +409,8 @@ def _split_absolute(target: str) -> tuple[str, int, str]:
         raise _Refused(400, "only absolute http:// targets and CONNECT are proxied")
     if parts.username is not None or parts.password is not None:
         raise _Refused(403, "a URL carrying credentials is refused")
+    if port == 0:
+        raise _Refused(400, "port 0")
     path = parts.path or "/"
     if parts.query:
         path += "?" + parts.query
