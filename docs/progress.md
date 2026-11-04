@@ -2507,3 +2507,29 @@ An independent second review found two things; both were checked first.
   Chromium connects to, unlike HTTP. README now says exactly that and no longer
   lists WebSockets among the closed holes; real protection needs a network-level
   proxy, which WCC does not have.
+
+### Stored templates carry the compiler revision (2026-11-04)
+
+`inspect_page` looks up stored templates first and compiles only when none binds, so
+a compiler fix reached only pages never seen before: the footer rule, the story-row
+rule and the rest did not apply to a page class already in the store. Database
+revision 6 adds `capability_templates.compiler_revision` (default 0, set by hand-raised
+`wcc.compiler.revision.COMPILER_REVISION`, currently 1). `find_templates` leaves out
+compiled templates from an earlier revision; imported ones are never judged by it.
+Rows are kept, not deleted (deleting cascades to bindings and a template's history is
+the only record of how it fared). If a page is compiled again to the identical template
+the old row is made current, so its usage statistics survive; otherwise a new row is
+added. Existing rows read as revision 0, so the first inspection after upgrading
+recompiles each compiled page class once.
+
+Chosen after reading how others do it. Rustc and mypy write the tool version into the
+artifact and discard on mismatch; ruff and ESLint put it in the key or directory and
+ignore the old entry; Stagehand ignores a cache entry whose schema number differs;
+GitLab treats an old `cached_markdown_version` like NULL and regenerates on read; a
+hand-raised integer is preferred to a code hash in the one design document found
+("forgetting to raise it is a correctness bug"). No source covers keeping usage
+statistics across a recompile or exempting imported artifacts; those two follow from
+the table's provenance column and are WCC's own. Not chosen: a column on the model
+(a schema change, rule 7), deleting stale rows, a purge command. Stale rows accumulate
+until `wcc clear-data`. Not tested: an end-to-end `inspect_page` over a stale row (the
+coordinator calls the default lookup); the live 22-site run.

@@ -21,7 +21,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 #: The DDL below. Bump when a table or column changes, and add a migration.
-SCHEMA_REVISION = 5
+SCHEMA_REVISION = 6
 
 _EXECUTIONS_DDL = """
 CREATE TABLE IF NOT EXISTS executions (
@@ -127,11 +127,24 @@ def _widen_the_enrichment_key(connection: sqlite3.Connection) -> None:
 #: ``revision -> migration``. The mechanism was built empty at revision 1 rather
 #: than added later, under pressure, next to real user data — which is how
 #: migrations get skipped. This is its first use.
+def _add_compiler_revision(connection: sqlite3.Connection) -> None:
+    """Revision 6: which compiler made a template (see ``wcc.compiler.revision``).
+
+    Existing rows get 0, which is older than every real revision. They were made by
+    a compiler nobody recorded, and the point of the column is that a compiled
+    template of unknown age is compiled again rather than trusted.
+    """
+    connection.execute(
+        "ALTER TABLE capability_templates ADD COLUMN compiler_revision INTEGER NOT NULL DEFAULT 0"
+    )
+
+
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     2: _add_executions,
     3: _add_execution_steps,
     4: _add_enrichments,
     5: _widen_the_enrichment_key,
+    6: _add_compiler_revision,
 }
 
 # Column choices follow one rule: SQL holds what is searched, owned, counted, or
@@ -282,6 +295,8 @@ def migrate(connection: sqlite3.Connection) -> None:
             for statement in (part.strip() for part in _DDL.split(";")):
                 if statement:
                     connection.execute(statement)
+            # Revision 1's table plus the columns later revisions added.
+            _add_compiler_revision(connection)
             connection.execute(f"PRAGMA user_version = {SCHEMA_REVISION}")
         return
 
