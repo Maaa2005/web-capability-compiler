@@ -2508,6 +2508,34 @@ An independent second review found two things; both were checked first.
   lists WebSockets among the closed holes; real protection needs a network-level
   proxy, which WCC does not have.
 
+### The result list needs a margin over the next list (2026-11-04)
+
+`find_result_links` chose the largest list in its tier and refused only an exact
+tie, so six links beat five and `open_result_item` was attached to a list the page
+may not have meant. The winner must now have at least 1.25 times the links of the
+largest list that is not inside it (a list whose links are all in the winner is part
+of it, not a rival). Otherwise nothing is compiled.
+
+Sources: Lowe's ratio test (reject when best/second best distance ratio > 0.8, so
+best >= 1.25 x second); Readability counts a candidate within 0.75 of the top as
+close, and always returns the top anyway; Chromium's dom-distiller returns nothing
+when there are several `article` elements; Playwright's strict mode refuses an
+ambiguous locator. None of them states why its threshold is what it is. A difference
+test on counts (binomial, five percent) would need 13 against 5 or 20 against 10,
+which would drop real lists, so it was not used.
+
+An absolute minimum gap of two links was tried first and refused the `footer-columns`
+fixture (five results against four-link columns), so it was dropped; at these sizes
+the ratio is coarse (3 against 2 passes, 6 against 5 does not). The numbers are
+judgement. Not run: the live 22-site measurement, so no page's coverage change has
+been measured. `pypi.org` and the other tied pages stay uncompiled as before.
+
+Review finding fixed (11/4): a rival list counts only for the links the winner lacks, so the same list found at two container levels, one link short, no longer blocks the winner. Reviewers also noted that only the boundary function is unit-tested and that overlapping-but-not-nested lists have no `find_result_links` test; live 22-site run still not done.
+
+Second round (11/4, Codex): the margin only applies when the compiler runs, and a stored template that still binds is reused without it. That is the stored-template versioning PR's job: raise `COMPILER_REVISION` to 2 when this PR is merged after it (listed in the approval queue). Added `find_result_links` tests for the boundary (10 against 8 passes, 10 against 9 and 6 against 5 do not), containment (a list inside the winner is not a rival) and partial overlap (only the links a rival adds count).
+
+Public pages with the margin (`benchmarks/results/coverage-20261104-margin.json`, run 2026-11-04 through the benchmark's own `robots.txt` handling and pauses, against `coverage-20261104-egress-proxy.json` taken minutes earlier on the branch below it): **one page changed.** `docs.python.org/3/` no longer compiles "open a result": its list of six links (`Python HOWTOs`, `Installing Python modules`, …) has a sibling list too close in size, which is the two-column case already recorded as one list split in two. Every other page's capabilities and result list are identical (Hacker News differs only in the stories beyond the first three, as the front page moves). So **12 of 17 pages (71%)**, down from 13 (76%), and 21 refusals as before; README and `docs/comparison.md` now say 71%. The cost is real and was measured; the page it costs was only ever half-right (six links of a two-column list), so the margin is doing what it was added for.
+
 ### Stored templates carry the compiler revision (2026-11-04)
 
 `inspect_page` looks up stored templates first and compiles only when none binds, so
@@ -2591,3 +2619,5 @@ Review findings (11/4, two reviewers). Fixed: a tunnel now ends when either dire
 Second round on the review findings (11/4), each written as a failing test first. Fixed: idle is measured over the whole tunnel (a server streaming to a silent browser is busy); resolving and connecting share a 30 s deadline and at most 32 lookups run at once; `close()` waits for the listener and refuses connections that arrive while closing; the open-failure path and `shutdown` close every proxy even when a context close fails; `http://h:0/` and bare line breaks in a request head are refused; a DNS64/NAT64 network's own /96 prefix can be named with `WCC_NAT64_PREFIXES` (an address says nothing about being synthesised, so it cannot be guessed: `…::1` hosts are common); browser-side name resolution is switched off (`--host-resolver-rules=MAP * ~NOTFOUND`), with a real-browser test that a context outside the proxy cannot resolve `localhost`. Decision, not a fix: the proxy judges addresses, not hostnames; the metadata hostnames resolve to metadata addresses or nothing, and the hostname rule still applies to page requests at `context.route`. Still unverified: effect of the WebRTC switch, UDP/WebTransport/QUIC.
 
 Public pages through the proxy (`benchmarks/results/coverage-20261104-egress-proxy.json`, run 2026-11-04 with the benchmark's `robots.txt` handling and pauses): 22 visited, 5 skipped by `robots.txt` or unreachable `robots.txt` (as on 2026-10-23), 0 failed, 17 observed, 13 with a capability (76%), 21 refusals. The same numbers as `coverage-20261023.json`, so the proxy changes nothing the compiler sees on real sites, including HTTPS, redirects and subresources.
+
+`COMPILER_REVISION` is 2 from the result-list margin on: stored page classes compiled under revision 1 are compiled again on their next inspection, so the margin reaches pages already in the store.

@@ -88,7 +88,7 @@ Observed 2026-10-23 — reproduce with `uv run python -m benchmarks.measure_cove
 |---|---|
 | observed (5 skipped by robots.txt) | 17 |
 | had something a compiler could want | 17 |
-| **…and a capability was compiled** | **13 (76%)** |
+| **…and a capability was compiled** | **12 (71%)** |
 | **state-changing candidates refused** | **21** |
 
 The capabilities are ordinary ones on ordinary sites: search on `python.org`,
@@ -179,8 +179,8 @@ Details, and what this does not show:
 - **Only `low` risk executes.** Purchases, account changes, message sending, and
   any state-changing submission are out of scope by design, not by omission.
 - **Three capability categories** — `search`, `filter`, `navigate`.
-- **It misses things.** 76% coverage (13 of 17 observed pages, as in the table above)
-  means roughly a quarter of pages with something to find produced nothing. Duplicate controls (one for desktop, one for mobile)
+- **It misses things.** 71% coverage (12 of 17 observed pages, as in the table above)
+  means roughly three in ten pages with something to find produced nothing. Duplicate controls (one for desktop, one for mobile)
   defeat locator uniqueness and are refused rather than guessed at. Client-rendered
   listings and icon-only pagers are not detected.
 - **Traffic goes through a filtering proxy, with limits.** Each session's browser

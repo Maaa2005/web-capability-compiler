@@ -13,4 +13,6 @@ correctness bug, so the rule is written next to the number. Distinct from
 shape of the database); none of the three implies the others.
 """
 
-COMPILER_REVISION = 1
+#: 1: the compiler before the result-list margin. 2: a result list must be 1.25 times
+#: the next list (stored templates compiled under 1 are compiled again).
+COMPILER_REVISION = 2
