@@ -94,6 +94,9 @@ next one in order. If labelling later excludes pages, the run continues down
 the same order until each stratum has 15 scored pages. The report counts every
 candidate used, so the share of the web that could not be measured is visible.
 
+A stratum that uses up its 60 candidates before reaching 15 scored pages is
+reported short. It is not topped up with a second draw.
+
 ## Labels
 
 - **Who.** A person who has not seen WCC's output for these pages. The
@@ -236,3 +239,6 @@ sites were blocked here:
 ## Change log
 
 - 2026-11-04: plan written and committed before sampling.
+- 2026-11-04, after drawing `sample.json` and before any visit: added the rule
+  that a stratum which runs out of candidates is reported short rather than
+  topped up. The plan had not said what happens then.
