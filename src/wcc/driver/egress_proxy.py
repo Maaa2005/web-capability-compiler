@@ -55,6 +55,8 @@ _CONNECT_TIMEOUT_S = 15.0
 _IDLE_TIMEOUT_S = 300.0
 _MAX_CONNECTIONS = 256
 _CHUNK = 64 * 1024
+#: How long one direction may keep going after the other has ended.
+_GRACE_S = 5.0
 
 #: Headers that belong to the hop between browser and proxy.
 _HOP_HEADERS = frozenset({"proxy-connection", "proxy-authorization", "proxy-authenticate"})
@@ -172,6 +174,8 @@ class EgressProxy:
                     # it, and a navigation to it would "succeed". Hanging up makes
                     # the request fail, which is what a refusal is.
                     return
+            if method != "CONNECT" and refused.status in (502, 503):
+                return
             await self._reply(writer, refused.status, refused.reason)
             return
 
@@ -183,12 +187,29 @@ class EgressProxy:
             else:
                 upstream_writer.write(_forward_head(method, path, lines))
                 await upstream_writer.drain()
-            await asyncio.gather(
-                self._pump(reader, upstream_writer),
-                self._pump(upstream_reader, writer),
+            await self._tunnel(
+                asyncio.ensure_future(self._pump(reader, upstream_writer)),
+                asyncio.ensure_future(self._pump(upstream_reader, writer)),
             )
         finally:
             await _close(upstream_writer)
+
+    @staticmethod
+    async def _tunnel(*pumps: asyncio.Future[None]) -> None:
+        """Run both directions until one ends, then give the other a moment and stop it.
+
+        A connection whose one side has gone away must not hold a descriptor for the
+        other side's idle timeout, and a plain request that has been answered must
+        not stay open for the next one to ride on (it was only checked against the
+        first request's host).
+        """
+        try:
+            await asyncio.wait(pumps, return_when=asyncio.FIRST_COMPLETED)
+            await asyncio.wait(pumps, timeout=_GRACE_S)
+        finally:
+            for pump in pumps:
+                pump.cancel()
+            await asyncio.gather(*pumps, return_exceptions=True)
 
     async def _read_head(self, reader: asyncio.StreamReader) -> bytes:
         try:

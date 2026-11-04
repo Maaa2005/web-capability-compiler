@@ -82,7 +82,11 @@ from wcc.models.session import (
 
 #: WebRTC would otherwise open UDP sockets that no HTTP proxy sees. With this policy
 #: Chromium sends media only through the proxy or not at all.
-_LAUNCH_ARGS = ["--webrtc-ip-handling-policy=disable_non_proxied_udp"]
+_LAUNCH_ARGS = [
+    "--webrtc-ip-handling-policy=disable_non_proxied_udp",
+    # The spelling differs between Chromium sources; an unknown switch is ignored.
+    "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+]
 
 _DOCUMENT_TOKEN = "__wccDocumentToken"
 _MUTATION_CLOCK = "__wccLastMutation"
