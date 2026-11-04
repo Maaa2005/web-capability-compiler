@@ -2508,6 +2508,36 @@ An independent second review found two things; both were checked first.
   lists WebSockets among the closed holes; real protection needs a network-level
   proxy, which WCC does not have.
 
+### Stored templates carry the compiler revision (2026-11-04)
+
+`inspect_page` looks up stored templates first and compiles only when none binds, so
+a compiler fix reached only pages never seen before: the footer rule, the story-row
+rule and the rest did not apply to a page class already in the store. Database
+revision 6 adds `capability_templates.compiler_revision` (default 0, set by hand-raised
+`wcc.compiler.revision.COMPILER_REVISION`, currently 1). `find_templates` leaves out
+compiled templates from an earlier revision; imported ones are never judged by it.
+Rows are kept, not deleted (deleting cascades to bindings and a template's history is
+the only record of how it fared). If a page is compiled again to the identical template
+the old row is made current, so its usage statistics survive; otherwise a new row is
+added. Existing rows read as revision 0, so the first inspection after upgrading
+recompiles each compiled page class once.
+
+Chosen after reading how others do it. Rustc and mypy write the tool version into the
+artifact and discard on mismatch; ruff and ESLint put it in the key or directory and
+ignore the old entry; Stagehand ignores a cache entry whose schema number differs;
+GitLab treats an old `cached_markdown_version` like NULL and regenerates on read; a
+hand-raised integer is preferred to a code hash in the one design document found
+("forgetting to raise it is a correctness bug"). No source covers keeping usage
+statistics across a recompile or exempting imported artifacts; those two follow from
+the table's provenance column and are WCC's own. Not chosen: a column on the model
+(a schema change, rule 7), deleting stale rows, a purge command. Stale rows accumulate
+until `wcc clear-data`. Not tested: an end-to-end `inspect_page` over a stale row (the
+coordinator calls the default lookup); the live 22-site run.
+
+Review findings (two reviewers' worth, 11/4): fixed — the migration checks `PRAGMA table_info` before `ALTER` (two processes opening an old database together), and `wcc export` includes stale templates (a session bound to them exports what it saw). Open — an imported template that still binds stops `inspect_page` from compiling, so a stale compiled row beside it stays hidden (the coordinator's reuse rule, unchanged here); an identical recompile returns the old row with its old evidence; `COMPILER_REVISION` is raised by hand with nothing that notices a missed bump.
+
+Second round (11/4, Codex and Claude both found these two). Fixed: a stale compiled template now forces a recompile even when an imported template still binds (`Store.has_stale_templates`; afterwards `retire_stale_templates` marks the replaced rows -1 so reuse resumes — one failing coordinator test first); `wcc export` goes back to current templates only and, when only stale ones exist, says to inspect the page again (exporting the old and the new together, and re-importing the old as "imported", made it worse). Still open: an identical recompile returns the old row with its old evidence; `COMPILER_REVISION` is raised by hand and nothing notices a missed bump — PR "result list margin" changes what the compiler produces, so raise it to 2 when that PR is merged after this one.
+
 ### Egress proxy: WebSocket and DNS rebinding closed at the socket (2026-11-04)
 
 The two holes the README listed as "not fixable in-process" were both fixable in

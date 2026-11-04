@@ -277,7 +277,12 @@ class Coordinator:
         state.bindings = {}
         state.templates = {}
 
-        stored = self._store.find_templates(snapshot.origin, snapshot.normalized_route_pattern)
+        origin, route = snapshot.origin, snapshot.normalized_route_pattern
+        # A compiled template from an earlier compiler revision means this page class
+        # is compiled again before anything is reused, even if an imported template
+        # (which no revision applies to) would bind.
+        awaiting_recompile = self._store.has_stale_templates(origin, route)
+        stored = [] if awaiting_recompile else self._store.find_templates(origin, route)
         bindings, unbound = await self._bind_all(session_id, snapshot, stored)
         if bindings:
             self._remember(state, bindings)
@@ -297,6 +302,8 @@ class Coordinator:
         enriched = await self._enricher.enrich(snapshot, report.templates)
         report = report.model_copy(update={"templates": enriched})
         saved = [self._store.save_template(template) for template in enriched]
+        if awaiting_recompile:
+            self._store.retire_stale_templates(origin, route)
         bindings, unbound = await self._bind_all(session_id, snapshot, saved)
         self._remember(state, bindings)
         return Inspection(

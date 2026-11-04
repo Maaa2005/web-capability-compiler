@@ -24,6 +24,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from wcc.compiler.revision import COMPILER_REVISION
 from wcc.enrich.models import PageEnrichment
 from wcc.models.capability import BindingStatus, BoundCapability, CapabilityTemplate
 from wcc.models.common import SCHEMA_VERSION, WCCModel
@@ -259,6 +260,17 @@ class Store:
             ),
         ).fetchone()
         if existing is not None:
+            # Compiled again and identical: the old compiler's answer has been
+            # checked by the new one, so it is current. Updating the row, not
+            # inserting, keeps the usage statistics of a template that never changed.
+            if (
+                existing["provenance"] == "compiled"
+                and existing["compiler_revision"] < COMPILER_REVISION
+            ):
+                self._connection.execute(
+                    "UPDATE capability_templates SET compiler_revision = ? WHERE template_id = ?",
+                    (COMPILER_REVISION, existing["template_id"]),
+                )
             return _load(
                 CapabilityTemplate,
                 existing,
@@ -268,8 +280,9 @@ class Store:
         self._connection.execute(
             "INSERT INTO capability_templates "
             "(template_id, origin, normalized_route_pattern, page_signature, name, category, "
-            " provenance, content_hash, schema_version, created_at, payload_json) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " provenance, content_hash, schema_version, created_at, payload_json, "
+            " compiler_revision) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 template.template_id,
                 template.origin,
@@ -282,22 +295,30 @@ class Store:
                 SCHEMA_VERSION,
                 template.created_at.isoformat(),
                 payload_json,
+                COMPILER_REVISION,
             ),
         )
         return template
 
     def find_templates(
-        self, origin: str, normalized_route_pattern: str
+        self, origin: str, normalized_route_pattern: str, *, include_stale: bool = False
     ) -> list[CapabilityTemplate]:
         """Every candidate for this page class (specification 7.10 step 1).
+
+        Compiled templates from an earlier compiler revision are left out unless
+        ``include_stale``: they are kept, with their history, but a fix to the
+        compiler must not be shadowed by what the unfixed one saved. Imported
+        templates were never this compiler's output and are not judged by its
+        revision.
 
         Ordering is the binder's job, not SQL's: specification 7.10 step 2 states
         the preference, and leaving it here would put half the rule in a query
         string where no test would look for it.
         """
         rows = self._connection.execute(
-            "SELECT * FROM capability_templates WHERE origin = ? AND normalized_route_pattern = ?",
-            (origin, normalized_route_pattern),
+            "SELECT * FROM capability_templates WHERE origin = ? AND normalized_route_pattern = ? "
+            "AND (? OR provenance != 'compiled' OR compiler_revision >= ?)",
+            (origin, normalized_route_pattern, include_stale, COMPILER_REVISION),
         ).fetchall()
         return [
             _load(
@@ -307,6 +328,36 @@ class Store:
             )
             for row in rows
         ]
+
+    def has_stale_templates(self, origin: str, normalized_route_pattern: str) -> bool:
+        """Whether a compiled template from an earlier compiler awaits recompiling.
+
+        Needed on top of ``find_templates``: an imported template that still binds
+        would otherwise end the lookup before the compiler ran, and the stale row
+        beside it would never be replaced.
+        """
+        row = self._connection.execute(
+            "SELECT 1 FROM capability_templates WHERE origin = ? AND normalized_route_pattern = ? "
+            "AND provenance = 'compiled' AND compiler_revision >= 0 AND compiler_revision < ? "
+            "LIMIT 1",
+            (origin, normalized_route_pattern, COMPILER_REVISION),
+        ).fetchone()
+        return row is not None
+
+    def retire_stale_templates(self, origin: str, normalized_route_pattern: str) -> None:
+        """Mark the page class's remaining stale compiled templates as superseded (-1).
+
+        Called after the page class was compiled again. Templates the new compiler
+        reproduced exactly were made current by ``save_template`` and are not
+        touched; the rest were replaced, so they stop counting as awaiting a
+        recompile. The rows stay, with their statistics.
+        """
+        self._connection.execute(
+            "UPDATE capability_templates SET compiler_revision = -1 "
+            "WHERE origin = ? AND normalized_route_pattern = ? AND provenance = 'compiled' "
+            "AND compiler_revision >= 0 AND compiler_revision < ?",
+            (origin, normalized_route_pattern, COMPILER_REVISION),
+        )
 
     def record_bind_outcome(self, template_id: str, *, succeeded: bool) -> None:
         """Update the usage statistics specification 17 requires.

@@ -376,3 +376,116 @@ def test_an_imported_template_is_never_absorbed_into_a_compiled_one(store: Store
     assert imported.template_id != compiled.template_id
     stored = store.find_templates(compiled.origin, compiled.normalized_route_pattern)
     assert {t.provenance for t in stored} == {"compiled", "imported"}
+
+
+# -- compiler revision ----------------------------------------------------------
+
+
+def _age(store: Store, template_id: str, revision: int = 0) -> None:
+    with connect(store.path) as connection:
+        connection.execute(
+            "UPDATE capability_templates SET compiler_revision = ? WHERE template_id = ?",
+            (revision, template_id),
+        )
+
+
+def _lookup(store: Store, template: object, **kwargs: bool) -> list[str]:
+    found = store.find_templates(
+        template.origin,  # type: ignore[attr-defined]
+        template.normalized_route_pattern,  # type: ignore[attr-defined]
+        **kwargs,
+    )
+    return [t.template_id for t in found]
+
+
+def test_a_new_template_carries_the_current_compiler_revision(store: Store) -> None:
+    from wcc.compiler.revision import COMPILER_REVISION
+
+    template = store.save_template(a_template())
+    with connect(store.path) as connection:
+        row = connection.execute(
+            "SELECT compiler_revision FROM capability_templates WHERE template_id = ?",
+            (template.template_id,),
+        ).fetchone()
+    assert row[0] == COMPILER_REVISION
+    assert _lookup(store, template) == [template.template_id]
+
+
+def test_a_compiled_template_from_an_older_compiler_is_not_offered_but_is_kept(
+    store: Store,
+) -> None:
+    template = store.save_template(a_template())
+    _age(store, template.template_id)
+
+    assert _lookup(store, template) == []
+    assert _lookup(store, template, include_stale=True) == [template.template_id]
+
+
+def test_an_imported_template_is_not_judged_by_the_compiler_revision(store: Store) -> None:
+    template = store.save_template(a_template(provenance="imported"))
+    _age(store, template.template_id)
+
+    assert _lookup(store, template) == [template.template_id]
+
+
+def test_compiling_again_to_the_same_template_makes_the_old_row_current(store: Store) -> None:
+    """Identical output is a check passed: the row and its statistics carry on."""
+    first = store.save_template(a_template())
+    store.record_bind_outcome(first.template_id, succeeded=True)
+    _age(store, first.template_id)
+
+    again = store.save_template(a_template(template_id="tmpl_recompiled"))
+
+    assert again.template_id == first.template_id
+    assert _lookup(store, first) == [first.template_id]
+    usage = store.usage_of(first.template_id)
+    assert usage is not None and usage["success_count"] == 1
+
+
+def test_compiling_again_to_a_different_template_adds_a_row_and_leaves_the_old_one(
+    store: Store,
+) -> None:
+    old = store.save_template(a_template())
+    _age(store, old.template_id)
+
+    new = store.save_template(a_template(template_id="tmpl_fixed", name="open_result_item"))
+
+    assert new.template_id != old.template_id
+    assert _lookup(store, new) == [new.template_id]
+    assert sorted(_lookup(store, new, include_stale=True)) == sorted(
+        [old.template_id, new.template_id]
+    )
+
+
+def test_migrating_marks_existing_compiled_templates_as_older_than_any_revision(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "rev5.sqlite3"
+    with Store(path) as store:
+        template = store.save_template(a_template())
+    with connect(path) as connection:
+        connection.execute("ALTER TABLE capability_templates DROP COLUMN compiler_revision")
+        connection.execute("PRAGMA user_version = 5")
+
+    with Store(path) as store:
+        assert _lookup(store, template) == []
+        assert _lookup(store, template, include_stale=True) == [template.template_id]
+
+
+def test_stale_compiled_templates_are_reported_and_then_retired(store: Store) -> None:
+    template = store.save_template(a_template())
+    imported = store.save_template(
+        a_template(template_id="tmpl_imp", name="i", provenance="imported")
+    )
+    assert not store.has_stale_templates(template.origin, template.normalized_route_pattern)
+
+    _age(store, template.template_id)
+    assert store.has_stale_templates(template.origin, template.normalized_route_pattern)
+
+    store.retire_stale_templates(template.origin, template.normalized_route_pattern)
+    assert not store.has_stale_templates(template.origin, template.normalized_route_pattern)
+    # Kept, with their history, and the imported one is untouched.
+    assert sorted(_lookup(store, template, include_stale=True)) == sorted(
+        [template.template_id, imported.template_id]
+    )
+    assert _lookup(store, template) == [imported.template_id]
