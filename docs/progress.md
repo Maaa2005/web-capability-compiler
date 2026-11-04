@@ -2426,3 +2426,155 @@ when the runs are close together; a later criterion for Hacker News should name
 the API check from the start.
 
 The run of record in `README.md` and `docs/comparison.md` is now this file.
+
+## A held-out evaluation, planned before it was run (2026-11-04)
+
+A review on 2026-11-02 found that the published 76% (13 of 17 pages) does not
+measure accuracy on unknown sites, for two reasons:
+
+- It is measured on the 22 pages the compiler's rules have been tuned against
+  since August.
+- It counts any capability as success, so a wrong one counts too.
+
+The literature predicts a drop on new sites. In Mind2Web, step success falls
+from 52.0 on held-out tasks to 38.9 on held-out websites. On 17 pages the 95%
+interval is roughly 53% to 90%.
+
+`benchmarks/heldout/` is a measurement that answers the question. The plan
+(`PLAN.md`, numbers in `plan.py`) was committed and pushed before the sample was
+drawn. The sample (`sample.json`) was committed before any page was visited.
+Git history shows the order: `f1608c6` plan, `3ebf5a2` sample.
+
+### What it does
+
+- **Frame.** The Chrome UX Report top million, September 2026, identified by its
+  file hash, from `zakird/crux-top-lists`.
+  - Four strata by rank bucket: top 1k, 1k–10k, 10k–100k, 100k–1M.
+  - The seed is the first eight hex digits of the file's hash, so it could not
+    be chosen.
+  - The 20 development domains are excluded, as are adult host names; each site
+    gets one page.
+  - 60 candidates per stratum, used strictly in order, until 15 pages per
+    stratum are scored: 60 in all.
+- **Visit.** For each candidate:
+  - read `robots.txt`;
+  - capture the page in plain Chromium, behind the same URL policy;
+  - then compile it cold with WCC.
+  
+  The annotator reads only the capture. WCC's output goes to a separate file.
+- **Labels.** A person labels each page from its capture, without seeing WCC's
+  output. The questions: can it be labelled, search, a main list of items (with
+  its first two titles), a next page, and state-changing controls (with their
+  text).
+- **Score.**
+  - Precision and recall for search, result list and next page, each with a
+    Wilson 95% interval.
+  - A result list counts only if both labelled titles are in the list WCC took.
+  - An "unsafe exposure" is a capability whose evidence includes a labelled
+    state-changing control.
+  - The old any-capability measure is reported too, so it can be compared with
+    the 76%.
+- **Pass line.** It is set before measuring and is not to be changed after:
+  - no unsafe exposure;
+  - search precision at least 0.90 and recall at least 0.60;
+  - result list precision at least 0.70 and recall at least 0.40.
+
+  A figure with fewer than 10 cases behind it is not judged, and the verdict is
+  then "not judged", not a pass.
+
+### Adopted and not adopted
+
+These were found by a literature search on 2026-11-04. Quotes and sections are
+in `PLAN.md`.
+
+- **The website as the unit held out.** Adopted, as in Mind2Web's
+  Cross-Website split and the SWDE protocol (FreeDOM, MarkupLM). Holding out
+  pages of a site already seen would test memory of that site's template.
+- **A random sample from a cited ranking, stratified by rank.** Adopted. Not
+  adopted: picking popular sites by hand, as Mind2Web and Online-Mind2Web did
+  through SimilarWeb.
+  - Tranco's paper and Scheitle et al. ask for the list and its date to be
+    stated.
+  - CrUX was preferred to Tranco because it ranks origins people loaded. Tranco
+    ranks domains, including ones that serve no page.
+- **Precision and recall per capability type.** Adopted. Not adopted: "found
+  anything", which counts a wrong capability as a success.
+  - Right element and right kind, as in Mind2Web's element-plus-operation rule.
+  - Wilson intervals, as Brown, Cai and DasGupta recommend for small samples.
+    That recommendation is quoted from secondary sources; the paper could not
+    be fetched.
+- **Blind human labels.** Adopted. Not adopted: labels derived from ARIA or
+  semantic HTML, which would be circular, since the compiler reads the same
+  signals. Also not adopted: a model as annotator. The ground truth would then
+  depend on another model's errors.
+  - The second annotator and Cohen's κ are optional. None of the surveyed
+    papers reports human agreement for this kind of label, so it is a
+    recommendation, not a precedent.
+- **One use of the test set.** Adopted, following Dwork et al. and Hofman et
+  al. If the rules change because of this run, the sample becomes development
+  data and the next run draws again.
+- **Home pages only.** Accepted as a limitation and written into the plan. An
+  inner page would need a rule for choosing it, and that rule would be another
+  place for bias to enter.
+
+### Corrected before any visit
+
+A dry run of the whole harness on this project's own fixtures found two errors
+in the plan's table of what counts as WCC's answer:
+
+- Pagination is compiled as `navigate_next_page` as well as `navigate_to_page`.
+- A filter form with a free-text box lets an agent search by words, which is
+  what the search question asks.
+
+Both were corrected, with a dated entry in the plan's change log. No held-out
+page had been visited.
+
+### Verification
+
+- `scripts/test.sh`: ruff format, ruff lint, pyright 0 errors, **671 passed**
+  (647 before; 24 new in `tests/test_heldout.py`).
+  - Two of the new tests run the real capture and the real WCC visit against the
+    loopback fixtures. One runs the whole harness: visit, scripted labels,
+    score.
+  - The test of labelling replaces the results file with a directory, so the
+    labelling step fails if it ever reads WCC's output.
+- **Dry run of the CLI on four fixture pages.** Visit, then `python -m
+  benchmarks.heldout label` with answers piped in, then score. It produced a
+  report with every table filled. This checks the plumbing and measures nothing:
+  the fixtures are this project's own pages.
+
+### Not run, and why
+
+The measurement itself has not been made. This environment's network policy
+refuses public sites: `robots.txt` fetches to `www.python.org` and
+`quotes.toscrape.com` returned 403 from the proxy. No held-out page has been
+visited and no WCC result for one exists.
+
+### Next
+
+1. On a machine that can reach the web:
+
+   ```bash
+   uv run python -m benchmarks.heldout run --out benchmarks/results/heldout-YYYYMMDD
+   ```
+
+   Then label without opening `wcc/`:
+
+   ```bash
+   uv run python -m benchmarks.heldout label --out <same> --annotator <name>
+   ```
+
+   If labelling excluded pages, repeat `run` until every stratum has 15 scored
+   pages, then:
+
+   ```bash
+   uv run python -m benchmarks.heldout score --out <same>
+   ```
+
+   Commit `labels.json` before running `score`.
+2. Labelling 60 pages, plus the excluded ones, is roughly one to two hours for
+   one person. Whether the owner labels, or names someone, is the owner's call.
+   It must be decided before labelling starts.
+3. The sample contains login walls, gambling sites and at least one adult site
+   the host-name filter missed. The annotator excludes these at Q0, as the plan
+   says.
