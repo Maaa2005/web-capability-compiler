@@ -161,9 +161,16 @@ def _export(session_id: str, output: Path) -> int:
             return EXIT_ENVIRONMENT_UNFIT
         origin, route = page
         templates = store.find_templates(origin, route)
+        stale = store.has_stale_templates(origin, route)
 
     if not templates:
         print(f"no templates are stored for {origin}{route}", file=sys.stderr)
+        if stale:
+            print(
+                "the stored ones were made by an earlier compiler and are not exported; "
+                "inspect the page again to compile it with this one",
+                file=sys.stderr,
+            )
         return EXIT_ENVIRONMENT_UNFIT
 
     write_file(output, export_templates(templates))

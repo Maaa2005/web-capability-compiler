@@ -77,14 +77,18 @@ about.
 
 ## What it does on pages nobody here wrote
 
-Twenty-two public pages, one visit each, `robots.txt` fetched and honoured per
-host. Observed 2026-10-23 — reproduce with `uv run python -m benchmarks.measure_coverage`.
+Twenty-two public pages, one visit each. The measurement script fetches `robots.txt`
+per host and skips a page it disallows. It reads the file with Python's
+`urllib.robotparser`, which matches the first rule by prefix and does not implement
+the `*` and `$` wildcards of RFC 9309; a file that cannot be read counts as
+disallowing. (This is the benchmark script, not the MCP server: see below.)
+Observed 2026-10-23 — reproduce with `uv run python -m benchmarks.measure_coverage`.
 
 | | |
 |---|---|
 | observed (5 skipped by robots.txt) | 17 |
 | had something a compiler could want | 17 |
-| **…and a capability was compiled** | **13 (76%)** |
+| **…and a capability was compiled** | **12 (71%)** |
 | **state-changing candidates refused** | **21** |
 
 The capabilities are ordinary ones on ordinary sites: search on `python.org`,
@@ -175,18 +179,37 @@ Details, and what this does not show:
 - **Only `low` risk executes.** Purchases, account changes, message sending, and
   any state-changing submission are out of scope by design, not by omission.
 - **Three capability categories** — `search`, `filter`, `navigate`.
-- **It misses things.** 69% coverage means roughly a third of pages with something
-  to find produced nothing. Duplicate controls (one for desktop, one for mobile)
+- **It misses things.** 71% coverage (12 of 17 observed pages, as in the table above)
+  means roughly three in ten pages with something to find produced nothing. Duplicate controls (one for desktop, one for mobile)
   defeat locator uniqueness and are refused rather than guessed at. Client-rendered
   listings and icon-only pagers are not detected.
-- **It does not defend against DNS rebinding.** The URL policy resolves a hostname
-  and checks every address; Chromium then resolves it independently when it
-  connects. WCC audits the peer afterwards and kills the session, but the request
-  has already gone. This is not fixable inside the process. **Run it behind an
-  egress proxy or firewall if internal services are reachable.** Everything else in
-  that family is closed — decimal/octal/hex IP forms, IPv4-mapped IPv6, IPv6
-  loopback and unspecified, `0.0.0.0`, `localhost` aliases, trailing dots, embedded
-  credentials, non-HTTP schemes, redirects, and page-initiated subresources.
+- **Traffic goes through a filtering proxy, with limits.** Each session's browser
+  context is pointed at a small proxy that WCC runs on `127.0.0.1`. For every
+  connection it resolves the name itself, checks **every** address against the URL
+  policy, and connects to one of those addresses by literal, so a DNS answer that
+  changes after the check has nothing to change. HTTPS, `ws://`, `wss://` and
+  Worker traffic all pass it, as does loopback, which Chromium would otherwise
+  skip. Decimal/octal/hex IP forms, IPv4-mapped IPv6, NAT64 and 6to4 forms,
+  `0.0.0.0`, `localhost` aliases, trailing dots, embedded credentials, non-HTTP
+  schemes, redirects and page-initiated subresources are refused by what they
+  resolve to. What it does not cover: UDP (WebRTC's non-proxied UDP is switched
+  off with a Chromium flag; WebTransport/HTTP/3 behaviour with an HTTP proxy is
+  undocumented and untested here), and a machine that reaches the network only
+  through its own proxy, because WCC's proxy connects directly. For that case, or to
+  compare, on a DNS64/NAT64 network name its own /96 prefix in `WCC_NAT64_PREFIXES` (comma-separated); to turn the proxy off set `WCC_EGRESS_PROXY=0`: WCC then checks page requests by URL and
+  audits the connected peer afterwards, which cannot see WebSockets and cannot
+  stop the first request. Run it behind an egress firewall as well if internal
+  services are reachable; a proxy that shares the process is not a substitute for
+  network isolation.
+- **The MCP server is not a polite crawler.** At runtime it does not read
+  `robots.txt`, has no per-host rate limit, and identifies itself with Playwright's
+  default Chromium user agent. Those manners exist only in the benchmark script. You
+  are responsible for what you point it at, and for complying with each site's terms
+  of use.
+- **Page text is untrusted.** Labels, properties, and titles in tool results come
+  from the web page; the server tells the agent they are data, never instructions,
+  but that is a request to the model, not an enforcement. Treat a page as hostile
+  input.
 
 ---
 
@@ -381,7 +404,7 @@ uv run wcc --help
 ./scripts/test.sh
 ```
 
-637 tests, ruff and pyright clean, CI on every push.
+653 tests, ruff and pyright clean, CI on every push.
 
 ## Status and scope
 

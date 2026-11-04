@@ -2583,3 +2583,198 @@ The 401/403 reading is the one that matters most and is the least certain.
 - Decide whether 401/403 should keep refusing, once the RFC text has been read.
 - Decide whether a refusal from the URL policy should also leave the session
   alive.
+
+### Review findings fixed: MCP error text, WebSocket SSRF, prompt-injection notice, docs (2026-11-02)
+
+A review of `fix/mcp-errors-ws-ssrf` found five things, each checked against the
+code before it was changed.
+
+- **Tool errors reached agents as "Error executing tool X" (high).** The README
+  installs with `uvx --from git+...`, which ignores `uv.lock` and takes the newest
+  `mcp`. Newer SDKs show a client only the message of the SDK's own `ToolError`;
+  any other exception is reduced to its tool name. `wcc.mcp.server.ToolError` now
+  subclasses `mcp.server.mcpserver.exceptions.ToolError`, which is the whole change
+  to the server's errors. `pyproject.toml` requires `mcp>=2.2` (the code imports
+  `mcp.server.mcpserver`, which exists only in 2.x; the class was confirmed present
+  in 2.2.0 in a scratch environment), and `uv.lock` was refreshed with
+  `uv lock --upgrade-package mcp` (2.0.0 to 2.3.0).
+- **WebSockets bypassed the URL policy (medium).** `context.route("**/*")` never
+  sees a WebSocket, so page script could open `ws://127.0.0.1:...`. The driver now
+  also registers `context.route_web_socket("**/*")` (present in the locked
+  Playwright 1.62.0). The handler judges the socket's URL with the same guard as
+  HTTP, after mapping `ws` to `http` and `wss` to `https` because the policy admits
+  only those schemes. A denied socket is closed (code 1008) without ever being
+  connected to its server and is recorded as a blocked `subresource` event; an
+  allowed one is connected through. Offline tests: a loopback socket is blocked
+  once the private-network allowance is withdrawn and the server sees no
+  handshake; a metadata address is blocked under any allowance; an allowed socket
+  still reaches its server. The first two fail with the registration removed.
+- **Page text could pose as instructions (medium, text only).** The server
+  instructions and the descriptions of `open_session`, `inspect_page`,
+  `list_capabilities`, and `execute_capability` now say that labels, properties,
+  and titles come from the web page and are untrusted data, never instructions.
+  No schema changed. This asks the model to behave; it does not enforce anything.
+- **README and AGENTS.md were inconsistent with the record.** "69% coverage" now
+  reads 76% (13 of 17), matching the table; the test count is the collected count;
+  the limitations now say that the MCP server does not read `robots.txt`, has no
+  per-host rate limit, and uses Playwright's default user agent, and that users are
+  responsible for each site's terms. The benchmark script reads `robots.txt` with
+  `urllib.robotparser` (first match by prefix, no `*` or `$`), which is narrower
+  than RFC 9309; the README and the `robots_refusal` docstring now say that. The
+  module docstring and `docs/comparison.md` only say that an unreadable file
+  disallows, which is what RFC 9309 section 2.3.1.4 says, so they stay. `AGENTS.md` said "Phase 0 is complete"; it now says
+  Phases 0-6 of 7.
+- **Drift between the lock and the newest dependencies is now visible.** CI has a
+  separate `latest-deps` job, allowed to fail, that resolves without the lock and
+  runs only `tests/test_mcp_server.py` and `tests/test_cli.py`.
+
+### Second review of `fix/mcp-errors-ws-ssrf` (2026-11-02)
+
+An independent second review found two things; both were checked first.
+
+- **Unconverted driver errors still hid their reason (confirmed).** The first fix
+  converted `DriverError` in `open_session` and `inspect_page` only. If a page
+  navigates to a refused document after inspection, the pre-execution read of
+  `execute_capability` raises `SessionFailedError`, which escaped as-is and reached
+  the agent as a bare "Error executing tool execute_capability" on `mcp` 2.3. All
+  tool handlers now run inside one `_reported()` context in `wcc.mcp.server`, which
+  turns any `DriverError` (every driver error and `BindingRefused` subclass it),
+  `StoreError`, and `SensitiveValueError` into the server's `ToolError` with the
+  real reason. Other exceptions are deliberately left to propagate as bugs.
+  `close_session` still answers a `DriverError` as already closed (specification
+  12.6) but no longer does so for a store failure. Refusals inside
+  `execute_capability` still travel as `ExecutionResult`, unchanged. New tests in
+  `tests/test_mcp_server.py` go through `server.call_tool`: a session failed by an
+  `about:blank` commit after inspection, on `execute_capability` and
+  `inspect_page`, and store and persistence errors on each tool. Five of them fail
+  with the conversion removed.
+- **The WebSocket guard is bypassable (confirmed, not fixed).** Playwright 1.62
+  replaces `WebSocket` in the page's main world, and the replacement object has a
+  public `_apiConnect()` that opens the native connection. An offline test
+  (`test_a_hostile_page_cannot_force_a_refused_web_socket_open`) calls it right
+  after `new WebSocket(...)` on a refused loopback destination: the server sees one
+  handshake. It is marked `xfail(strict=True)`, so a fix, or a Playwright change,
+  fails the suite and prompts a README update. Two further probes (not kept as
+  tests) also reached the server: calling the global `__pwWebSocketDispatch` with
+  the socket's public `_id`, and a `new WebSocket` inside a `Worker`. The first
+  shows why an init script that wraps `_apiConnect` would not be a real fix: the
+  page can reach the same path another way, and Playwright's own calls cannot be
+  told apart from the page's. So no init-script change was made. `route_web_socket`
+  stays as a best-effort layer. The hostname is also checked, not the address
+  Chromium connects to, unlike HTTP. README now says exactly that and no longer
+  lists WebSockets among the closed holes; real protection needs a network-level
+  proxy, which WCC does not have.
+
+### The result list needs a margin over the next list (2026-11-04)
+
+`find_result_links` chose the largest list in its tier and refused only an exact
+tie, so six links beat five and `open_result_item` was attached to a list the page
+may not have meant. The winner must now have at least 1.25 times the links of the
+largest list that is not inside it (a list whose links are all in the winner is part
+of it, not a rival). Otherwise nothing is compiled.
+
+Sources: Lowe's ratio test (reject when best/second best distance ratio > 0.8, so
+best >= 1.25 x second); Readability counts a candidate within 0.75 of the top as
+close, and always returns the top anyway; Chromium's dom-distiller returns nothing
+when there are several `article` elements; Playwright's strict mode refuses an
+ambiguous locator. None of them states why its threshold is what it is. A difference
+test on counts (binomial, five percent) would need 13 against 5 or 20 against 10,
+which would drop real lists, so it was not used.
+
+An absolute minimum gap of two links was tried first and refused the `footer-columns`
+fixture (five results against four-link columns), so it was dropped; at these sizes
+the ratio is coarse (3 against 2 passes, 6 against 5 does not). The numbers are
+judgement. Not run: the live 22-site measurement, so no page's coverage change has
+been measured. `pypi.org` and the other tied pages stay uncompiled as before.
+
+Review finding fixed (11/4): a rival list counts only for the links the winner lacks, so the same list found at two container levels, one link short, no longer blocks the winner. Reviewers also noted that only the boundary function is unit-tested and that overlapping-but-not-nested lists have no `find_result_links` test; live 22-site run still not done.
+
+Second round (11/4, Codex): the margin only applies when the compiler runs, and a stored template that still binds is reused without it. That is the stored-template versioning PR's job: raise `COMPILER_REVISION` to 2 when this PR is merged after it (listed in the approval queue). Added `find_result_links` tests for the boundary (10 against 8 passes, 10 against 9 and 6 against 5 do not), containment (a list inside the winner is not a rival) and partial overlap (only the links a rival adds count).
+
+Public pages with the margin (`benchmarks/results/coverage-20261104-margin.json`, run 2026-11-04 through the benchmark's own `robots.txt` handling and pauses, against `coverage-20261104-egress-proxy.json` taken minutes earlier on the branch below it): **one page changed.** `docs.python.org/3/` no longer compiles "open a result": its list of six links (`Python HOWTOs`, `Installing Python modules`, …) has a sibling list too close in size, which is the two-column case already recorded as one list split in two. Every other page's capabilities and result list are identical (Hacker News differs only in the stories beyond the first three, as the front page moves). So **12 of 17 pages (71%)**, down from 13 (76%), and 21 refusals as before; README and `docs/comparison.md` now say 71%. The cost is real and was measured; the page it costs was only ever half-right (six links of a two-column list), so the margin is doing what it was added for.
+
+### Stored templates carry the compiler revision (2026-11-04)
+
+`inspect_page` looks up stored templates first and compiles only when none binds, so
+a compiler fix reached only pages never seen before: the footer rule, the story-row
+rule and the rest did not apply to a page class already in the store. Database
+revision 6 adds `capability_templates.compiler_revision` (default 0, set by hand-raised
+`wcc.compiler.revision.COMPILER_REVISION`, currently 1). `find_templates` leaves out
+compiled templates from an earlier revision; imported ones are never judged by it.
+Rows are kept, not deleted (deleting cascades to bindings and a template's history is
+the only record of how it fared). If a page is compiled again to the identical template
+the old row is made current, so its usage statistics survive; otherwise a new row is
+added. Existing rows read as revision 0, so the first inspection after upgrading
+recompiles each compiled page class once.
+
+Chosen after reading how others do it. Rustc and mypy write the tool version into the
+artifact and discard on mismatch; ruff and ESLint put it in the key or directory and
+ignore the old entry; Stagehand ignores a cache entry whose schema number differs;
+GitLab treats an old `cached_markdown_version` like NULL and regenerates on read; a
+hand-raised integer is preferred to a code hash in the one design document found
+("forgetting to raise it is a correctness bug"). No source covers keeping usage
+statistics across a recompile or exempting imported artifacts; those two follow from
+the table's provenance column and are WCC's own. Not chosen: a column on the model
+(a schema change, rule 7), deleting stale rows, a purge command. Stale rows accumulate
+until `wcc clear-data`. Not tested: an end-to-end `inspect_page` over a stale row (the
+coordinator calls the default lookup); the live 22-site run.
+
+Review findings (two reviewers' worth, 11/4): fixed — the migration checks `PRAGMA table_info` before `ALTER` (two processes opening an old database together), and `wcc export` includes stale templates (a session bound to them exports what it saw). Open — an imported template that still binds stops `inspect_page` from compiling, so a stale compiled row beside it stays hidden (the coordinator's reuse rule, unchanged here); an identical recompile returns the old row with its old evidence; `COMPILER_REVISION` is raised by hand with nothing that notices a missed bump.
+
+Second round (11/4, Codex and Claude both found these two). Fixed: a stale compiled template now forces a recompile even when an imported template still binds (`Store.has_stale_templates`; afterwards `retire_stale_templates` marks the replaced rows -1 so reuse resumes — one failing coordinator test first); `wcc export` goes back to current templates only and, when only stale ones exist, says to inspect the page again (exporting the old and the new together, and re-importing the old as "imported", made it worse). Still open: an identical recompile returns the old row with its old evidence; `COMPILER_REVISION` is raised by hand and nothing notices a missed bump — PR "result list margin" changes what the compiler produces, so raise it to 2 when that PR is merged after this one.
+
+### Egress proxy: WebSocket and DNS rebinding closed at the socket (2026-11-04)
+
+The two holes the README listed as "not fixable in-process" were both fixable in
+process, by moving the check from the page's requests to the connection. Each
+session's context now uses a proxy on `127.0.0.1` (`wcc.driver.egress_proxy`).
+
+How it was chosen (ten sources read, one per source type and topic; notes in the PR):
+
+- Chromium applies a configured proxy per URL, and `ws:`/`wss:` go through an HTTP
+  proxy by `CONNECT` (`net/docs/proxy.md`, RFC 6455 4.1). It skips the proxy for
+  `localhost`, `127.0.0.0/8`, `169.254.0.0/16` and link-local IPv6 unless
+  `<-loopback>` is in the bypass list; Playwright adds that itself when a proxy is
+  set. Probed here: a context-level proxy receives `127.0.0.1` and `localhost`
+  requests on Chromium 151.
+- Name resolution for an HTTP proxy is the proxy's. The design is Smokescreen's and
+  Advocate's: resolve, judge every address, connect to the judged address by
+  literal. OWASP's SSRF cheat sheet asks for exactly that.
+- `ipaddress.is_global` is not a policy. On Python 3.12.10, `64:ff9b::7f00:1`,
+  `::127.0.0.1` and `192.88.99.1` are reported global. The URL policy now unwraps
+  NAT64 and 6to4 to the embedded IPv4 address and refuses `::/96` and the 6to4 relay
+  range.
+- A refused plain-HTTP request is answered by hanging up, not by a 403 page:
+  Chromium shows a proxy's 403 body as the destination's page and the navigation
+  "succeeds". `CONNECT` is answered with 403, which Chromium reports as a tunnel
+  failure.
+- Behind the proxy `_audit_peer` is skipped, because the peer Chromium reports is
+  the proxy itself. The judgement is made before the connection exists.
+
+Not chosen: wrapping `_apiConnect` in an init script (the page reaches the same path
+through `__pwWebSocketDispatch`; see the entry above), `iptables` or a network
+namespace (Linux only, needs privilege, cannot ship in a Python package), a
+mitmproxy add-on (a heavy dependency for a CONNECT filter), and judging URL text
+(the proxy sees what `getaddrinfo` returned, which is what the connection uses).
+
+Tests: the previously `xfail(strict=True)` WebSocket bypass now passes; a Worker's
+WebSocket to a refused address never handshakes; an admitted WebSocket still does
+(so the refusals are not a proxy that carries nothing); 33 socket-level proxy tests
+cover refusal of any bad address in an answer, one lookup per connection,
+alternative IP spellings, per-connection reading of the private-network allowance,
+header rewriting, malformed requests and shutdown. With the proxy off, the Worker
+and forced-socket tests fail again.
+
+Not verified: UDP/WebTransport/QUIC behaviour (no primary source found; the
+WebRTC flag exists in Chromium 151's binary but its effect was not exercised), a
+machine behind a mandatory corporate proxy (WCC's proxy connects directly), and
+the live 22-site measurement, which was not run.
+
+
+Review findings (11/4, two reviewers). Fixed: a tunnel now ends when either direction ends (5 s grace, then both cancelled), so a dead side does not hold a descriptor and a plain request cannot be followed by a second one on the same connection; connect failures (502/503) on plain HTTP hang up instead of returning an error page; the WebRTC switch is given in both spellings Chromium sources use. Open: idle time is still measured per direction; no overall deadline on name resolution and connection (a slow resolver can occupy the shared executor); `close()` does not wait for the listener and a failing `context.close()` can skip the proxy close on the open-failure path; DNS64/NAT64 networks with an operator-specific prefix are not recognised (only 64:ff9b::/96 and 6to4 are unwrapped), and the proxy judges bare addresses, so hostname rules are not applied there; `http://h:0/` is read as port 80; no fail-closed `--host-resolver-rules` backstop or real-browser test that an unproxied path cannot connect; the WebRTC/UDP/WebTransport effect is unverified.
+
+Second round on the review findings (11/4), each written as a failing test first. Fixed: idle is measured over the whole tunnel (a server streaming to a silent browser is busy); resolving and connecting share a 30 s deadline and at most 32 lookups run at once; `close()` waits for the listener and refuses connections that arrive while closing; the open-failure path and `shutdown` close every proxy even when a context close fails; `http://h:0/` and bare line breaks in a request head are refused; a DNS64/NAT64 network's own /96 prefix can be named with `WCC_NAT64_PREFIXES` (an address says nothing about being synthesised, so it cannot be guessed: `…::1` hosts are common); browser-side name resolution is switched off (`--host-resolver-rules=MAP * ~NOTFOUND`), with a real-browser test that a context outside the proxy cannot resolve `localhost`. Decision, not a fix: the proxy judges addresses, not hostnames; the metadata hostnames resolve to metadata addresses or nothing, and the hostname rule still applies to page requests at `context.route`. Still unverified: effect of the WebRTC switch, UDP/WebTransport/QUIC.
+
+Public pages through the proxy (`benchmarks/results/coverage-20261104-egress-proxy.json`, run 2026-11-04 with the benchmark's `robots.txt` handling and pauses): 22 visited, 5 skipped by `robots.txt` or unreachable `robots.txt` (as on 2026-10-23), 0 failed, 17 observed, 13 with a capability (76%), 21 refusals. The same numbers as `coverage-20261023.json`, so the proxy changes nothing the compiler sees on real sites, including HTTPS, redirects and subresources.
+
+`COMPILER_REVISION` is 2 from the result-list margin on: stored page classes compiled under revision 1 are compiled again on their next inspection, so the margin reaches pages already in the store.

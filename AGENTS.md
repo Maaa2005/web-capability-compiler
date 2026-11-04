@@ -47,4 +47,7 @@ uv run wcc --help    # console script
 
 ## Current state
 
-Phase 0 is complete. See `docs/progress.md` for what exists and what comes next.
+Phases 0-6 of 7 are complete: driver and URL policy, the compiler, risk, execution
+and verification, the six-tool MCP server, the operational CLI, and optional
+enrichment. Phase 7 (the benchmark and its runs of record) is built and measured;
+see `docs/progress.md` for the current state, open defects, and what comes next.

@@ -12,6 +12,7 @@ is where it legitimately comes from instead.
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import os
 
@@ -26,6 +27,8 @@ from wcc.policy.robots import PRODUCT_TOKEN
 logger = logging.getLogger(__name__)
 
 ALLOW_PRIVATE_NETWORK_ENV = "WCC_ALLOW_PRIVATE_NETWORK"
+EGRESS_PROXY_ENV = "WCC_EGRESS_PROXY"
+NAT64_PREFIXES_ENV = "WCC_NAT64_PREFIXES"
 ENRICHMENT_ENV = "WCC_ENRICHMENT"
 ENRICHMENT_MODEL_ENV = "WCC_ENRICHMENT_MODEL"
 API_KEY_ENV = "ANTHROPIC_API_KEY"
@@ -48,6 +51,7 @@ USER_AGENT_PRODUCT = (
 #: the word "false" — means no. A boundary that opened on an unrecognised value
 #: would open on a mistake.
 _TRUTHY = frozenset({"1", "true", "yes", "on"})
+_FALSY = frozenset({"0", "false", "no", "off"})
 
 
 def allow_private_network(environ: dict[str, str] | None = None) -> bool:
@@ -56,10 +60,36 @@ def allow_private_network(environ: dict[str, str] | None = None) -> bool:
     return env.get(ALLOW_PRIVATE_NETWORK_ENV, "").strip().lower() in _TRUTHY
 
 
+def egress_proxy(environ: dict[str, str] | None = None) -> bool:
+    """Whether the browser goes through the filtering proxy. On unless told off.
+
+    The opposite polarity to the other switches here, on purpose: this one closes a
+    hole, so an unrecognised value (a typo, an empty string) must leave it closed.
+    """
+    env = os.environ if environ is None else environ
+    return env.get(EGRESS_PROXY_ENV, "").strip().lower() not in _FALSY
+
+
+def nat64_prefixes(environ: dict[str, str] | None = None) -> tuple[ipaddress.IPv6Network, ...]:
+    """Operator NAT64 /96 prefixes from a comma-separated list; a bad entry is an error.
+
+    Quietly skipping an entry that does not parse would leave the address range it
+    was meant to cover judged as an ordinary host.
+    """
+    env = os.environ if environ is None else environ
+    names = [part.strip() for part in env.get(NAT64_PREFIXES_ENV, "").split(",") if part.strip()]
+    networks = tuple(ipaddress.IPv6Network(name) for name in names)
+    for network in networks:
+        if network.prefixlen != 96:
+            raise ValueError(f"{NAT64_PREFIXES_ENV}: {network} is not a /96")
+    return networks
+
+
 def driver_settings(environ: dict[str, str] | None = None) -> DriverSettings:
     """The driver's permissions and budgets for this process."""
     return DriverSettings(
         allow_private_network=allow_private_network(environ),
+        egress_proxy=egress_proxy(environ),
         limits=ResourceLimits(),
         user_agent_suffix=USER_AGENT_PRODUCT,
     )

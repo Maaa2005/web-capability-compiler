@@ -31,9 +31,11 @@ from playwright.async_api import (
     Frame,
     Page,
     Playwright,
+    ProxySettings,
     Request,
     Response,
     Route,
+    WebSocketRoute,
     async_playwright,
 )
 from playwright.async_api import (
@@ -63,6 +65,7 @@ from wcc.driver.base import (
     SessionNotFoundError,
 )
 from wcc.driver.collection_script import EXTRACT_COLLECTIONS
+from wcc.driver.egress_proxy import EgressProxy
 from wcc.driver.normalize import classify_control, is_eligible, normalize_element
 from wcc.driver.page_script import DESCRIBE_ELEMENT, EXTRACT_ELEMENTS, EXTRACT_LANDMARKS
 from wcc.driver.resolve import RESOLVE_CANDIDATE
@@ -77,6 +80,19 @@ from wcc.models.session import (
     SessionInfo,
     StructuredDataBlock,
 )
+
+#: WebRTC would otherwise open UDP sockets that no HTTP proxy sees. With this policy
+#: Chromium sends media only through the proxy or not at all.
+_LAUNCH_ARGS = [
+    "--webrtc-ip-handling-policy=disable_non_proxied_udp",
+    # The spelling differs between Chromium sources; an unknown switch is ignored.
+    "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+]
+
+#: Behind the proxy the browser never needs to resolve a name itself (an HTTP proxy
+#: resolves for it). Making every browser-side lookup fail means a path that
+#: somehow skips the proxy gets "name not resolved" and not a connection.
+_NO_LOCAL_DNS = ["--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE 127.0.0.1"]
 
 _DOCUMENT_TOKEN = "__wccDocumentToken"
 _MUTATION_CLOCK = "__wccLastMutation"
@@ -191,6 +207,22 @@ def _is_top_document(session: _Session, request: Request) -> bool:
         return False
 
 
+_WEBSOCKET_SCHEMES = {"ws": "http", "wss": "https"}
+
+
+def _http_equivalent(url: str) -> str:
+    """Name the HTTP(S) URL a WebSocket URL is judged as.
+
+    The policy admits ``http`` and ``https`` only, so a ``ws://`` address would be
+    refused for its scheme rather than for where it points. A WebSocket handshake
+    is an HTTP request to the same host and port, which is the destination the
+    policy has to judge; every other part of the URL is kept.
+    """
+    parts = urlsplit(url)
+    scheme = _WEBSOCKET_SCHEMES.get(parts.scheme.lower())
+    return parts._replace(scheme=scheme).geturl() if scheme else url
+
+
 def _event_kind(request: Request) -> str:
     """Name a refused request so the runtime can tell a hop from a subresource."""
     if request.resource_type != "document":
@@ -208,6 +240,9 @@ class _Session:
     initial_url: str
     created_at: datetime
     allow_private_network: bool
+    egress: EgressProxy | None = None
+    """The filtering proxy this session's browser context is pointed at, if any."""
+
     events: list[NavigationEvent] = field(default_factory=list)
     in_flight: int = 0
     """Requests started and not yet finished or failed.
@@ -297,8 +332,14 @@ class PlaywrightDriver:
             self._reserved.add(session_id)
 
         context: BrowserContext | None = None
+        egress: EgressProxy | None = None
         try:
             browser = await self._browser(headless=request.headless)
+            proxy: ProxySettings | None = None
+            created: list[_Session] = []
+            if self._settings.egress_proxy:
+                egress = self._egress_proxy(created, allow_private)
+                proxy = {"server": await egress.start()}
             # ``accept_downloads`` defaults to true, which writes the file first and
             # lets the handler cancel afterwards. Refusing at the context means a
             # blocked download never reaches the filesystem at all.
@@ -307,6 +348,7 @@ class PlaywrightDriver:
                 accept_downloads=False,
                 service_workers="block",
                 user_agent=await self._user_agent(browser, headless=request.headless),
+                proxy=proxy,
             )
             page = await context.new_page()
             session = _Session(
@@ -316,7 +358,9 @@ class PlaywrightDriver:
                 initial_url=request.url,
                 created_at=datetime.now(UTC),
                 allow_private_network=allow_private,
+                egress=egress,
             )
+            created.append(session)
             await self._arm_observers(session)
 
             try:
@@ -346,7 +390,10 @@ class PlaywrightDriver:
                     raise NavigationBlockedError(
                         blocked.reason or f"navigation to {blocked.url} was refused"
                     ) from exc
-                raise
+                # Playwright's own message can carry a multi-line call log; the
+                # first line is the reason, the rest is its internals.
+                reason = (str(exc).splitlines() or [type(exc).__name__])[0]
+                raise DriverError(f"navigation to {request.url} failed: {reason}") from exc
 
             self._sessions[session_id] = session
             await self.identify(session_id)
@@ -354,8 +401,12 @@ class PlaywrightDriver:
             # Includes cancellation: a context whose ID was never returned can never
             # be closed by the caller, so it must not outlive this call.
             self._sessions.pop(session_id, None)
-            if context is not None:
-                await context.close()
+            try:
+                if context is not None:
+                    await context.close()
+            finally:
+                if egress is not None:
+                    await egress.close()
             raise
         finally:
             self._reserved.discard(session_id)
@@ -373,7 +424,36 @@ class PlaywrightDriver:
         session = self._sessions.pop(session_id, None)
         if session is None:
             raise SessionNotFoundError(f"no active session {session_id}")
-        await session.context.close()
+        await self._release(session)
+
+    @staticmethod
+    async def _release(session: _Session) -> None:
+        """Close the context, then the proxy that served it."""
+        try:
+            await session.context.close()
+        finally:
+            if session.egress is not None:
+                await session.egress.close()
+
+    def _egress_proxy(self, created: list[_Session], allow_private: bool) -> EgressProxy:
+        """A proxy whose refusals land in the owning session's events.
+
+        The session does not exist yet when the proxy has to, so the proxy reads it
+        from ``created`` and falls back to the driver-wide setting until then. The
+        allowance is read on every connection: a session whose allowance changes
+        must change what its own proxy admits.
+        """
+
+        def allowed() -> bool:
+            return created[0].allow_private_network if created else allow_private
+
+        def refused(url: str, reason: str) -> None:
+            if created:
+                created[0].events.append(
+                    NavigationEvent(kind="subresource", url=url, blocked=True, reason=reason)
+                )
+
+        return EgressProxy(self._guard, allow_private_network=allowed, on_refused=refused)
 
     def _spawn(self, work: Coroutine[Any, Any, Any]) -> None:
         """Run cleanup that a synchronous Playwright event handler cannot await.
@@ -456,14 +536,20 @@ class PlaywrightDriver:
         """Close every session and release the browser processes."""
         if not await self.drain_cleanups():
             self._abandon_cleanups()
+        failures: list[BaseException] = []
         for session_id in list(self._sessions):
-            await self.close_session(session_id)
+            try:
+                await self.close_session(session_id)
+            except Exception as exc:
+                failures.append(exc)
         for browser in self._browsers.values():
             await browser.close()
         self._browsers.clear()
         if self._playwright is not None:
             await self._playwright.stop()
             self._playwright = None
+        if failures:
+            raise failures[0]
 
     # -- observation -------------------------------------------------------
 
@@ -998,7 +1084,9 @@ class PlaywrightDriver:
         guard the runtime supplied, so there is no second policy here to drift out
         of step with the first.
         """
-        if session.failure is not None:
+        if session.failure is not None or session.egress is not None:
+            # Behind the egress proxy the connected peer is the proxy itself, and
+            # the judgement that matters was made before the connection existed.
             return
         if urlsplit(response.url).scheme.lower() not in _NETWORK_SCHEMES:
             # Not a network response, so there is no peer to check. The
@@ -1059,7 +1147,7 @@ class PlaywrightDriver:
         session.events.append(
             NavigationEvent(kind=kind, url=session.page.url, blocked=True, reason=reason)
         )
-        self._spawn(session.context.close())
+        self._spawn(self._release(session))
 
     def _session(self, session_id: str) -> _Session:
         session = self._sessions.get(session_id)
@@ -1083,7 +1171,10 @@ class PlaywrightDriver:
                 self._playwright = await async_playwright().start()
             browser = self._browsers.get(headless)
             if browser is None:
-                browser = await self._playwright.chromium.launch(headless=headless)
+                browser = await self._playwright.chromium.launch(
+                    headless=headless,
+                    args=[*_LAUNCH_ARGS, *(_NO_LOCAL_DNS if self._settings.egress_proxy else [])],
+                )
                 self._browsers[headless] = browser
             return browser
 
@@ -1269,6 +1360,31 @@ class PlaywrightDriver:
             await route.continue_()
 
         await session.context.route("**/*", on_route)
+
+        async def on_web_socket(ws: WebSocketRoute) -> None:
+            """Judge a WebSocket the way ``on_route`` judges a request.
+
+            ``context.route`` never sees a WebSocket, so without this a page could
+            open ``ws://127.0.0.1:...`` and talk to a service the URL policy exists
+            to keep it away from. A denied socket is closed without ever being
+            connected to its server; an allowed one is connected through unchanged.
+            """
+            try:
+                self._guard.check(
+                    _http_equivalent(ws.url),
+                    allow_private_network=session.allow_private_network,
+                )
+            except NavigationBlockedError as blocked:
+                session.events.append(
+                    NavigationEvent(
+                        kind="subresource", url=ws.url, blocked=True, reason=blocked.message
+                    )
+                )
+                await ws.close(code=1008, reason="blocked by the URL policy")
+                return
+            ws.connect_to_server()
+
+        await session.context.route_web_socket("**/*", on_web_socket)
 
         def on_new_page(page: Page) -> None:
             """Refuse a popup, tab, or window and close it (specification 10.2)."""

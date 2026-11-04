@@ -21,7 +21,7 @@ uv run python -m benchmarks.measure_coverage
 | failed to load | 0 |
 | **observed** | **17** |
 | had something a compiler could want | 17 |
-| **…and a capability was compiled** | **13 (76%)** |
+| **…and a capability was compiled** | **12 (71%)** |
 | state-changing candidates refused | **21** |
 
 The capabilities are real ones on real sites: search on `python.org`, `pypi.org`,
