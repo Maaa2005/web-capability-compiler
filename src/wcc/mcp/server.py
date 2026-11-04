@@ -31,8 +31,8 @@ from typing import Any
 from mcp.server.mcpserver import MCPServer
 
 from wcc import __version__
-from wcc.config import build_enricher, driver_settings
-from wcc.driver.base import DriverError
+from wcc.config import build_enricher, driver_settings, politeness_settings
+from wcc.driver.base import DocumentAdmission, DriverError
 from wcc.driver.playwright_driver import PlaywrightDriver
 from wcc.mcp.views import (
     CapabilityListView,
@@ -48,6 +48,7 @@ from wcc.mcp.views import (
 from wcc.models.capability import CapabilityCategory, RiskLevel
 from wcc.models.execution import ExecutionResult
 from wcc.models.session import OpenSessionRequest
+from wcc.policy.politeness import PoliteAccess
 from wcc.policy.url_policy import UrlPolicy
 from wcc.runtime.coordinator import Coordinator, Inspection
 from wcc.store.store import Store
@@ -64,6 +65,11 @@ the entities the page is about. Run one with execute_capability.
 There are no low-level tools here on purpose: no clicking, no typing, no
 screenshots, no selectors. Anything a capability does not offer, this server
 cannot do — and a capability above low risk is described but never executed.
+
+Every page is asked for politely. A page the site's robots.txt does not allow
+for the token "wcc" is refused with robots_disallowed. Requests to one host
+start at least a second apart; one that would come too soon is refused with
+rate_limited and the number of seconds to wait.
 """
 
 
@@ -96,11 +102,23 @@ class Service:
     change what it is listing."""
 
 
-def build_service(store: Store | None = None) -> Service:
-    """Assemble the runtime, retiring anything a previous process left behind."""
+def build_service(
+    store: Store | None = None, admission: DocumentAdmission | None = None
+) -> Service:
+    """Assemble the runtime, retiring anything a previous process left behind.
+
+    ``admission`` exists for tests that need a faster clock. The runtime never
+    runs without one: leaving it out builds the polite default, and there is no
+    way to ask for none.
+    """
     opened = store or Store()
     opened.expire_bindings_from_previous_runs()
-    driver = PlaywrightDriver(UrlPolicy(), driver_settings())
+    policy = UrlPolicy()
+    driver = PlaywrightDriver(
+        policy,
+        driver_settings(),
+        admission or PoliteAccess(policy, politeness_settings()),
+    )
     # The store is the enrichment cache: a page class outlives the process, and so
     # should the model call that named it.
     enricher = build_enricher(opened)
@@ -133,8 +151,9 @@ def build_server(service: Service) -> MCPServer:
         name="open_session",
         description=(
             "Open a browser session on a URL and report what page it landed on. "
-            "The URL policy is enforced before the session is returned, so a "
-            "refused address never becomes a session."
+            "The URL policy, the site's robots.txt and the per-host pacing are "
+            "enforced before the session is returned, so a refused page never "
+            "becomes a session."
         ),
     )
     async def open_session(url: str) -> SessionView:

@@ -15,10 +15,13 @@ from __future__ import annotations
 import logging
 import os
 
+from wcc import __version__
 from wcc.driver.base import DriverSettings
 from wcc.enrich.enricher import Enricher, EnrichmentCache
 from wcc.enrich.provider import AnthropicProvider, EnrichmentUnavailable
 from wcc.limits import ResourceLimits
+from wcc.policy.politeness import PolitenessSettings
+from wcc.policy.robots import PRODUCT_TOKEN
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +34,15 @@ API_KEY_ENV = "ANTHROPIC_API_KEY"
 #: that is on unless disabled is not optional — it would mean a default install
 #: sending page structure to a third party because nobody set a variable.
 DEFAULT_ENRICHMENT_MODEL = "claude-opus-5"
+
+#: What WCC calls itself to the sites it visits: appended to the browser's
+#: User-Agent and sent when fetching ``robots.txt``. It begins with the product
+#: token sites address in ``robots.txt``, as RFC 9309 section 2.2.1 asks, and
+#: says where to read about the client, as the reference MCP ``fetch`` server's
+#: does.
+USER_AGENT_PRODUCT = (
+    f"{PRODUCT_TOKEN}/{__version__} (+https://github.com/Maaa2005/web-capability-compiler)"
+)
 
 #: Values that mean "yes". Anything else — including a typo, an empty string, or
 #: the word "false" — means no. A boundary that opened on an unrecognised value
@@ -49,7 +61,17 @@ def driver_settings(environ: dict[str, str] | None = None) -> DriverSettings:
     return DriverSettings(
         allow_private_network=allow_private_network(environ),
         limits=ResourceLimits(),
+        user_agent_suffix=USER_AGENT_PRODUCT,
     )
+
+
+def politeness_settings() -> PolitenessSettings:
+    """How the runtime paces itself and reads ``robots.txt``.
+
+    Not read from the environment. Every override the tools surveyed offer is a
+    way to be less polite, and nothing has asked for one yet.
+    """
+    return PolitenessSettings(user_agent=USER_AGENT_PRODUCT)
 
 
 def enrichment_enabled(environ: dict[str, str] | None = None) -> bool:

@@ -53,6 +53,34 @@ class NavigationBlockedError(DriverError):
     code = "navigation_blocked"
 
 
+class RobotsDisallowedError(NavigationBlockedError):
+    """The site's ``robots.txt`` does not let WCC fetch this document.
+
+    Also raised when the file could not be read: RFC 9309 section 2.3.1.4 treats
+    an unreachable ``robots.txt`` as complete disallow, so "unknown" refuses.
+    A separate code from :class:`NavigationBlockedError` because the two ask
+    different things of an agent: a blocked address stays blocked, while a site's
+    rules are the site's to change.
+    """
+
+    code = "robots_disallowed"
+
+
+class RateLimitedError(NavigationBlockedError):
+    """A request to this host now would come sooner than the pacing allows.
+
+    Carries the wait, so an agent can retry after it rather than guess. Raised
+    instead of waiting when the wait is longer than the runtime will hold a
+    navigation open.
+    """
+
+    code = "rate_limited"
+
+    def __init__(self, message: str, retry_after_seconds: float) -> None:
+        super().__init__(message)
+        self.retry_after_seconds = retry_after_seconds
+
+
 class DriverTimeoutError(DriverError):
     """A page load, settle wait, or action exceeded its configured budget."""
 
@@ -135,6 +163,14 @@ class DriverSettings:
 
     limits: ResourceLimits = field(default_factory=ResourceLimits)
 
+    user_agent_suffix: str = ""
+    """Appended to the browser's own User-Agent, so a site can tell who called.
+
+    RFC 9309 section 2.2.1 asks that the product token a crawler matches in
+    ``robots.txt`` appear in the User-Agent it sends. Empty leaves the browser's
+    User-Agent untouched, which is what the benchmarks measured against.
+    """
+
 
 @dataclass(frozen=True)
 class DocumentIdentity:
@@ -188,6 +224,38 @@ class NavigationGuard(Protocol):
 
 
 @runtime_checkable
+class DocumentAdmission(Protocol):
+    """The runtime's say over *when* and *whether* a site is asked for a page.
+
+    :class:`NavigationGuard` decides whether an address may be reached at all.
+    This decides whether the site has asked not to be fetched (``robots.txt``)
+    and whether it is being asked too often. It is async because answering may
+    mean reading ``robots.txt`` or waiting for the host's next slot, and a
+    synchronous check would hold every other session's page still meanwhile.
+
+    The driver consults it for top-level documents only: each navigation and
+    each redirect hop. A page's own images, scripts and frames are part of
+    rendering the document that was admitted, which is how the tools surveyed
+    for this treat them too.
+    """
+
+    async def admit(
+        self, url: str, *, allow_private_network: bool, redirected_from: str | None = None
+    ) -> None:
+        """Return when ``url`` may be requested, or raise to refuse it.
+
+        Refusals are :class:`NavigationBlockedError` subclasses, normally
+        :class:`RobotsDisallowedError` or :class:`RateLimitedError`.
+        ``redirected_from`` names the previous hop when this is a redirect.
+        """
+        ...
+
+    def observe(self, url: str, status: int, retry_after: str | None) -> None:
+        """Hear how a top-level document answered, so a 429 or 503 slows the host."""
+        ...
+
+
+@runtime_checkable
 class Driver(Protocol):
     """Specification 4.1. All browser access lives behind these five methods."""
 
@@ -207,6 +275,7 @@ class Driver(Protocol):
 
 
 __all__ = [
+    "DocumentAdmission",
     "DocumentIdentity",
     "Driver",
     "DriverError",
@@ -219,7 +288,9 @@ __all__ = [
     "NavigationBlockedError",
     "NavigationGuard",
     "PageSignals",
+    "RateLimitedError",
     "ResourceLimits",
+    "RobotsDisallowedError",
     "SessionFailedError",
     "SessionLimitExceededError",
     "SessionNotFoundError",

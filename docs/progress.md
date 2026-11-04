@@ -2426,3 +2426,160 @@ when the runs are close together; a later criterion for Hacker News should name
 the API check from the start.
 
 The run of record in `README.md` and `docs/comparison.md` is now this file.
+
+## The runtime asks before it fetches (2026-11-04)
+
+A review on 2026-11-02 found that the benchmark read `robots.txt` and paused
+between sites, but the MCP server, the thing people run, did neither. It now
+does both. The project owner asked for this explicitly; the specification does
+not mention either.
+
+### What was built
+
+- `src/wcc/policy/robots.py`: a `robots.txt` parser and matcher for the product
+  token `wcc`.
+- `src/wcc/policy/politeness.py`: `PoliteAccess` fetches each origin's file,
+  caches it, decides, and paces requests per host.
+- `src/wcc/driver/base.py`: a `DocumentAdmission` protocol beside
+  `NavigationGuard`, and two refusals with their own codes,
+  `RobotsDisallowedError` (`robots_disallowed`) and `RateLimitedError`
+  (`rate_limited`, with the seconds to wait).
+- `src/wcc/driver/playwright_driver.py`: the route handler asks the admission
+  about every top-level document request, redirect hops included. Responses to
+  those requests are reported back, so a 429 or 503 slows the host. The browser
+  appends `wcc/<version> (+repository URL)` to its own User-Agent.
+- `src/wcc/mcp/server.py`: `build_service` always builds the driver with
+  `PoliteAccess`. The benchmarks and the fixture tests build drivers without an
+  admission and behave exactly as before; a test holds both facts.
+
+### Decisions and their sources
+
+The sources were read on 2026-11-04. The rule each decision rests on is in a
+docstring next to the code.
+
+**Check `robots.txt` for every page the agent opens.** The reference MCP
+`fetch` server (`modelcontextprotocol/servers`, `src/fetch`, release 2026.10.28)
+checks it for fetches the model asks for, including every redirect hop. It skips
+the check only for a page a person asked for through an MCP prompt. WCC has no
+such path: every navigation is the model's request. Not adopted: Playwright MCP
+and browser-use, which check nothing; and Crawl4AI, Crawlee 3.18 and Scrapy,
+where checking is off by default.
+
+**An unreadable file refuses.** 5xx, 429, a network error, a timeout (5 s) and a
+redirect hop the URL policy refuses all disallow everything (RFC 9309
+2.3.1.4). The MCP `fetch` server and Crawlee's unreleased v4 do the same. A copy
+cached from an earlier success stands in while the file stays unreachable
+(2.4). A failure is remembered for five minutes, so a host that never answers
+costs one timeout rather than one per navigation. Not adopted: allowing the
+request when the fetch fails, which Crawl4AI, Scrapy, Firecrawl and Crawlee 3.18
+all do. The benchmark did the same until 2026-10-23.
+
+**401 and 403 refuse; other 4xx allow.** As far as could be checked here, RFC
+9309 2.3.1.3 counts every 4xx as "unavailable", meaning no restrictions apply.
+Google's documentation says the same. This follows the MCP `fetch` server, Python's
+`urllib.robotparser`, and this repository's own benchmark instead: a site that
+refuses to show its rules is read as refusing. This is the one place the runtime
+is stricter than the RFC, and it is a judgement the owner may want to reverse.
+
+**A parser written here.** The other options were checked first:
+
+- Python's `urllib.robotparser` answers differently by version. On 3.12 the
+  first rule in file order wins and `*` and `$` are literal characters. 3.13.14
+  and 3.14.5 added RFC 9309 (gh-138907), but score a wildcard rule by how much
+  of the URL it matched, not by the length of the rule. Four small cases were
+  run here on 3.12.3 and on 3.13.18: a longer `Allow` under a `Disallow`, a `$`
+  pattern, `/robots.txt` under `Disallow: /`, and a long `Allow` against a short
+  wildcard `Disallow`. The two versions answered all four differently.
+  `benchmarks/measure_coverage.py` still uses this reader; moving it is left for
+  its own change.
+- Protego 0.7.0 (BSD-3, pure Python) implements longest match. It also adds
+  Google-specific behaviour: `Allow: …/index.html` allows the directory too, and
+  it reads `Host` and `Visit-time`. It had a ReDoS fixed in 0.6.2
+  (CVE-2026-55520).
+
+  The parser here matches without regular expressions and scores by pattern
+  length, as Google's C++ library does (`robots.cc`, `MatchAllow` returns
+  `pattern.length()`).
+
+**Pacing: 1 s per host, `Crawl-delay` honoured, `Retry-After` honoured.**
+
+- The 1 s and one-at-a-time per host are Scrapy's project template
+  (`DOWNLOAD_DELAY = 1`, `CONCURRENT_REQUESTS_PER_DOMAIN = 1`).
+- `Crawl-delay` only ever lengthens the interval. Only Crawlee's unreleased v4
+  acts on it; Scrapy's documentation says it does not.
+- `Retry-After` is read in both forms of RFC 9110 10.2.3. A 429 or 503 without
+  it holds the host back 30 s. Crawlee v4 does the same with a 2 s doubling
+  backoff; Crawl4AI backs off on 429 and 503 without reading the header.
+- A redirect to the same host is not paced again; a hop to another host is.
+- A wait longer than 2 s is refused, not slept. A navigation parked inside a
+  tool call looks like a hang. Worse, an action's settle budget is 5 s, so a
+  click whose navigation was still waiting would be reported as an effect that
+  did not happen.
+
+**Top-level documents only.** Images, scripts and frames are part of rendering
+a page that was already admitted. The MCP `fetch` server and Crawl4AI also check
+only the URL asked for.
+
+**No switch to turn it off.** Every tool surveyed that has an override makes it
+an operator setting: the MCP `fetch` server's `--ignore-robots-txt`, a Scrapy
+setting, Firecrawl's Enterprise-only `ignoreRobotsTxt`. None lets the model turn
+it off. None is added here, because nothing has needed one. If one is added, it
+belongs in `wcc.config`, read from the launcher's environment.
+
+**The User-Agent names the token.** RFC 9309 2.2.1 asks that the product token
+be part of the User-Agent sent; the MCP `fetch` server and Firecrawl both do
+this. Playwright can replace a User-Agent but not extend one, so the browser's
+own string is read once and `wcc/…` is appended to it.
+
+### What could not be checked
+
+`www.rfc-editor.org`, `datatracker.ietf.org`, `developers.google.com` and
+`docs.python.org` are refused by this environment's network policy. The RFC 9309
+section numbers and rules above come from two places, not from the RFC's own
+text:
+
+- memory of the RFC;
+- secondary sources that cite it: CPython's `robotparser.py` comments, the MCP
+  `fetch` server's comments, and Crawlee's comments.
+
+The 401/403 reading is the one that matters most and is the least certain.
+
+### Found on the way, and left alone
+
+- **A refused click used to cost the session.** When the route handler aborted
+  a top-level navigation with `blockedbyclient`, Chromium committed its own
+  error page (`chrome-error://chromewebdata/`). The frame-commit check failed
+  the session for it. Refusals from the admission now abort with `aborted`,
+  which commits nothing, so the agent stays on the page it was on. A test opens
+  a link into a disallowed path and then snapshots the original page. Refusals
+  from the URL policy still use `blockedbyclient` and still fail the session.
+  That is a security boundary and was left as it was; whether it should also
+  leave the session alive is its own question.
+- **The benchmark did not send the name it checked `robots.txt` under.**
+  `measure_coverage.py` matches `robots.txt` as `wcc-benchmark`, and its
+  docstring says a tool that reads under one name and requests under another is
+  not honouring it. Its driver sets no User-Agent, though, so every page
+  request carried headless Chromium's own string. Not changed here.
+
+### Verification
+
+- `scripts/test.sh`: ruff format, ruff lint, pyright 0 errors, **703 passed**
+  (647 before; 56 new in `test_robots.py`, `test_politeness.py` and
+  `test_politeness_driver.py`).
+- A real `wcc serve` over stdio, against a loopback site whose `robots.txt` says
+  `User-agent: wcc`, `Disallow: /private`, `Crawl-delay: 1.5`:
+  - `open_session` on `/private/a.html` returned `robots_disallowed`.
+  - Three opens of `/b.html` in a row reached the site 1.50, 1.50 and 1.51 s
+    apart.
+  - Every request, `robots.txt` included, carried
+    `wcc/0.1.0.dev0 (+https://github.com/Maaa2005/web-capability-compiler)`.
+- Not run against a public site: this environment's network policy refuses
+  them.
+
+### Next
+
+- Move `benchmarks/measure_coverage.py` onto `wcc.policy.robots`. It reads with
+  the standard library today, so its answers depend on the Python version.
+- Decide whether 401/403 should keep refusing, once the RFC text has been read.
+- Decide whether a refusal from the URL policy should also leave the session
+  alive.

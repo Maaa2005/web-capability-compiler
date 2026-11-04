@@ -47,6 +47,7 @@ from wcc.compiler.collections import build_collection, parse_structured_data
 from wcc.compiler.fingerprints import page_signature, structural_hash
 from wcc.compiler.route import normalize_route_pattern, origin_of
 from wcc.driver.base import (
+    DocumentAdmission,
     DocumentIdentity,
     DriverError,
     DriverNotReadyError,
@@ -175,6 +176,21 @@ def _redirect_depth(request: Request) -> int:
     return depth
 
 
+def _is_top_document(session: _Session, request: Request) -> bool:
+    """Whether ``request`` would replace the page's own document.
+
+    Only these go through the admission. A frame's document, like an image, is
+    part of rendering a page that was already admitted.
+    """
+    if request.resource_type != "document":
+        return False
+    try:
+        return request.frame == session.page.main_frame
+    except PlaywrightError:
+        # A request with no frame (a service worker's) is not the page's document.
+        return False
+
+
 def _event_kind(request: Request) -> str:
     """Name a refused request so the runtime can tell a hop from a subresource."""
     if request.resource_type != "document":
@@ -217,6 +233,14 @@ class _Session:
     current_document_id: str | None = None
     current_snapshot_id: str | None = None
 
+    admission_refusal: NavigationBlockedError | None = None
+    """The most recent document the admission refused, kept typed.
+
+    A refused route reaches ``goto`` and ``click`` as a bare network error, and the
+    event log keeps only prose. Holding the exception is what lets an agent get
+    ``robots_disallowed`` or ``rate_limited`` as a code rather than as a sentence.
+    """
+
 
 class PlaywrightDriver:
     """Drive Chromium through Playwright's async API.
@@ -224,14 +248,21 @@ class PlaywrightDriver:
     The navigation guard is a constructor requirement rather than an optional
     extra: a driver with no guard would silently navigate anywhere, and
     specification 4.2 keeps policy decisions out of the driver entirely.
+
+    The admission is optional. Without one the driver asks no site's
+    ``robots.txt`` and paces nothing, which is what the benchmarks and the
+    fixture tests want and what they did before; the runtime always passes one
+    (:func:`wcc.mcp.server.build_service`, held by a test).
     """
 
     def __init__(
         self,
         navigation_guard: NavigationGuard,
         settings: DriverSettings | None = None,
+        admission: DocumentAdmission | None = None,
     ) -> None:
         self._guard = navigation_guard
+        self._admission = admission
         self._settings = settings or DriverSettings()
         self._limits = self._settings.limits
         self._playwright: Playwright | None = None
@@ -240,6 +271,11 @@ class PlaywrightDriver:
         self._reserved: set[str] = set()
         self._lock = asyncio.Lock()
         self._cleanups: set[asyncio.Task[Any]] = set()
+        self._user_agents: dict[bool, str] = {}
+
+    @property
+    def admission(self) -> DocumentAdmission | None:
+        return self._admission
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -270,6 +306,7 @@ class PlaywrightDriver:
                 locale=request.locale,
                 accept_downloads=False,
                 service_workers="block",
+                user_agent=await self._user_agent(browser, headless=request.headless),
             )
             page = await context.new_page()
             session = _Session(
@@ -302,6 +339,8 @@ class PlaywrightDriver:
                     f"loading {request.url} exceeded {self._limits.page_load_timeout_ms} ms"
                 ) from exc
             except PlaywrightError as exc:
+                if session.admission_refusal is not None:
+                    raise session.admission_refusal from exc
                 blocked = next((e for e in session.events if e.blocked), None)
                 if blocked is not None:
                     raise NavigationBlockedError(
@@ -891,6 +930,7 @@ class PlaywrightDriver:
         succeeded = True
         error_code: str | None = None
         error_message: str | None = None
+        session.admission_refusal = None
         try:
             await self._perform(element, action, timeout)
         except PlaywrightTimeoutError as exc:
@@ -899,6 +939,13 @@ class PlaywrightDriver:
             succeeded, error_code, error_message = False, "action_failed", str(exc)
 
         identity = await self.identify(session_id)
+        settled = await self._settled_quietly(session)
+        refusal = session.admission_refusal
+        if refusal is not None and succeeded:
+            # The click itself worked; the navigation it started was refused before
+            # it was sent. That is the step failing, with the refusal's own code,
+            # rather than a success whose effect then quietly never appears.
+            succeeded, error_code, error_message = False, refusal.code, refusal.message
         return ActionObservation(
             action=action,
             succeeded=succeeded,
@@ -906,7 +953,7 @@ class PlaywrightDriver:
             document_id=identity.document_id,
             snapshot_id=identity.snapshot_id,
             document_changed=before is not None and identity.document_id != before,
-            settled=await self._settled_quietly(session),
+            settled=settled,
             navigation_events=list(session.events),
             error_code=error_code,
             error_message=error_message,
@@ -1040,6 +1087,28 @@ class PlaywrightDriver:
                 self._browsers[headless] = browser
             return browser
 
+    async def _user_agent(self, browser: Browser, *, headless: bool) -> str | None:
+        """The browser's own User-Agent with the configured suffix, or ``None``.
+
+        Playwright can replace a User-Agent but not extend one, so the browser's is
+        read once from a blank page. Replacing it with a made-up string instead
+        would tell sites this is a different browser from the one they are
+        talking to, which is the opposite of what the suffix is for.
+        """
+        suffix = self._settings.user_agent_suffix.strip()
+        if not suffix:
+            return None
+        known = self._user_agents.get(headless)
+        if known is None:
+            probe = await browser.new_context()
+            try:
+                page = await probe.new_page()
+                known = str(await page.evaluate("navigator.userAgent"))
+            finally:
+                await probe.close()
+            self._user_agents[headless] = known
+        return f"{known} {suffix}"
+
     async def _arm_observers(self, session: _Session) -> None:
         """Stamp document identity, route requests through the guard, record effects."""
         await session.context.add_init_script(_DOCUMENT_TOKEN_SCRIPT)
@@ -1089,6 +1158,10 @@ class PlaywrightDriver:
             over that connection becomes evidence.
             """
             self._spawn(self._audit_peer(session, response))
+            if self._admission is not None and _is_top_document(session, response.request):
+                self._admission.observe(
+                    response.url, response.status, response.headers.get("retry-after")
+                )
 
         session.page.on("response", on_response)
 
@@ -1156,6 +1229,42 @@ class PlaywrightDriver:
                         )
                     )
                     await route.abort("blockedbyclient")
+                    return
+            if self._admission is not None and _is_top_document(session, request):
+                previous = request.redirected_from
+                try:
+                    try:
+                        await self._admission.admit(
+                            request.url,
+                            allow_private_network=session.allow_private_network,
+                            redirected_from=previous.url if previous is not None else None,
+                        )
+                    except NavigationBlockedError:
+                        raise
+                    except Exception as broke:
+                        # An admission that cannot decide has not admitted. Raised
+                        # out of a route handler, the error would leave the request
+                        # pending until the page-load limit instead.
+                        raise NavigationBlockedError(
+                            f"could not decide whether {request.url} may be requested: {broke}"
+                        ) from broke
+                except NavigationBlockedError as refused:
+                    session.admission_refusal = refused
+                    session.events.append(
+                        NavigationEvent(
+                            kind=_event_kind(request),
+                            url=request.url,
+                            blocked=True,
+                            reason=f"{refused.code}: {refused.message}",
+                        )
+                    )
+                    # "aborted" rather than "blockedbyclient": Chromium answers a
+                    # blocked top-level navigation by committing its own error page,
+                    # which the frame-commit check rightly reads as a document the
+                    # boundary never saw, and the session would be failed for a
+                    # site's robots.txt. An aborted navigation commits nothing, so
+                    # the page the agent was on stays where it was.
+                    await route.abort("aborted")
                     return
             await route.continue_()
 
