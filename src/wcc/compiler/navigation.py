@@ -175,10 +175,11 @@ def find_result_links(
         if not tier:
             continue
         winner = max(tier, key=len)
-        rivals = [
-            len(paths) for paths in tier if paths is not winner and not set(paths) <= set(winner)
-        ]
-        if rivals and not _wins_clearly(len(winner), max(rivals)):
+        # A rival counts only for the links it has that the winner does not: the
+        # same list found at two container levels, one link short, is the winner.
+        chosen = set(winner)
+        rivals = [len(set(paths) - chosen) for paths in tier if paths is not winner]
+        if max(rivals, default=0) and not _wins_clearly(len(winner), max(rivals)):
             return []
         return [links[path] for path in winner]
     return []

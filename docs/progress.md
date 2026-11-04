@@ -2529,3 +2529,5 @@ fixture (five results against four-link columns), so it was dropped; at these si
 the ratio is coarse (3 against 2 passes, 6 against 5 does not). The numbers are
 judgement. Not run: the live 22-site measurement, so no page's coverage change has
 been measured. `pypi.org` and the other tied pages stay uncompiled as before.
+
+Review finding fixed (11/4): a rival list counts only for the links the winner lacks, so the same list found at two container levels, one link short, no longer blocks the winner. Reviewers also noted that only the boundary function is unit-tested and that overlapping-but-not-nested lists have no `find_result_links` test; live 22-site run still not done.
