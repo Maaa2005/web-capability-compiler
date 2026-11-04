@@ -487,19 +487,14 @@ _OPEN_A_WEB_SOCKET_AND_FORCE_IT = """(url) => new Promise((resolve) => {
 })"""
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Known gap, not a goal: Playwright's in-page WebSocket replacement exposes "
-        "_apiConnect(), so a hostile page opens the native connection without waiting "
-        "for the route decision. route_web_socket is a best-effort layer; closing this "
-        "needs network-level enforcement. If this starts passing, update the README."
-    ),
-)
 async def test_a_hostile_page_cannot_force_a_refused_web_socket_open(
     driver: PlaywrightDriver, fixture_server: str
 ) -> None:
-    """Documents the bypass the review found; strict, so a fix is noticed."""
+    """The bypass the review found: page script forcing Playwright's own socket open.
+
+    Not stopped by ``route_web_socket``, which the page can step around. Stopped by
+    the egress proxy, which the connection has to pass whatever script asked for it.
+    """
     session_id = await _open(driver, f"{fixture_server}/search-page/")
     driver._session(session_id).allow_private_network = False  # noqa: SLF001
     page = driver._session(session_id).page  # noqa: SLF001
@@ -509,6 +504,76 @@ async def test_a_hostile_page_cannot_force_a_refused_web_socket_open(
         await asyncio.sleep(0.2)
 
         assert server.handshakes == 0
+
+
+_OPEN_A_WEB_SOCKET_IN_A_WORKER = """(url) => new Promise((resolve) => {
+    const code = `
+        const socket = new WebSocket(${JSON.stringify(url)});
+        socket.onopen = () => postMessage('open');
+        socket.onerror = () => postMessage('error');
+        socket.onclose = () => postMessage('close');
+    `;
+    const worker = new Worker(URL.createObjectURL(new Blob([code])));
+    worker.onmessage = (event) => resolve(event.data);
+    setTimeout(() => resolve('silent'), 3000);
+})"""
+
+
+async def test_a_worker_cannot_open_a_web_socket_to_a_refused_address(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """Workers are outside ``route_web_socket``; the proxy sees them like anything else."""
+    session_id = await _open(driver, f"{fixture_server}/search-page/")
+    driver._session(session_id).allow_private_network = False  # noqa: SLF001
+    page = driver._session(session_id).page  # noqa: SLF001
+
+    async with _HandshakeServer() as server:
+        outcome = await page.evaluate(
+            _OPEN_A_WEB_SOCKET_IN_A_WORKER, f"ws://127.0.0.1:{server.port}/"
+        )
+
+        assert outcome != "open"
+        assert server.handshakes == 0
+
+
+async def test_an_admitted_web_socket_is_carried_through_the_proxy(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """The refusals above would also hold for a proxy that carries nothing."""
+    session_id = await _open(driver, f"{fixture_server}/search-page/")
+    page = driver._session(session_id).page  # noqa: SLF001
+
+    async with _HandshakeServer() as server:
+        await page.evaluate(
+            "(url) => { window.__socket = new WebSocket(url); }", f"ws://127.0.0.1:{server.port}/"
+        )
+        for _ in range(100):
+            if server.handshakes:
+                break
+            await asyncio.sleep(0.05)
+
+        assert server.handshakes == 1
+
+
+async def test_a_page_reaches_nothing_when_its_name_resolves_to_a_refused_address(
+    fixture_server: str,
+) -> None:
+    """A rebinding answer is stopped before the connection, not noticed after it."""
+
+    class AdmitsNamesRefusesLoopback:
+        def check(self, url: str, *, allow_private_network: bool) -> None:
+            del allow_private_network
+            if (urlsplit(url).hostname or "") == "127.0.0.1":
+                raise NavigationBlockedError("127.0.0.1 is a loopback address")
+
+    port = urlsplit(fixture_server).port
+    driver = PlaywrightDriver(AdmitsNamesRefusesLoopback(), DriverSettings())
+    try:
+        with pytest.raises(NavigationBlockedError) as refused:
+            await driver.open_session(OpenSessionRequest(url=f"http://localhost:{port}/x"))
+        assert "127.0.0.1" in str(refused.value)
+    finally:
+        await driver.shutdown()
 
 
 SENTINELS = (
@@ -1218,3 +1283,20 @@ async def test_the_page_text_is_what_a_reader_sees_and_where(
     assert url.endswith("/product-list/?keyword=earbuds")
     assert "3 results" in text
     assert "result-count" not in text
+
+
+async def test_a_context_that_skips_the_proxy_cannot_resolve_any_name(
+    driver: PlaywrightDriver, fixture_server: str
+) -> None:
+    """Fail closed: the proxy is not the only thing standing between a page and DNS."""
+    from playwright.async_api import Error as PlaywrightError
+
+    port = urlsplit(fixture_server).port
+    browser = await driver._browser(headless=True)  # noqa: SLF001
+    context = await browser.new_context()
+    try:
+        page = await context.new_page()
+        with pytest.raises(PlaywrightError, match="ERR_NAME_NOT_RESOLVED"):
+            await page.goto(f"http://localhost:{port}/search-page/")
+    finally:
+        await context.close()

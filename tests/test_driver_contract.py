@@ -56,6 +56,18 @@ def test_driver_settings_default_to_bounded_budgets() -> None:
     assert limits.settle_quiet_period_ms < limits.settle_timeout_ms
 
 
+def test_the_egress_proxy_is_on_unless_explicitly_turned_off() -> None:
+    """A boundary that closes a hole must not open on a typo."""
+    from wcc.config import egress_proxy
+
+    assert DriverSettings().egress_proxy is True
+    assert egress_proxy({}) is True
+    for value in ("", "1", "true", "garbage", "of"):
+        assert egress_proxy({"WCC_EGRESS_PROXY": value}) is True
+    for value in ("0", "false", "No", " OFF "):
+        assert egress_proxy({"WCC_EGRESS_PROXY": value}) is False
+
+
 def test_unknown_session_is_rejected_before_any_browser_work() -> None:
     driver = PlaywrightDriver(_AllowAll())
     with pytest.raises(SessionNotFoundError):

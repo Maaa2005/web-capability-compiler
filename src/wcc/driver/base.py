@@ -133,6 +133,15 @@ class DriverSettings:
     reachable in development, and it is unsafe to enable for untrusted agents.
     """
 
+    egress_proxy: bool = True
+    """Route the browser through a filtering proxy that judges every connection.
+
+    On by default because it is what makes the URL policy hold for WebSockets, for
+    Workers, and against a DNS answer that changes after the check. Turning it off
+    returns to checking URLs in the page's own requests and auditing the peer
+    afterwards, which cannot see WebSockets and cannot stop the first request.
+    """
+
     limits: ResourceLimits = field(default_factory=ResourceLimits)
 
 
