@@ -470,3 +470,22 @@ def test_migrating_marks_existing_compiled_templates_as_older_than_any_revision(
     with Store(path) as store:
         assert _lookup(store, template) == []
         assert _lookup(store, template, include_stale=True) == [template.template_id]
+
+
+def test_stale_compiled_templates_are_reported_and_then_retired(store: Store) -> None:
+    template = store.save_template(a_template())
+    imported = store.save_template(
+        a_template(template_id="tmpl_imp", name="i", provenance="imported")
+    )
+    assert not store.has_stale_templates(template.origin, template.normalized_route_pattern)
+
+    _age(store, template.template_id)
+    assert store.has_stale_templates(template.origin, template.normalized_route_pattern)
+
+    store.retire_stale_templates(template.origin, template.normalized_route_pattern)
+    assert not store.has_stale_templates(template.origin, template.normalized_route_pattern)
+    # Kept, with their history, and the imported one is untouched.
+    assert sorted(_lookup(store, template, include_stale=True)) == sorted(
+        [template.template_id, imported.template_id]
+    )
+    assert _lookup(store, template) == [imported.template_id]

@@ -329,6 +329,36 @@ class Store:
             for row in rows
         ]
 
+    def has_stale_templates(self, origin: str, normalized_route_pattern: str) -> bool:
+        """Whether a compiled template from an earlier compiler awaits recompiling.
+
+        Needed on top of ``find_templates``: an imported template that still binds
+        would otherwise end the lookup before the compiler ran, and the stale row
+        beside it would never be replaced.
+        """
+        row = self._connection.execute(
+            "SELECT 1 FROM capability_templates WHERE origin = ? AND normalized_route_pattern = ? "
+            "AND provenance = 'compiled' AND compiler_revision >= 0 AND compiler_revision < ? "
+            "LIMIT 1",
+            (origin, normalized_route_pattern, COMPILER_REVISION),
+        ).fetchone()
+        return row is not None
+
+    def retire_stale_templates(self, origin: str, normalized_route_pattern: str) -> None:
+        """Mark the page class's remaining stale compiled templates as superseded (-1).
+
+        Called after the page class was compiled again. Templates the new compiler
+        reproduced exactly were made current by ``save_template`` and are not
+        touched; the rest were replaced, so they stop counting as awaiting a
+        recompile. The rows stay, with their statistics.
+        """
+        self._connection.execute(
+            "UPDATE capability_templates SET compiler_revision = -1 "
+            "WHERE origin = ? AND normalized_route_pattern = ? AND provenance = 'compiled' "
+            "AND compiler_revision >= 0 AND compiler_revision < ?",
+            (origin, normalized_route_pattern, COMPILER_REVISION),
+        )
+
     def record_bind_outcome(self, template_id: str, *, succeeded: bool) -> None:
         """Update the usage statistics specification 17 requires.
 
