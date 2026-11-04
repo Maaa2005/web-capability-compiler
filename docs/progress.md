@@ -2531,3 +2531,5 @@ judgement. Not run: the live 22-site measurement, so no page's coverage change h
 been measured. `pypi.org` and the other tied pages stay uncompiled as before.
 
 Review finding fixed (11/4): a rival list counts only for the links the winner lacks, so the same list found at two container levels, one link short, no longer blocks the winner. Reviewers also noted that only the boundary function is unit-tested and that overlapping-but-not-nested lists have no `find_result_links` test; live 22-site run still not done.
+
+Second round (11/4, Codex): the margin only applies when the compiler runs, and a stored template that still binds is reused without it. That is the stored-template versioning PR's job: raise `COMPILER_REVISION` to 2 when this PR is merged after it (listed in the approval queue). Added `find_result_links` tests for the boundary (10 against 8 passes, 10 against 9 and 6 against 5 do not), containment (a list inside the winner is not a rival) and partial overlap (only the links a rival adds count).
