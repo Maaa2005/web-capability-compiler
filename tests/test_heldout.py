@@ -437,3 +437,52 @@ async def test_the_whole_harness_runs_on_the_fixtures(fixture_server: str, tmp_p
     assert document["metrics"]["pages"] == 3
     assert document["inputs"]["labels.json"]
     assert document["verdict"]["overall"] in {"pass", "fail", "not judged"}
+
+
+# -- E5: adult and gambling sites, from a pinned public list ---------------------
+
+
+def test_a_host_is_blocked_by_itself_or_by_a_parent_domain() -> None:
+    from benchmarks.heldout.sample import blocked
+
+    domains = frozenset({"casino.test", "bad.example.org"})
+    assert blocked("casino.test", domains)
+    assert blocked("www.casino.test", domains)
+    assert blocked("a.b.casino.test", domains)
+    assert blocked("bad.example.org", domains)
+    assert not blocked("example.org", domains)
+    assert not blocked("notcasino.test", domains)
+    assert not blocked("test", frozenset({"test"})), "a bare top-level name is never matched"
+
+
+def test_the_blocklist_rule_is_e5_and_comes_after_the_plans_other_rules() -> None:
+    blocklist = frozenset({"casino.test"})
+    assert exclusion("https://www.casino.test", blocklist) == "E5"
+    assert exclusion("http://casino.test", blocklist) == "E1"
+    assert exclusion("https://news.test", blocklist) is None
+
+
+def test_a_blocklist_file_with_the_wrong_hash_is_refused(tmp_path: Path) -> None:
+    from benchmarks.heldout.sample import BlocklistMismatch, read_blocklist
+
+    path = tmp_path / "list.txt"
+    path.write_text("casino.test\n# comment\n\n0.0.0.0 hosts.test\n")
+    with pytest.raises(BlocklistMismatch):
+        read_blocklist(path, "0" * 64)
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    assert read_blocklist(path, digest) == {"casino.test", "hosts.test"}
+
+
+def test_the_committed_blocklist_is_the_one_the_plan_names() -> None:
+    from benchmarks.heldout import plan
+    from benchmarks.heldout.sample import BLOCKLIST_PATH
+
+    assert hashlib.sha256(BLOCKLIST_PATH.read_bytes()).hexdigest() == plan.BLOCKLISTS[0].sha256
+
+
+def test_the_committed_sample_contains_no_host_on_the_committed_blocklist() -> None:
+    from benchmarks.heldout import plan
+    from benchmarks.heldout.sample import BLOCKLIST_PATH, blocked, load_sample, read_blocklist
+
+    domains = read_blocklist(BLOCKLIST_PATH, plan.BLOCKLISTS[0].sha256)
+    assert not [c.origin for c in load_sample() if blocked(c.host, domains)]
