@@ -23,6 +23,7 @@ from wcc.limits import ResourceLimits
 logger = logging.getLogger(__name__)
 
 ALLOW_PRIVATE_NETWORK_ENV = "WCC_ALLOW_PRIVATE_NETWORK"
+EGRESS_PROXY_ENV = "WCC_EGRESS_PROXY"
 ENRICHMENT_ENV = "WCC_ENRICHMENT"
 ENRICHMENT_MODEL_ENV = "WCC_ENRICHMENT_MODEL"
 API_KEY_ENV = "ANTHROPIC_API_KEY"
@@ -36,6 +37,7 @@ DEFAULT_ENRICHMENT_MODEL = "claude-opus-5"
 #: the word "false" — means no. A boundary that opened on an unrecognised value
 #: would open on a mistake.
 _TRUTHY = frozenset({"1", "true", "yes", "on"})
+_FALSY = frozenset({"0", "false", "no", "off"})
 
 
 def allow_private_network(environ: dict[str, str] | None = None) -> bool:
@@ -44,10 +46,21 @@ def allow_private_network(environ: dict[str, str] | None = None) -> bool:
     return env.get(ALLOW_PRIVATE_NETWORK_ENV, "").strip().lower() in _TRUTHY
 
 
+def egress_proxy(environ: dict[str, str] | None = None) -> bool:
+    """Whether the browser goes through the filtering proxy. On unless told off.
+
+    The opposite polarity to the other switches here, on purpose: this one closes a
+    hole, so an unrecognised value (a typo, an empty string) must leave it closed.
+    """
+    env = os.environ if environ is None else environ
+    return env.get(EGRESS_PROXY_ENV, "").strip().lower() not in _FALSY
+
+
 def driver_settings(environ: dict[str, str] | None = None) -> DriverSettings:
     """The driver's permissions and budgets for this process."""
     return DriverSettings(
         allow_private_network=allow_private_network(environ),
+        egress_proxy=egress_proxy(environ),
         limits=ResourceLimits(),
     )
 

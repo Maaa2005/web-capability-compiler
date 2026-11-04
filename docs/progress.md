@@ -2507,3 +2507,51 @@ An independent second review found two things; both were checked first.
   Chromium connects to, unlike HTTP. README now says exactly that and no longer
   lists WebSockets among the closed holes; real protection needs a network-level
   proxy, which WCC does not have.
+
+### Egress proxy: WebSocket and DNS rebinding closed at the socket (2026-11-04)
+
+The two holes the README listed as "not fixable in-process" were both fixable in
+process, by moving the check from the page's requests to the connection. Each
+session's context now uses a proxy on `127.0.0.1` (`wcc.driver.egress_proxy`).
+
+How it was chosen (ten sources read, one per source type and topic; notes in the PR):
+
+- Chromium applies a configured proxy per URL, and `ws:`/`wss:` go through an HTTP
+  proxy by `CONNECT` (`net/docs/proxy.md`, RFC 6455 4.1). It skips the proxy for
+  `localhost`, `127.0.0.0/8`, `169.254.0.0/16` and link-local IPv6 unless
+  `<-loopback>` is in the bypass list; Playwright adds that itself when a proxy is
+  set. Probed here: a context-level proxy receives `127.0.0.1` and `localhost`
+  requests on Chromium 151.
+- Name resolution for an HTTP proxy is the proxy's. The design is Smokescreen's and
+  Advocate's: resolve, judge every address, connect to the judged address by
+  literal. OWASP's SSRF cheat sheet asks for exactly that.
+- `ipaddress.is_global` is not a policy. On Python 3.12.10, `64:ff9b::7f00:1`,
+  `::127.0.0.1` and `192.88.99.1` are reported global. The URL policy now unwraps
+  NAT64 and 6to4 to the embedded IPv4 address and refuses `::/96` and the 6to4 relay
+  range.
+- A refused plain-HTTP request is answered by hanging up, not by a 403 page:
+  Chromium shows a proxy's 403 body as the destination's page and the navigation
+  "succeeds". `CONNECT` is answered with 403, which Chromium reports as a tunnel
+  failure.
+- Behind the proxy `_audit_peer` is skipped, because the peer Chromium reports is
+  the proxy itself. The judgement is made before the connection exists.
+
+Not chosen: wrapping `_apiConnect` in an init script (the page reaches the same path
+through `__pwWebSocketDispatch`; see the entry above), `iptables` or a network
+namespace (Linux only, needs privilege, cannot ship in a Python package), a
+mitmproxy add-on (a heavy dependency for a CONNECT filter), and judging URL text
+(the proxy sees what `getaddrinfo` returned, which is what the connection uses).
+
+Tests: the previously `xfail(strict=True)` WebSocket bypass now passes; a Worker's
+WebSocket to a refused address never handshakes; an admitted WebSocket still does
+(so the refusals are not a proxy that carries nothing); 33 socket-level proxy tests
+cover refusal of any bad address in an answer, one lookup per connection,
+alternative IP spellings, per-connection reading of the private-network allowance,
+header rewriting, malformed requests and shutdown. With the proxy off, the Worker
+and forced-socket tests fail again.
+
+Not verified: UDP/WebTransport/QUIC behaviour (no primary source found; the
+WebRTC flag exists in Chromium 151's binary but its effect was not exercised), a
+machine behind a mandatory corporate proxy (WCC's proxy connects directly), and
+the live 22-site measurement, which was not run.
+

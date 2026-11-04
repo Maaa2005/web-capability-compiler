@@ -31,6 +31,7 @@ from playwright.async_api import (
     Frame,
     Page,
     Playwright,
+    ProxySettings,
     Request,
     Response,
     Route,
@@ -63,6 +64,7 @@ from wcc.driver.base import (
     SessionNotFoundError,
 )
 from wcc.driver.collection_script import EXTRACT_COLLECTIONS
+from wcc.driver.egress_proxy import EgressProxy
 from wcc.driver.normalize import classify_control, is_eligible, normalize_element
 from wcc.driver.page_script import DESCRIBE_ELEMENT, EXTRACT_ELEMENTS, EXTRACT_LANDMARKS
 from wcc.driver.resolve import RESOLVE_CANDIDATE
@@ -77,6 +79,10 @@ from wcc.models.session import (
     SessionInfo,
     StructuredDataBlock,
 )
+
+#: WebRTC would otherwise open UDP sockets that no HTTP proxy sees. With this policy
+#: Chromium sends media only through the proxy or not at all.
+_LAUNCH_ARGS = ["--webrtc-ip-handling-policy=disable_non_proxied_udp"]
 
 _DOCUMENT_TOKEN = "__wccDocumentToken"
 _MUTATION_CLOCK = "__wccLastMutation"
@@ -209,6 +215,9 @@ class _Session:
     initial_url: str
     created_at: datetime
     allow_private_network: bool
+    egress: EgressProxy | None = None
+    """The filtering proxy this session's browser context is pointed at, if any."""
+
     events: list[NavigationEvent] = field(default_factory=list)
     in_flight: int = 0
     """Requests started and not yet finished or failed.
@@ -278,8 +287,14 @@ class PlaywrightDriver:
             self._reserved.add(session_id)
 
         context: BrowserContext | None = None
+        egress: EgressProxy | None = None
         try:
             browser = await self._browser(headless=request.headless)
+            proxy: ProxySettings | None = None
+            created: list[_Session] = []
+            if self._settings.egress_proxy:
+                egress = self._egress_proxy(created, allow_private)
+                proxy = {"server": await egress.start()}
             # ``accept_downloads`` defaults to true, which writes the file first and
             # lets the handler cancel afterwards. Refusing at the context means a
             # blocked download never reaches the filesystem at all.
@@ -287,6 +302,7 @@ class PlaywrightDriver:
                 locale=request.locale,
                 accept_downloads=False,
                 service_workers="block",
+                proxy=proxy,
             )
             page = await context.new_page()
             session = _Session(
@@ -296,7 +312,9 @@ class PlaywrightDriver:
                 initial_url=request.url,
                 created_at=datetime.now(UTC),
                 allow_private_network=allow_private,
+                egress=egress,
             )
+            created.append(session)
             await self._arm_observers(session)
 
             try:
@@ -337,6 +355,8 @@ class PlaywrightDriver:
             self._sessions.pop(session_id, None)
             if context is not None:
                 await context.close()
+            if egress is not None:
+                await egress.close()
             raise
         finally:
             self._reserved.discard(session_id)
@@ -354,7 +374,36 @@ class PlaywrightDriver:
         session = self._sessions.pop(session_id, None)
         if session is None:
             raise SessionNotFoundError(f"no active session {session_id}")
-        await session.context.close()
+        await self._release(session)
+
+    @staticmethod
+    async def _release(session: _Session) -> None:
+        """Close the context, then the proxy that served it."""
+        try:
+            await session.context.close()
+        finally:
+            if session.egress is not None:
+                await session.egress.close()
+
+    def _egress_proxy(self, created: list[_Session], allow_private: bool) -> EgressProxy:
+        """A proxy whose refusals land in the owning session's events.
+
+        The session does not exist yet when the proxy has to, so the proxy reads it
+        from ``created`` and falls back to the driver-wide setting until then. The
+        allowance is read on every connection: a session whose allowance changes
+        must change what its own proxy admits.
+        """
+
+        def allowed() -> bool:
+            return created[0].allow_private_network if created else allow_private
+
+        def refused(url: str, reason: str) -> None:
+            if created:
+                created[0].events.append(
+                    NavigationEvent(kind="subresource", url=url, blocked=True, reason=reason)
+                )
+
+        return EgressProxy(self._guard, allow_private_network=allowed, on_refused=refused)
 
     def _spawn(self, work: Coroutine[Any, Any, Any]) -> None:
         """Run cleanup that a synchronous Playwright event handler cannot await.
@@ -971,7 +1020,9 @@ class PlaywrightDriver:
         guard the runtime supplied, so there is no second policy here to drift out
         of step with the first.
         """
-        if session.failure is not None:
+        if session.failure is not None or session.egress is not None:
+            # Behind the egress proxy the connected peer is the proxy itself, and
+            # the judgement that matters was made before the connection existed.
             return
         if urlsplit(response.url).scheme.lower() not in _NETWORK_SCHEMES:
             # Not a network response, so there is no peer to check. The
@@ -1032,7 +1083,7 @@ class PlaywrightDriver:
         session.events.append(
             NavigationEvent(kind=kind, url=session.page.url, blocked=True, reason=reason)
         )
-        self._spawn(session.context.close())
+        self._spawn(self._release(session))
 
     def _session(self, session_id: str) -> _Session:
         session = self._sessions.get(session_id)
@@ -1056,7 +1107,9 @@ class PlaywrightDriver:
                 self._playwright = await async_playwright().start()
             browser = self._browsers.get(headless)
             if browser is None:
-                browser = await self._playwright.chromium.launch(headless=headless)
+                browser = await self._playwright.chromium.launch(
+                    headless=headless, args=_LAUNCH_ARGS
+                )
                 self._browsers[headless] = browser
             return browser
 

@@ -130,17 +130,37 @@ class UrlPolicy:
         )
 
 
+#: IPv6 forms that carry an IPv4 destination in some of their bits. A NAT64 gateway
+#: (RFC 6052) and a 6to4 relay (RFC 3056) forward to that IPv4 address, so
+#: ``64:ff9b::7f00:1`` is loopback with extra steps. ``ipaddress.is_global`` calls
+#: the first one global, which is how it got past the earlier version of this check.
+_NAT64_WELL_KNOWN = ipaddress.ip_network("64:ff9b::/96")
+_SIX_TO_FOUR = ipaddress.ip_network("2002::/16")
+#: Deprecated IPv4-compatible space (RFC 4291 2.5.5.1). Nothing legitimate lives
+#: here and ``ipaddress`` reports it as global.
+_V4_COMPATIBLE = ipaddress.ip_network("::/96")
+#: Deprecated 6to4 relay anycast (RFC 7526). Reported as global by ``ipaddress``.
+_SIX_TO_FOUR_RELAY = ipaddress.ip_network("192.88.99.0/24")
+
+
 def _normalize_address(raw: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
-    """Parse ``raw`` and unwrap an IPv4-mapped IPv6 address to its IPv4 form.
+    """Parse ``raw`` and unwrap the IPv6 forms that carry an IPv4 destination.
 
     ``::ffff:169.254.169.254`` and ``169.254.169.254`` are the same destination, so
     they must be classified the same way. Without unwrapping, a mapped metadata
     address fails the identity comparison against the IPv4 members of
-    ``_METADATA_ADDRESSES`` and slips through under a laxer category.
+    ``_METADATA_ADDRESSES`` and slips through under a laxer category. The same
+    goes for the NAT64 well-known prefix and 6to4, whose embedded IPv4 address is
+    where the traffic ends up.
     """
     address = ipaddress.ip_address(raw.split("%")[0])
-    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
-        return address.ipv4_mapped
+    if isinstance(address, ipaddress.IPv6Address):
+        if address.ipv4_mapped is not None:
+            return address.ipv4_mapped
+        if address in _NAT64_WELL_KNOWN:
+            return ipaddress.IPv4Address(int(address) & 0xFFFFFFFF)
+        if address in _SIX_TO_FOUR:
+            return ipaddress.IPv4Address((int(address) >> 80) & 0xFFFFFFFF)
     return address
 
 
@@ -174,6 +194,10 @@ def _restricted_category(address: ipaddress.IPv4Address | ipaddress.IPv6Address)
         return "reserved"
     if isinstance(address, ipaddress.IPv6Address) and address in _SITE_LOCAL_V6:
         return "site-local"
+    if isinstance(address, ipaddress.IPv6Address) and address in _V4_COMPATIBLE:
+        return "reserved"
+    if isinstance(address, ipaddress.IPv4Address) and address in _SIX_TO_FOUR_RELAY:
+        return "reserved"
     if not address.is_global:
         return "non-global"
     return None
