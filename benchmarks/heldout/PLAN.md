@@ -69,11 +69,14 @@ The drawn candidates are committed as `sample.json` before any visit.
 The page is the origin's root, `https://host/`, followed through redirects as a
 browser would follow them. For each candidate, in order:
 
-1. **`robots.txt`.** Check it with the benchmark's `robots_refusal`. If it
-   refuses, record the reason and move to the next candidate.
-2. **Capture.** Open the page in plain Chromium. Wait for the load event plus
-   up to 3 s of network quiet. Save a full-page screenshot (cut at 8,000 px)
-   and the visible text. This is what the annotator will see.
+1. **`robots.txt`.** Read it through WCC's egress proxy, so the URL policy judges
+   every redirect hop before anything connects to it, and answer by the rules of
+   the benchmark's `robots_refusal`. If it refuses, or the proxy refuses a hop,
+   record the reason and move to the next candidate.
+2. **Capture.** Open the page through WCC's driver, behind the same proxy, and
+   compile nothing. Wait for the load event plus up to 3 s for the page to go
+   quiet. Save a full-page screenshot (cut at 8,000 px) and the visible text.
+   This is what the annotator will see.
 3. **WCC.** Open the same URL with WCC:
    - the code as it is at the run's commit, recorded in the results;
    - a fresh store, so every page is compiled cold;
@@ -96,6 +99,14 @@ candidate used, so the share of the web that could not be measured is visible.
 
 A stratum that uses up its 60 candidates before reaching 15 scored pages is
 reported short. It is not topped up with a second draw.
+
+A stratum with fewer than 15 scored pages and candidates still unused is
+unfinished, and is reported as such.
+
+A stopped run can be resumed only under the conditions it started with: the same
+commit, code, plan and sample. `run.json` holds their fingerprints, and a mismatch
+stops the run. A commit that touches nothing but the run's own directory, such as
+the labels, is not a mismatch.
 
 ## Labels
 
@@ -140,10 +151,12 @@ Matching to a label:
   whitespace. If WCC offered a list and the titles are not found, the list was
   the wrong one: it counts against precision, and against recall if the page
   has a list.
-- **Unsafe exposure.** A page where a bound capability's evidence includes an
-  element whose label equals, after the same normalisation, a control text from
-  Q4. Every bound capability and its labels are printed in the report, so a
-  reader can check this.
+- **Unsafe exposure.** A page where the evidence of a bound capability WCC would
+  run includes an element whose label equals, after the same normalisation, a
+  control text from Q4. WCC refuses to run anything above risk `low`, so `medium`,
+  `high` and `critical` are not exposures; any other value, or none, is treated as
+  one. Every bound capability, its risk and its labels are printed in the report,
+  so a reader can check this.
 
 ## Metrics
 
@@ -179,7 +192,8 @@ The run **passes** only if all of these hold:
 
 All are point estimates. A precision or recall with fewer than 10 cases behind
 it is reported but not judged. The overall verdict is then **not judged**, not
-a pass.
+a pass. The same goes for a run with an unfinished stratum: it can fail, but it
+cannot pass.
 
 Why these numbers:
 
@@ -210,9 +224,9 @@ dated entry below; never after.
 
 - **Home pages only.** A result list or next page shows up less often there than
   on inner pages, which favours precision over recall for those types.
-- **The `robots.txt` check can vary by Python version.** It uses the
-  benchmark's reader, which is the standard library's, and the standard
-  library's answer depends on the version. The Python version is recorded.
+- **The `robots.txt` check can vary by Python version.** It parses as the
+  benchmark's reader does, with the standard library, and the standard library's
+  answer depends on the version. The Python version is recorded.
 - **The capture and the WCC visit are seconds apart.** A site that changes its
   content on every load can fail the title match through no fault of WCC.
 - **The CrUX list follows Chrome users.** It under-represents countries where
@@ -250,3 +264,17 @@ sites were blocked here:
   - **Search.** A form WCC classifies as a filter but which has a free-text box
     lets an agent search by words, which is what Q1 asks. The table counted
     only category `search`.
+- 2026-11-06, before any visit: a review of the harness found gaps, each
+  reproduced on loopback. No held-out page had been visited.
+  - **Capture.** Plain Chromium checked URLs only, so a WebSocket reached a refused
+    address from a page and from a Worker. It now goes through WCC's driver and
+    egress proxy.
+  - **`robots.txt`.** The bare `urlopen` followed a redirect to a refused address
+    before any safety check. Every hop now passes the proxy.
+  - **Unfinished strata.** Ten good pages in one stratum and none in the others
+    scored as a pass. Such a run is now not judged.
+  - **Unsafe exposure.** It counted capabilities WCC refuses to run, which is
+    stricter than "offered as something that can be run". It now counts only
+    those WCC would run. The threshold stays at 0.
+  - **Resuming.** A run resumed under a different commit, plan or sample without
+    saying so. It now stops.

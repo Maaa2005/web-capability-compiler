@@ -19,29 +19,44 @@ tell whether a capture was replaced.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import hashlib
 import json
 import platform
+import ssl
 import subprocess
 import sys
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
+from http.client import HTTPException
 from importlib.metadata import version
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
+from urllib.request import (
+    BaseHandler,
+    HTTPDefaultErrorHandler,
+    HTTPErrorProcessor,
+    HTTPHandler,
+    HTTPRedirectHandler,
+    HTTPSHandler,
+    OpenerDirector,
+    Request,
+    UnknownHandler,
+)
+from urllib.robotparser import RobotFileParser
 
-from playwright.async_api import Error as PlaywrightError
-from playwright.async_api import Page, Route, async_playwright
+from playwright.async_api import Response
 
 from benchmarks.heldout import plan
 from benchmarks.heldout.sample import SAMPLE_PATH, Candidate, load_sample
-from benchmarks.measure_coverage import PAUSE_SECONDS, robots_refusal
+from benchmarks.measure_coverage import PAUSE_SECONDS, ROBOTS_TIMEOUT_SECONDS, USER_AGENT
 from wcc.compiler.navigation import find_result_links
-from wcc.driver.base import DriverError, DriverSettings, NavigationBlockedError
-from wcc.driver.playwright_driver import PlaywrightDriver
+from wcc.driver.base import DriverError, DriverSettings
+from wcc.driver.egress_proxy import EgressProxy
+from wcc.driver.playwright_driver import PlaywrightDriver, _Session
 from wcc.enrich.enricher import Enricher
 from wcc.limits import ResourceLimits
 from wcc.models.capability import RiskLevel
@@ -115,6 +130,39 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+class _CaptureDriver(PlaywrightDriver):
+    """WCC's driver, with the two things a capture needs that its interface lacks.
+
+    A subclass rather than a second browser launch: the capture then has the same
+    boundary as the WCC visit, which is the egress proxy (WebSockets, Workers, and
+    no second DNS answer), the refused popups and the refused downloads.
+    """
+
+    document_status: int | None = None
+
+    async def _arm_observers(self, session: _Session) -> None:
+        await super()._arm_observers(session)
+
+        def remember(response: Response) -> None:
+            if (
+                response.request.is_navigation_request()
+                and response.frame == session.page.main_frame
+            ):
+                self.document_status = response.status
+
+        session.page.on("response", remember)
+
+    async def save_screenshot(self, session_id: str, path: Path) -> None:
+        page = self._session(session_id).page
+        height = await page.evaluate("document.documentElement.scrollHeight")
+        clip_height = max(1, min(int(height or 900), MAX_SCREENSHOT_HEIGHT))
+        await page.screenshot(
+            path=str(path),
+            full_page=True,
+            clip={"x": 0, "y": 0, "width": 1280, "height": clip_height},
+        )
+
+
 async def capture(
     url: str,
     shot: Path,
@@ -123,62 +171,125 @@ async def capture(
     *,
     allow_private_network: bool = False,
 ) -> None:
-    """Open ``url`` in plain Chromium and keep what a person would see.
+    """Open ``url`` through WCC's driver and keep what a person would see.
 
-    The same URL policy as WCC's judges every request, so the capture cannot
-    reach an address WCC itself would refuse. ``allow_private_network`` exists
-    for the loopback fixtures in the tests, as it does for WCC.
+    The page's traffic passes the driver's egress proxy, so the capture cannot reach
+    an address WCC itself would refuse. ``allow_private_network`` exists for the
+    loopback fixtures in the tests, as it does for WCC.
     """
-    policy = UrlPolicy()
-    async with async_playwright() as playwright:
-        browser = await playwright.chromium.launch(headless=True)
+    driver = _CaptureDriver(
+        UrlPolicy(),
+        DriverSettings(
+            allow_private_network=allow_private_network,
+            limits=ResourceLimits(settle_timeout_ms=NETWORK_QUIET_MS),
+        ),
+    )
+    try:
+        # Waits for the load event, then up to NETWORK_QUIET_MS for quiet. A page
+        # that never goes quiet is captured as it is.
+        session = await driver.open_session(OpenSessionRequest(url=url))
+        identity = await driver.identify(session.session_id)
+        final_url, visible = await driver.page_text(session.session_id)
+        await driver.save_screenshot(session.session_id, shot)
+        record.http_status = driver.document_status
+        record.final_url = final_url
+        record.title = identity.title or ""
+        text.write_text(visible[:MAX_TEXT_CHARS], encoding="utf-8")
+    finally:
+        await driver.shutdown()
+
+
+class _ThroughProxy(BaseHandler):
+    """Send every request to the egress proxy.
+
+    Not ``urllib``'s ``ProxyHandler``: that one goes direct for any host ``no_proxy``
+    or the Windows registry's proxy override names, and direct is what must not
+    happen here.
+    """
+
+    handler_order = 100
+
+    def __init__(self, proxy_url: str) -> None:
+        self._proxy = urlsplit(proxy_url).netloc
+
+    def http_open(self, request: Request) -> None:
+        request.set_proxy(self._proxy, "http")
+
+    def https_open(self, request: Request) -> None:
+        request.set_proxy(self._proxy, "http")
+
+
+def _read_through(proxy_url: str, url: str) -> bytes:
+    """Read ``url`` over HTTP(S) only, every redirect hop passing the proxy.
+
+    Built by hand because ``build_opener`` also adds the proxy lookup from the
+    environment and the ``ftp`` and ``file`` handlers, none of which the proxy sees.
+    A redirect to one of those schemes ends at ``UnknownHandler`` as an error.
+    """
+    opener = OpenerDirector()
+    for handler in (
+        _ThroughProxy(proxy_url),
+        HTTPHandler(),
+        HTTPSHandler(),
+        HTTPRedirectHandler(),
+        HTTPDefaultErrorHandler(),
+        HTTPErrorProcessor(),
+        UnknownHandler(),
+    ):
+        opener.add_handler(handler)
+    with opener.open(url, timeout=ROBOTS_TIMEOUT_SECONDS) as response:
+        return response.read()
+
+
+def guarded_robots_refusal(url: str, *, allow_private_network: bool = False) -> str | None:
+    """``measure_coverage.robots_refusal``'s answers, behind the egress proxy.
+
+    That function reads ``robots.txt`` with a bare ``urlopen``, which follows a
+    redirect anywhere and so reaches an internal address before the page's own
+    safety check runs. Here every hop is resolved, judged and connected to by the
+    same proxy the browser uses. A refused hop leaves the file unread, so it
+    disallows, as RFC 9309 section 2.3.1 says of an unreachable file.
+
+    The status rules are copied because that function takes no way to pass a
+    connection; a test holds the two to the same answers. Opens its own event loop,
+    so call it from a worker thread.
+    """
+    parts = urlsplit(url)
+    robots_url = f"{parts.scheme}://{parts.netloc}/robots.txt"
+    refused: list[str] = []
+
+    async def fetch() -> bytes:
+        proxy = EgressProxy(
+            UrlPolicy(),
+            allow_private_network=lambda: allow_private_network,
+            on_refused=lambda _target, reason: refused.append(reason),
+        )
+        proxy_url = await proxy.start()
         try:
-            context = await browser.new_context(
-                viewport={"width": 1280, "height": 900},
-                accept_downloads=False,
-                service_workers="block",
-            )
-
-            async def guard(route: Route) -> None:
-                try:
-                    await asyncio.to_thread(
-                        policy.check,
-                        route.request.url,
-                        allow_private_network=allow_private_network,
-                    )
-                except NavigationBlockedError:
-                    await route.abort("blockedbyclient")
-                    return
-                await route.continue_()
-
-            await context.route("**/*", guard)
-            page = await context.new_page()
-
-            def refuse_popup(popup: Page) -> None:
-                # Registered after the capture's own page exists: the context's
-                # "page" event fires for that one too.
-                if popup is not page:
-                    asyncio.ensure_future(popup.close())
-
-            context.on("page", refuse_popup)
-            response = await page.goto(url, wait_until="load", timeout=20_000)
-            # Best effort: a page that never goes quiet is captured as it is.
-            with contextlib.suppress(PlaywrightError):
-                await page.wait_for_load_state("networkidle", timeout=NETWORK_QUIET_MS)
-            record.http_status = response.status if response is not None else None
-            record.final_url = page.url
-            record.title = await page.title()
-            height = await page.evaluate("document.documentElement.scrollHeight")
-            clip_height = max(1, min(int(height or 900), MAX_SCREENSHOT_HEIGHT))
-            await page.screenshot(
-                path=str(shot),
-                full_page=True,
-                clip={"x": 0, "y": 0, "width": 1280, "height": clip_height},
-            )
-            visible = await page.inner_text("body")
-            text.write_text(visible[:MAX_TEXT_CHARS])
+            return await asyncio.to_thread(_read_through, proxy_url, robots_url)
         finally:
-            await browser.close()
+            await proxy.close()
+
+    try:
+        raw = asyncio.run(fetch())
+    except HTTPError as status:
+        if status.code in (401, 403):
+            return f"robots.txt answered {status.code}, which disallows everything"
+        if 400 <= status.code < 500:
+            return None
+        return f"robots.txt answered {status.code}, so it is unreachable and disallows"
+    except (URLError, OSError, HTTPException) as failed:
+        if refused:
+            return f"robots.txt refused by the URL policy ({refused[0]}), so it disallows"
+        cause = failed.reason if isinstance(failed, URLError) else failed
+        if isinstance(cause, ssl.SSLCertVerificationError):
+            return f"certificate not trusted on this machine; robots.txt unread ({cause})"
+        return f"robots.txt could not be fetched ({failed}), so it disallows"
+    parser = RobotFileParser(robots_url)
+    parser.parse(raw.decode("utf-8", errors="replace").splitlines())
+    if not parser.can_fetch(USER_AGENT, url):
+        return "robots.txt disallows this path"
+    return None
 
 
 async def wcc_visit(url: str, record: WccRecord, *, allow_private_network: bool = False) -> None:
@@ -281,42 +392,71 @@ class RunFiles:
 def load_index(files: RunFiles) -> dict[str, CaptureRecord]:
     if not files.index.exists():
         return {}
-    return {r["key"]: CaptureRecord(**r) for r in json.loads(files.index.read_text())}
+    return {
+        r["key"]: CaptureRecord(**r) for r in json.loads(files.index.read_text(encoding="utf-8"))
+    }
 
 
 def load_wcc(files: RunFiles) -> dict[str, WccRecord]:
     if not files.wcc.exists():
         return {}
-    return {r["key"]: WccRecord(**r) for r in json.loads(files.wcc.read_text())}
+    return {r["key"]: WccRecord(**r) for r in json.loads(files.wcc.read_text(encoding="utf-8"))}
 
 
 def excluded_by_labels(files: RunFiles) -> set[str]:
     """Keys the annotator excluded at Q0. Read for its keys only, never its answers."""
     if not files.labels.exists():
         return set()
-    labels = json.loads(files.labels.read_text()).get("labels", {})
+    labels = json.loads(files.labels.read_text(encoding="utf-8")).get("labels", {})
     return {key for key, label in labels.items() if not label.get("eligible", True)}
 
 
 def _write(path: Path, records: list[Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps([asdict(r) for r in records], indent=2, ensure_ascii=False) + "\n")
+    path.write_text(
+        json.dumps([asdict(r) for r in records], indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _git(*args: str) -> str:
+    try:
+        done = subprocess.run(
+            ["git", *args],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            check=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return ""
+    return done.stdout.strip()
+
+
+def code_sha256() -> str:
+    """One digest of the code a visit runs, including what is not committed yet.
+
+    The commit alone cannot say this: an edit to ``src`` leaves ``HEAD`` where it was.
+    """
+    paths = [
+        *(REPO_ROOT / "src").rglob("*.py"),
+        *Path(__file__).parent.glob("*.py"),
+        REPO_ROOT / "benchmarks" / "measure_coverage.py",
+    ]
+    digest = hashlib.sha256()
+    for path in sorted(paths):
+        digest.update(path.relative_to(REPO_ROOT).as_posix().encode("utf-8"))
+        digest.update(hashlib.sha256(path.read_bytes()).digest())
+    return digest.hexdigest()
 
 
 def run_metadata() -> dict[str, Any]:
-    def git(*args: str) -> str:
-        try:
-            done = subprocess.run(
-                ["git", *args], cwd=REPO_ROOT, capture_output=True, text=True, check=True
-            )
-        except (OSError, subprocess.CalledProcessError):
-            return ""
-        return done.stdout.strip()
-
     return {
         "started_at": _now(),
-        "commit": git("rev-parse", "HEAD"),
-        "src_changed_since_commit": bool(git("status", "--porcelain", "--", "src")),
+        "commit": _git("rev-parse", "HEAD"),
+        "src_changed_since_commit": bool(_git("status", "--porcelain", "--", "src")),
+        "code_sha256": code_sha256(),
         "python": sys.version.split()[0],
         "platform": platform.platform(),
         "playwright": version("playwright"),
@@ -324,6 +464,38 @@ def run_metadata() -> dict[str, Any]:
         "plan_py_sha256": _sha256(Path(plan.__file__)),
         "sample_sha256": _sha256(SAMPLE_PATH),
     }
+
+
+def _commit_mismatch(started: str, current: str, out: Path) -> str | None:
+    """Why ``current`` is not the commit the run started at, or ``None``.
+
+    ``PLAN.md`` has the annotator commit labels, and a stopped run may commit what it
+    has so far. A commit that touches only this run's own directory changes no code,
+    so it does not stop the run. Anything else, or a diff git cannot give, does.
+    """
+    if not started or not current:
+        return f"the commit cannot be compared (started at {started!r}, now {current!r})"
+    if started == current:
+        return None
+    changed = _git("diff", "--name-only", started, current).splitlines()
+    try:
+        own = out.resolve().relative_to(REPO_ROOT).as_posix() + "/"
+    except ValueError:
+        own = None
+    if changed and own is not None and all(path.startswith(own) for path in changed):
+        return None
+    return f"the run started at commit {started}, and this is {current}"
+
+
+def resume_mismatches(recorded: dict[str, Any], now: dict[str, Any], out: Path) -> list[str]:
+    """What differs from when the run started. A missing fingerprint counts as different."""
+    problems = [
+        f"{key}: the run started with {recorded.get(key)}, and this is {now[key]}"
+        for key in ("code_sha256", "plan_sha256", "plan_py_sha256", "sample_sha256")
+        if recorded.get(key) != now[key]
+    ]
+    commit = _commit_mismatch(str(recorded.get("commit") or ""), now["commit"], out)
+    return [commit, *problems] if commit else problems
 
 
 Capture = Callable[[str, Path, Path, CaptureRecord], Awaitable[None]]
@@ -335,7 +507,7 @@ async def visit_candidates(
     files: RunFiles,
     candidates: list[Candidate],
     *,
-    robots: Robots = robots_refusal,
+    robots: Robots = guarded_robots_refusal,
     take_capture: Capture = capture,
     visit: Visit = wcc_visit,
     pause_seconds: float = PAUSE_SECONDS,
@@ -401,8 +573,21 @@ async def visit_candidates(
 def run_all(out: Path, *, only_stratum: str = "") -> int:
     files = RunFiles(out)
     out.mkdir(parents=True, exist_ok=True)
-    if not files.meta.exists():
-        files.meta.write_text(json.dumps(run_metadata(), indent=2) + "\n")
+    now = run_metadata()
+    if files.meta.exists():
+        recorded = json.loads(files.meta.read_text(encoding="utf-8"))
+        problems = resume_mismatches(recorded, now, out)
+    elif files.index.exists() or files.wcc.exists():
+        problems = [f"{files.meta} is missing, but this directory already has results"]
+    else:
+        files.meta.write_text(json.dumps(now, indent=2) + "\n", encoding="utf-8")
+        problems = []
+    if problems:
+        print(f"not resumed: {out} was started under different conditions.")
+        for problem in problems:
+            print(f"  {problem}")
+        print("Restore them, or start a new run in a new directory.")
+        return 2
     candidates = load_sample()
     if only_stratum:
         candidates = [c for c in candidates if c.stratum == only_stratum]

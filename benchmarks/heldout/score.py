@@ -11,6 +11,7 @@ import hashlib
 import json
 import math
 import unicodedata
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -88,6 +89,7 @@ def score_page(
         {
             f"{o['name']}: {lab}"
             for o in offered
+            if o.get("risk") not in plan.NON_EXECUTABLE_RISKS
             for lab in o.get("labels", [])
             if normalise(lab) in controls
         }
@@ -170,7 +172,13 @@ def metrics(pages: list[PageScore]) -> dict[str, Any]:
     }
 
 
-def verdict(m: dict[str, Any]) -> dict[str, Any]:
+def verdict(m: dict[str, Any], unfinished: Sequence[str] = ()) -> dict[str, Any]:
+    """The plan's pass line. ``unfinished`` names strata the run has not finished.
+
+    A number that clears the line over part of the sample says nothing about the
+    rest, so an unfinished run can fail but cannot pass.
+    """
+
     def judged(entry: dict[str, Any], floor: float) -> str:
         if not entry["judged"]:
             return "not judged"
@@ -198,7 +206,9 @@ def verdict(m: dict[str, Any]) -> dict[str, Any]:
     }
     outcomes = set(criteria.values())
     overall = "fail" if "fail" in outcomes else "not judged" if "not judged" in outcomes else "pass"
-    return {"criteria": criteria, "overall": overall}
+    if overall == "pass" and unfinished:
+        overall = "not judged"
+    return {"criteria": criteria, "unfinished_strata": list(unfinished), "overall": overall}
 
 
 def select_scored(
@@ -243,6 +253,26 @@ def select_scored(
     return scored, accounting
 
 
+def stratum_states(
+    candidates: list[Candidate],
+    accounting: dict[str, dict[str, int]],
+    per_stratum: int = plan.PAGES_PER_STRATUM,
+) -> dict[str, str]:
+    """``complete``, ``short`` (all the plan's candidates used, too few pages) or
+    ``unfinished`` (candidates are left, so the stratum has not been measured)."""
+    states: dict[str, str] = {}
+    for stratum in plan.STRATA:
+        tally = accounting[stratum.name]
+        total = sum(1 for c in candidates if c.stratum == stratum.name)
+        if tally["scored"] >= per_stratum:
+            states[stratum.name] = "complete"
+        elif total >= plan.CANDIDATES_PER_STRATUM and tally["used"] >= total:
+            states[stratum.name] = "short"
+        else:
+            states[stratum.name] = "unfinished"
+    return states
+
+
 def cohen_kappa(first: list[bool], second: list[bool]) -> float | None:
     n = len(first)
     if n == 0:
@@ -280,7 +310,7 @@ def score_files(
     candidates = load_sample() if candidates is None else candidates
     index = load_index(files)
     results = load_wcc(files)
-    labels_document = json.loads(files.labels.read_text())
+    labels_document = json.loads(files.labels.read_text(encoding="utf-8"))
     labels = labels_document["labels"]
     scored, accounting = select_scored(candidates, index, results, labels, per_stratum)
     pages = [
@@ -288,6 +318,8 @@ def score_files(
         for c in scored
     ]
     m = metrics(pages)
+    states = stratum_states(candidates, accounting, per_stratum)
+    unfinished = [name for name, state in states.items() if state == "unfinished"]
     document: dict[str, Any] = {
         "inputs": {
             "sample.json": _sha256(SAMPLE_PATH),
@@ -295,16 +327,19 @@ def score_files(
             "wcc/results.json": _sha256(files.wcc),
             "labels.json": _sha256(files.labels),
         },
-        "run": json.loads(files.meta.read_text()) if files.meta.exists() else None,
+        "run": json.loads(files.meta.read_text(encoding="utf-8")) if files.meta.exists() else None,
         "annotator": labels_document.get("annotator"),
         "accounting": accounting,
+        "strata": states,
         "metrics": m,
-        "verdict": verdict(m),
+        "verdict": verdict(m, unfinished),
         "pages": [asdict(p) for p in pages],
     }
     second = files.out / "labels-second.json"
     if second.exists():
-        document["agreement"] = agreement(labels, json.loads(second.read_text())["labels"])
+        document["agreement"] = agreement(
+            labels, json.loads(second.read_text(encoding="utf-8"))["labels"]
+        )
     return document
 
 
@@ -316,6 +351,18 @@ def _fmt(entry: dict[str, Any]) -> str:
     return f"{entry['value']:.2f} ({entry['k']}/{entry['n']}; 95% {low:.2f}–{high:.2f}{judged})"
 
 
+def _stratum_warnings(states: dict[str, str]) -> list[str]:
+    lines = []
+    for state, meaning in (
+        ("unfinished", "not finished, so the run cannot pass"),
+        ("short", "used every candidate and came up short"),
+    ):
+        names = [name for name, seen in states.items() if seen == state]
+        if names:
+            lines += ["", f"**Strata {meaning}:** {', '.join(names)}."]
+    return lines
+
+
 def report(document: dict[str, Any]) -> str:
     m, v = document["metrics"], document["verdict"]
     lines = [
@@ -323,6 +370,7 @@ def report(document: dict[str, Any]) -> str:
         "",
         f"**Verdict: {v['overall']}** over {m['pages']} scored pages. "
         "Thresholds and rules: `benchmarks/heldout/PLAN.md`.",
+        *_stratum_warnings(document["strata"]),
         "",
         "| Criterion | Result |",
         "|---|---|",
@@ -366,7 +414,8 @@ def report(document: dict[str, Any]) -> str:
     yn = {True: "y", False: "n"}
     for page in document["pages"]:
         offered = "; ".join(
-            f"{o['name']} ({', '.join(o.get('labels', [])[:3])})" for o in page["offered"]
+            f"{o['name']} [{o.get('risk', 'risk unknown')}] ({', '.join(o.get('labels', [])[:3])})"
+            for o in page["offered"]
         )
         lines.append(
             f"| {page['key']} {page['origin']} "
@@ -388,8 +437,10 @@ def score_run(out: Path) -> int:
     except NotReady as missing:
         print(f"not scored: {missing}. Run `label` first.")
         return 2
-    (out / "score.json").write_text(json.dumps(document, indent=2, ensure_ascii=False) + "\n")
+    (out / "score.json").write_text(
+        json.dumps(document, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
     text = report(document)
-    (out / "report.md").write_text(text)
+    (out / "report.md").write_text(text, encoding="utf-8")
     print(text)
     return 0

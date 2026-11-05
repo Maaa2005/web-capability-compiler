@@ -137,5 +137,5 @@ def sample_document(result: Draw) -> dict[str, object]:
 def load_sample(path: Path = SAMPLE_PATH) -> list[Candidate]:
     import json
 
-    document = json.loads(path.read_text())
+    document = json.loads(path.read_text(encoding="utf-8"))
     return [Candidate(**entry) for entry in document["candidates"]]

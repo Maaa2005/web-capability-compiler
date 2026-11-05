@@ -85,7 +85,9 @@ def _show(files: RunFiles, record: CaptureRecord, say: Callable[[str], None]) ->
     say(f"    screenshot: {(files.captures / record.screenshot).resolve()}")
     text_path = files.captures / record.text
     if text_path.exists():
-        lines = [line for line in text_path.read_text().splitlines() if line.strip()]
+        lines = [
+            line for line in text_path.read_text(encoding="utf-8").splitlines() if line.strip()
+        ]
         say(f"    text: {text_path.resolve()} (first lines below)")
         for line in lines[:25]:
             say(f"      | {line[:120]}")
@@ -106,7 +108,7 @@ def label_pages(
     )
     path = files.out / ("labels-second.json" if second else "labels.json")
     document: dict[str, Any] = (
-        json.loads(path.read_text())
+        json.loads(path.read_text(encoding="utf-8"))
         if path.exists()
         else {
             "annotator": annotator,
@@ -121,7 +123,7 @@ def label_pages(
         )
 
     if second:
-        first = json.loads(files.labels.read_text())["labels"]
+        first = json.loads(files.labels.read_text(encoding="utf-8"))["labels"]
         eligible = [key for key, label in first.items() if label.get("eligible")]
         wanted = set(agreement_keys(eligible))
         captured = [r for r in captured if r.key in wanted]
@@ -133,7 +135,7 @@ def label_pages(
         label = ask_page(ask)
         label["labelled_at"] = _now()
         document["labels"][record.key] = label
-        path.write_text(json.dumps(document, indent=2, ensure_ascii=False) + "\n")
+        path.write_text(json.dumps(document, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     say(f"\n{len(document['labels'])} pages labelled in {path}")
     return path
 

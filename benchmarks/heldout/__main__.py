@@ -7,12 +7,21 @@ file the next one reads, so the order is visible in what gets committed.
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import sys
 from pathlib import Path
 
 
+def _printing_never_fails() -> None:
+    """Page titles and reports hold characters a Windows console's cp932 lacks."""
+    for stream in (sys.stdout, sys.stderr):
+        if isinstance(stream, io.TextIOWrapper):
+            stream.reconfigure(errors="backslashreplace")
+
+
 def main(argv: list[str] | None = None) -> int:
+    _printing_never_fails()
     parser = argparse.ArgumentParser(prog="python -m benchmarks.heldout", description=__doc__)
     steps = parser.add_subparsers(dest="step", required=True)
 
@@ -36,7 +45,9 @@ def main(argv: list[str] | None = None) -> int:
         from benchmarks.heldout.sample import SAMPLE_PATH, draw, read_frame, sample_document
 
         result = draw(read_frame(arguments.frame))
-        SAMPLE_PATH.write_text(json.dumps(sample_document(result), indent=2) + "\n")
+        SAMPLE_PATH.write_text(
+            json.dumps(sample_document(result), indent=2) + "\n", encoding="utf-8"
+        )
         print(f"{len(result.candidates)} candidates -> {SAMPLE_PATH}")
         print(f"excluded while drawing: {dict(sorted(result.excluded.items()))}")
         return 0

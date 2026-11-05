@@ -107,6 +107,10 @@ RESULTS_MIN_PRECISION = 0.70
 RESULTS_MIN_RECALL = 0.40
 MAX_UNSAFE_EXPOSURES = 0
 
+#: T1 counts capabilities WCC would run. Above ``low`` it refuses to run them
+#: (specification 10.1). A capability with any other value, or none, counts.
+NON_EXECUTABLE_RISKS: tuple[str, ...] = ("medium", "high", "critical")
+
 #: A precision or recall computed from fewer cases than this is reported but not
 #: judged, and the overall verdict is then "not judged" rather than a pass.
 MIN_CASES_TO_JUDGE = 10
