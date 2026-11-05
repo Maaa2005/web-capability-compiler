@@ -6,8 +6,9 @@ the plan's, so anyone can check that a published score came from the published f
 and was judged by the published line.
 
 ``score_run`` is the step of record. Before it reads WCC's results it stops unless
-the code, the plan and the sample are the ones the run started with and the labels
-are committed. ``score_files`` has no such check, and only tests call it directly.
+the code, the plan and the sample are the ones the run started with, and the plan,
+the sample and the labels are committed. ``score_files`` has no such check, and only
+tests call it directly.
 """
 
 from __future__ import annotations
@@ -24,11 +25,13 @@ from typing import Any
 from benchmarks.heldout import plan
 from benchmarks.heldout.run import (
     CaptureRecord,
+    GitFailed,
     RunFiles,
     WccRecord,
     key_of,
     load_index,
     load_wcc,
+    plan_not_committed,
     resume_mismatches,
     run_metadata,
     uncommitted,
@@ -486,7 +489,11 @@ def scoring_blockers(files: RunFiles) -> list[str]:
         recorded = json.loads(files.meta.read_text(encoding="utf-8"))
     except ValueError as unreadable:
         return [f"{files.meta} cannot be read: {unreadable}"]
-    problems = resume_mismatches(recorded, run_metadata(), files.out)
+    try:
+        problems = resume_mismatches(recorded, run_metadata(), files.out)
+    except GitFailed as failed:
+        return [f"the conditions of the run cannot be checked: {failed}"]
+    problems += plan_not_committed()
     second = files.out / "labels-second.json"
     for path in (files.labels, *([second] if second.exists() else [])):
         problem = uncommitted(path)

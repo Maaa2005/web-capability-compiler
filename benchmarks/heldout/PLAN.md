@@ -82,11 +82,14 @@ browser would follow them. For each candidate, in order:
    compile nothing. Wait for the load event plus up to 3 s for the page to go
    quiet. Save a full-page screenshot (cut at 8,000 px) and the visible text.
    This is what the annotator will see. The address the page ended on is then
-   judged by E2 and E4, because the draw judged only the origin. If either rule
-   excludes it, the candidate is recorded as landed elsewhere and replaced. The
-   address WCC ended on at step 3 is judged the same way. For E4, "already kept"
-   means the pages so far that have both a capture and a WCC result, by the
-   address each started from and the addresses it ended on.
+   judged by E2 and E4, because the draw judged only the origin, and by the
+   `robots.txt` of its own site, as is each address the browser was redirected
+   through on the way there, because step 1 asked only about the origin's root. If
+   any of these excludes it, the candidate is recorded as landed elsewhere and
+   replaced, and its screenshot and text are not kept. The address WCC ended on at
+   step 3 is judged the same way. For E4, "already kept" means the pages so far that
+   have both a capture and a WCC result, by the address each started from and the
+   addresses it ended on.
 3. **WCC.** Open the same URL with WCC:
    - the code as it is at the run's commit, recorded in the results;
    - a fresh store, so every page is compiled cold;
@@ -120,6 +123,10 @@ A stratum with fewer than 15 scored pages and candidates still unused, or still
 waiting to be tried again after a connection failed, is unfinished, and is reported
 as such.
 
+A run does not start, or resume, unless `PLAN.md`, `plan.py` and `sample.json` are
+committed as they stand, and a git command that fails stops it rather than reading as
+"nothing changed".
+
 A stopped run can be resumed only under the conditions it started with: the same
 commit, code, plan and sample. `run.json` holds their fingerprints, and a mismatch
 stops the run. A commit that touches nothing but the run's own directory, such as
@@ -130,10 +137,11 @@ the labels, is not a mismatch.
 - **Who.** A person who has not seen WCC's output for these pages. The
   annotator's name and the time are recorded in `labels.json`.
 - **When.** All labels are committed before the scoring step reads WCC's
-  results. The scoring step checks this first, and stops if a labels file is not
-  committed as it stands, if `run.json` is missing, or if the commit, code, plan or
-  sample is not what `run.json` recorded, under the same rule as resuming. The
-  report prints the plan's and the sample's SHA-256.
+  results. The scoring step checks this first, and stops if a labels file, the plan
+  or the sample is not committed as it stands, if git cannot say, if `run.json` is
+  missing, or if the commit, code, plan or sample is not what `run.json` recorded,
+  under the same rule as resuming. The report prints the plan's and the sample's
+  SHA-256.
 - **From what.** The capture only: the screenshot and the visible text. Not the
   live site, which may have changed.
 
@@ -149,9 +157,10 @@ Questions, asked by `python -m benchmarks.heldout label` for each page:
 
 **Agreement (optional).** If a second annotator is available, they label 15 of
 the scored pages, drawn with the same seed, without seeing the first labels. They
-are a different person from the first annotator and start once the first has
-finished. The pages are worked out without opening WCC's results: the capture index
-says whether each WCC visit finished, and nothing else about it.
+are a different person from the first annotator and start once every stratum is
+complete or short and the first has finished, because the draw is kept from then on.
+The pages are worked out without opening WCC's results: the capture index says whether
+each WCC visit finished, and nothing else about it.
 Cohen's κ is reported for Q1 to Q3. With one annotator, the report says
 "single annotator" as a limitation. The second annotator's labels never replace
 the first annotator's.
@@ -250,6 +259,10 @@ dated entry below; never after.
 - **The `robots.txt` check can vary by Python version.** It parses as the
   benchmark's reader does, with the standard library, and the standard library's
   answer depends on the version. The Python version is recorded.
+- **A redirect is judged after the browser has followed it.** A page `robots.txt`
+  refuses behind an allowed root is fetched once by the capture, because the browser
+  follows the redirect before anything can ask. Nothing of it is kept, and WCC does
+  not visit it.
 - **The capture and the WCC visit are seconds apart.** A site that changes its
   content on every load can fail the title match through no fault of WCC.
 - **The CrUX list follows Chrome users.** It under-represents countries where
@@ -324,3 +337,16 @@ sites were blocked here:
   - **Second annotator.** The pages were drawn from everything the first annotator
     called eligible, not from the scored pages. A second annotator with the first's
     name is now refused.
+- 2026-11-06, before any visit: a third review of the harness found more, each
+  reproduced on loopback. No held-out page had been visited. No threshold changed, and
+  `plan.py` and `sample.json` are unchanged.
+  - **Committed first.** Nothing checked that the plan and the sample were committed
+    when a run started, so an edited plan could be measured and, with only the labels
+    committed, scored. Running and scoring now both stop.
+  - **Git failures.** A git command that failed read as "no changes", so labels that
+    were not committed could pass. It now stops the step.
+  - **Redirects and `robots.txt`.** Only the origin's root was asked about, so an
+    allowed root redirecting to a refused path or site was captured and visited. Each
+    redirect and the landing address are now asked about too.
+  - **Second annotator.** The draw could be made and kept from the pages of a run
+    still in progress. It now waits until every stratum is complete or short.

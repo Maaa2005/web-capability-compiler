@@ -18,8 +18,8 @@ from typing import Any
 
 from benchmarks.heldout import plan
 from benchmarks.heldout.run import CaptureRecord, RunFiles, WccRecord, key_of, load_index
-from benchmarks.heldout.sample import Candidate
-from benchmarks.heldout.score import NotReady, select_scored
+from benchmarks.heldout.sample import Candidate, load_sample
+from benchmarks.heldout.score import NotReady, select_scored, stratum_states
 
 EXCLUSIONS = ("adult", "login-or-age-wall", "blank-or-error", "parked", "not-a-web-page")
 
@@ -80,30 +80,38 @@ def agreement_keys(eligible_keys: list[str]) -> list[str]:
     return sorted(random.Random(plan.SEED).sample(chosen, count))
 
 
-def scored_keys(
+def scored_and_unfinished(
     index: dict[str, CaptureRecord],
     first: dict[str, dict[str, Any]],
+    candidates: list[Candidate],
     per_stratum: int = plan.PAGES_PER_STRATUM,
-) -> list[str]:
-    """The pages the score will count, by its own rule, from the index alone.
+) -> tuple[list[str], list[str]]:
+    """The pages the score will count, by its own rule, and the strata not finished.
 
     ``select_scored`` needs only whether each WCC visit finished, and the index says
     that, so WCC's results stay closed.
     """
-    records = sorted(index.values(), key=lambda r: (r.stratum, r.position))
-    candidates = [Candidate(r.stratum, r.position, r.origin, 0) for r in records]
     finished = {
         r.key: WccRecord(r.key, r.url, error=None if r.wcc_complete else "did not finish")
-        for r in records
+        for r in index.values()
     }
-    scored, _ = select_scored(candidates, index, finished, first, per_stratum)
-    return [key_of(c) for c in scored]
+    scored, accounting = select_scored(candidates, index, finished, first, per_stratum)
+    states = stratum_states(candidates, accounting, per_stratum)
+    return (
+        [key_of(c) for c in scored],
+        [name for name, state in states.items() if state == "unfinished"],
+    )
 
 
 def _second_annotators_pages(
     files: RunFiles, index: dict[str, CaptureRecord], annotator: str, per_stratum: int
 ) -> list[str]:
-    """Check the second annotator may start, and draw from the scored pages."""
+    """Check the second annotator may start, and draw from the scored pages.
+
+    The draw is kept for good, so every stratum must have finished first: the plan draws
+    from the pages finally scored, not from the ones there happen to be so far. A stratum
+    that used up its candidates has finished, short or not.
+    """
     if not files.labels.exists():
         raise SystemExit(f"{files.labels} does not exist; the first annotator labels first")
     document = json.loads(files.labels.read_text(encoding="utf-8"))
@@ -113,9 +121,17 @@ def _second_annotators_pages(
             "a second person"
         )
     try:
-        return agreement_keys(scored_keys(index, document["labels"], per_stratum))
+        scored, unfinished = scored_and_unfinished(
+            index, document["labels"], load_sample(), per_stratum
+        )
     except NotReady as missing:
         raise SystemExit(f"the first annotator has not finished: {missing}") from missing
+    if unfinished:
+        raise SystemExit(
+            f"measuring is not finished in {', '.join(unfinished)}, so the scored pages are "
+            "not known yet; resume the run and label what it adds"
+        )
+    return agreement_keys(scored)
 
 
 def _show(files: RunFiles, record: CaptureRecord, say: Callable[[str], None]) -> None:

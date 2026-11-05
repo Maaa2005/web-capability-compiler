@@ -145,10 +145,15 @@ class CaptureRecord:
     status: str = "pending"
     """``captured``; ``robots`` (refused by robots.txt or by the URL policy on the way
     to it); ``unreachable`` (the connection failed, so it is tried again on resume);
-    ``landed_elsewhere`` (the page it ended on is out by E2 or E4); or ``failed``."""
+    ``landed_elsewhere`` (the page it ended on is out by E2 or E4, or ``robots.txt``
+    refuses it or a hop on the way); or ``failed``."""
 
     reason: str = ""
     final_url: str = ""
+    documents: list[str] = field(default_factory=list)
+    """Each address the page's main frame was fetched from on the way to ``final_url``:
+    the redirects, by HTTP or by script. ``robots.txt`` judges them all."""
+
     http_status: int | None = None
     title: str = ""
     screenshot: str = ""
@@ -215,6 +220,7 @@ class _CaptureDriver(PlaywrightDriver):
 
     async def _arm_observers(self, session: _Session) -> None:
         await super()._arm_observers(session)
+        self.documents: list[str] = []
 
         def remember(response: Response) -> None:
             if (
@@ -222,6 +228,7 @@ class _CaptureDriver(PlaywrightDriver):
                 and response.frame == session.page.main_frame
             ):
                 self.document_status = response.status
+                self.documents.append(response.url)
 
         session.page.on("response", remember)
 
@@ -307,6 +314,7 @@ async def capture(
         await driver.save_screenshot(session.session_id, shot)
         record.http_status = driver.document_status
         record.final_url = final_url
+        record.documents = driver.documents
         record.title = identity.title or ""
         text.write_text(visible[:MAX_TEXT_CHARS], encoding="utf-8")
     finally:
@@ -570,7 +578,12 @@ def _write(path: Path, records: list[Any]) -> None:
     )
 
 
+class GitFailed(Exception):
+    """A git command did not answer. An empty answer would read as "nothing changed"."""
+
+
 def _git(*args: str) -> str:
+    command = " ".join(("git", *args))
     try:
         done = subprocess.run(
             ["git", *args],
@@ -580,8 +593,10 @@ def _git(*args: str) -> str:
             errors="replace",
             check=True,
         )
-    except (OSError, subprocess.CalledProcessError):
-        return ""
+    except subprocess.CalledProcessError as failed:
+        raise GitFailed(f"{command} failed: {str(failed.stderr).strip()}") from failed
+    except OSError as failed:
+        raise GitFailed(f"{command} could not run: {failed}") from failed
     return done.stdout.strip()
 
 
@@ -603,6 +618,7 @@ def code_sha256() -> str:
 
 
 def run_metadata() -> dict[str, Any]:
+    """The conditions of a run. Raises :class:`GitFailed` if git cannot say what they are."""
     return {
         "started_at": _now(),
         "commit": _git("rev-parse", "HEAD"),
@@ -628,7 +644,10 @@ def _commit_mismatch(started: str, current: str, out: Path) -> str | None:
         return f"the commit cannot be compared (started at {started!r}, now {current!r})"
     if started == current:
         return None
-    changed = _git("diff", "--name-only", started, current).splitlines()
+    try:
+        changed = _git("diff", "--name-only", started, current).splitlines()
+    except GitFailed:
+        changed = []
     try:
         own = out.resolve().relative_to(REPO_ROOT).as_posix() + "/"
     except ValueError:
@@ -655,11 +674,25 @@ def uncommitted(path: Path) -> str | None:
         relative = path.resolve().relative_to(REPO_ROOT).as_posix()
     except ValueError:
         return f"{path} is outside the repository, so it cannot be committed"
-    if not _git("ls-files", "--", relative):
-        return f"{path} is not committed"
-    if _git("status", "--porcelain", "--", relative):
-        return f"{path} has changes that are not committed"
+    try:
+        if not _git("ls-files", "--", relative):
+            return f"{path} is not committed"
+        if _git("status", "--porcelain", "--", relative):
+            return f"{path} has changes that are not committed"
+    except GitFailed as failed:
+        return f"{path} cannot be checked: {failed}"
     return None
+
+
+def plan_not_committed() -> list[str]:
+    """What keeps the plan, the pass line and the sample from being the committed ones.
+
+    ``PLAN.md`` has them committed before anything is measured. A fingerprint alone
+    cannot say so, because it is as happy with a file that was edited and never
+    committed.
+    """
+    paths = (Path(__file__).with_name("PLAN.md"), Path(plan.__file__), SAMPLE_PATH)
+    return [problem for problem in map(uncommitted, paths) if problem is not None]
 
 
 Capture = Callable[[str, Path, Path, CaptureRecord], Awaitable[None]]
@@ -685,7 +718,25 @@ async def _visit_one(
     shot, text = files.captures / f"{stem}.png", files.captures / f"{stem}.txt"
     phase = "robots.txt"
     outcome: WccRecord | None = None
+    refused_where_wcc_landed: str | None = None
     limit = asyncio.timeout(seconds)
+    asked = {candidate.url}
+
+    async def robots_on_the_way(*urls: str) -> str | None:
+        """Ask ``robots.txt`` about each address it has not been asked about yet.
+
+        The browser follows a redirect by itself, so this comes after the fact: the
+        page has been fetched once. What the answer can still stop is everything else:
+        keeping the capture, and the WCC visit.
+        """
+        for url in urls:
+            if url and url not in asked:
+                asked.add(url)
+                refusal = await asyncio.to_thread(robots, url)
+                if refusal is not None:
+                    return f"redirected to {url}: {refusal}"
+        return None
+
     try:
         async with limit:
             refusal = await asyncio.to_thread(robots, candidate.url)
@@ -695,9 +746,14 @@ async def _visit_one(
             phase = "the capture"
             record.captured_at = _now()
             await take_capture(candidate.url, shot, text, record)
-            elsewhere = landing(record.final_url, kept)
+            phase = "robots.txt of where the capture landed"
+            elsewhere = landing(record.final_url, kept) or await robots_on_the_way(
+                *record.documents, record.final_url
+            )
             if elsewhere is not None:
                 record.status, record.reason = "landed_elsewhere", elsewhere
+                shot.unlink(missing_ok=True)
+                text.unlink(missing_ok=True)
                 return None
             record.status = "captured"
             record.screenshot, record.text = shot.name, text.name
@@ -706,6 +762,9 @@ async def _visit_one(
             phase = "the WCC visit"
             outcome = WccRecord(record.key, candidate.url, observed_at=_now())
             await visit(candidate.url, outcome)
+            if outcome.complete:
+                phase = "robots.txt of where WCC landed"
+                refused_where_wcc_landed = await robots_on_the_way(outcome.final_url)
     except Exception as failed:
         cut_off = limit.expired()
         reason = (
@@ -713,6 +772,9 @@ async def _visit_one(
             if cut_off
             else f"{type(failed).__name__}: {failed}"
         )
+        if isinstance(failed, RobotsUnreachable) and outcome is not None:
+            record.status, record.reason = "unreachable", f"the WCC visit: {reason}"
+            return None
         if outcome is not None:
             outcome.error = reason
         else:
@@ -726,7 +788,7 @@ async def _visit_one(
         record.status, record.reason = "unreachable", f"the WCC visit: {outcome.error}"
         return None
     record.wcc_complete = outcome.complete
-    elsewhere = landing(outcome.final_url, kept)
+    elsewhere = landing(outcome.final_url, kept) or refused_where_wcc_landed
     if elsewhere is not None:
         record.status, record.reason = "landed_elsewhere", f"the WCC visit: {elsewhere}"
     return outcome
@@ -814,8 +876,18 @@ async def visit_candidates(
 
 def run_all(out: Path, *, only_stratum: str = "") -> int:
     files = RunFiles(out)
+    not_committed = plan_not_committed()
+    if not_committed:
+        print("not started: the plan and the sample are committed before any visit.")
+        for problem in not_committed:
+            print(f"  {problem}")
+        return 2
+    try:
+        now = run_metadata()
+    except GitFailed as failed:
+        print(f"not started: the conditions of the run cannot be recorded. {failed}")
+        return 2
     out.mkdir(parents=True, exist_ok=True)
-    now = run_metadata()
     if files.meta.exists():
         recorded = json.loads(files.meta.read_text(encoding="utf-8"))
         problems = resume_mismatches(recorded, now, out)

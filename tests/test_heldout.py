@@ -19,6 +19,7 @@ import inspect
 import io
 import json
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -36,7 +37,12 @@ from benchmarks.heldout import plan
 from benchmarks.heldout import run as run_module
 from benchmarks.heldout import score as score_module
 from benchmarks.heldout.__main__ import _printing_never_fails, main
-from benchmarks.heldout.label import agreement_keys, ask_page, label_pages, scored_keys
+from benchmarks.heldout.label import (
+    agreement_keys,
+    ask_page,
+    label_pages,
+    scored_and_unfinished,
+)
 from benchmarks.heldout.run import (
     REPO_ROOT,
     CaptureRecord,
@@ -54,6 +60,7 @@ from benchmarks.heldout.run import (
     load_wcc,
     run_all,
     run_metadata,
+    uncommitted,
     visit_candidates,
     wcc_visit,
 )
@@ -860,9 +867,8 @@ def test_the_report_prints_each_capabilitys_risk(tmp_path: Path) -> None:
 # -- resuming a run ---------------------------------------------------------------
 
 
-@pytest.fixture
-def visits(monkeypatch: pytest.MonkeyPatch) -> list[int]:
-    """Replace the visits with a count of them, and git with a fixed answer."""
+def _count_visits(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Replace the visits with a count of them."""
     called: list[int] = []
 
     async def no_visits(files: RunFiles, candidates: list[Candidate]) -> dict[str, int]:
@@ -871,8 +877,15 @@ def visits(monkeypatch: pytest.MonkeyPatch) -> list[int]:
         return {s.name: 0 for s in plan.STRATA}
 
     monkeypatch.setattr(run_module, "visit_candidates", no_visits)
-    monkeypatch.setattr(run_module, "_git", lambda *args: "abc" if args[0] == "rev-parse" else "")
     return called
+
+
+@pytest.fixture
+def visits(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """A count of the visits, and git saying that everything is committed."""
+    answers = {"rev-parse": "abc", "ls-files": "tracked"}
+    monkeypatch.setattr(run_module, "_git", lambda *args: answers.get(args[0], ""))
+    return _count_visits(monkeypatch)
 
 
 def test_a_run_resumes_under_the_conditions_it_started_with(
@@ -1247,14 +1260,33 @@ def _in_repo(root: Path, *args: str) -> None:
     subprocess.run(["git", *identity, *args], cwd=root, check=True, capture_output=True)
 
 
+_PLAN_FILES = ("PLAN.md", "plan.py", "sample.json")
+
+
+def _real_plan_files() -> tuple[Path, Path, Path]:
+    real = Path(plan.__file__)
+    return (real.with_name("PLAN.md"), real, SAMPLE_PATH)
+
+
 @pytest.fixture
 def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """A real git repository standing in for this one. Nothing here touches the real one."""
+    """A real git repository standing in for this one. Nothing here touches the real one.
+
+    It holds copies of the plan and the sample, committed, as the real one does.
+    """
     root = (tmp_path / "repo").resolve()
-    root.mkdir()
+    heldout = root / "benchmarks" / "heldout"
+    heldout.mkdir(parents=True)
+    for name, source in zip(_PLAN_FILES, _real_plan_files(), strict=True):
+        shutil.copyfile(source, heldout / name)
     _in_repo(root, "init", "--quiet")
-    _in_repo(root, "commit", "--quiet", "--allow-empty", "-m", "start")
+    _in_repo(root, "add", "-A")
+    _in_repo(root, "commit", "--quiet", "-m", "start")
     monkeypatch.setattr(run_module, "REPO_ROOT", root)
+    monkeypatch.setattr(run_module, "__file__", str(heldout / "run.py"))
+    monkeypatch.setattr(plan, "__file__", str(heldout / "plan.py"))
+    monkeypatch.setattr(run_module, "SAMPLE_PATH", heldout / "sample.json")
+    monkeypatch.setattr(score_module, "SAMPLE_PATH", heldout / "sample.json")
     monkeypatch.setattr(run_module, "code_sha256", lambda: "code")
     monkeypatch.setattr(score_module, "load_sample", _all_candidates)
     return root
@@ -1395,6 +1427,155 @@ def test_a_run_outside_the_repository_cannot_be_scored(
     files = _write_run(tmp_path / "elsewhere", {"top-1k": 1}, offered=_RIGHT)
     files.meta.write_text(json.dumps(run_metadata()), encoding="utf-8")
     _assert_stopped(files, capsys, "outside the repository")
+
+
+# -- the plan and the sample are committed before anything is measured ---------------
+
+
+def _leave_uncommitted(repo: Path, name: str, state: str) -> None:
+    path = repo / "benchmarks" / "heldout" / name
+    if state == "untracked":
+        _in_repo(repo, "rm", "--quiet", "--cached", str(path))
+        _in_repo(repo, "commit", "--quiet", "-m", "out of git")
+        return
+    path.write_bytes(path.read_bytes() + b"\n")
+    if state == "staged":
+        _in_repo(repo, "add", str(path))
+
+
+@pytest.mark.parametrize("name", _PLAN_FILES)
+@pytest.mark.parametrize("state", ["edited", "staged", "untracked"])
+def test_a_plan_not_committed_stops_the_run_before_any_visit(
+    repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    name: str,
+    state: str,
+) -> None:
+    visited = _count_visits(monkeypatch)
+    _leave_uncommitted(repo, name, state)
+    assert run_all(tmp_path / "run") == 2
+    assert visited == []
+    assert not RunFiles(tmp_path / "run").meta.exists()
+    printed = capsys.readouterr().out
+    assert "not started" in printed and name in printed and "committed" in printed
+
+
+def test_a_plan_not_committed_stops_a_resumed_run_too(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    visited = _count_visits(monkeypatch)
+    assert run_all(tmp_path / "run") == 0
+    _leave_uncommitted(repo, "plan.py", "edited")
+    capsys.readouterr()
+    assert run_all(tmp_path / "run") == 2
+    assert len(visited) == 1
+    assert "plan.py has changes that are not committed" in capsys.readouterr().out
+
+
+def test_a_committed_plan_starts_the_run(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    del repo
+    visited = _count_visits(monkeypatch)
+    assert run_all(tmp_path / "run") == 0
+    assert len(visited) == 1
+    assert RunFiles(tmp_path / "run").meta.exists()
+
+
+@pytest.mark.parametrize("name", _PLAN_FILES)
+def test_a_plan_kept_uncommitted_with_only_the_labels_committed_is_not_scored(
+    run_of_record: RunFiles, repo: Path, capsys: pytest.CaptureFixture[str], name: str
+) -> None:
+    """The way round: the fingerprints agree, because they were taken of the edited file."""
+    _leave_uncommitted(repo, name, "edited")
+    run_of_record.meta.write_text(json.dumps(run_metadata()), encoding="utf-8")
+    _in_repo(repo, "add", str(run_of_record.meta))
+    _in_repo(repo, "commit", "--quiet", "-m", "the run file")
+    _assert_stopped(run_of_record, capsys, f"{name} has changes that are not committed")
+
+
+# -- a git command that failed says nothing about what is committed --------------------
+
+
+_GIT_FAILURES = [
+    subprocess.CalledProcessError(128, ["git"], stderr="fatal: detected dubious ownership"),
+    OSError("git is not installed"),
+]
+
+
+def _git_fails(monkeypatch: pytest.MonkeyPatch, command: str, failure: Exception) -> None:
+    real = subprocess.run
+
+    def run(args: list[str], **kwargs: Any) -> Any:
+        if args[:2] == ["git", command]:
+            raise failure
+        return real(args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", run)
+
+
+@pytest.mark.parametrize("failure", _GIT_FAILURES, ids=["exit-status", "no-git"])
+def test_a_status_that_failed_is_not_no_changes(
+    run_of_record: RunFiles,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    failure: Exception,
+) -> None:
+    """``ls-files`` works and ``status`` does not, with the labels edited since the commit."""
+    labels = run_of_record.labels
+    labels.write_text(labels.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+    _git_fails(monkeypatch, "status", failure)
+    assert "git status" in (uncommitted(labels) or "")
+    _assert_stopped(run_of_record, capsys, "git status")
+
+
+def test_the_failure_is_named(monkeypatch: pytest.MonkeyPatch) -> None:
+    _git_fails(monkeypatch, "status", _GIT_FAILURES[0])
+    with pytest.raises(run_module.GitFailed, match="git status .*dubious ownership"):
+        run_module._git("status", "--porcelain")
+
+
+@pytest.mark.parametrize("command", ["status", "ls-files", "rev-parse"])
+def test_a_git_command_that_failed_stops_the_score(
+    run_of_record: RunFiles,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    command: str,
+) -> None:
+    _git_fails(monkeypatch, command, _GIT_FAILURES[0])
+    _assert_stopped(run_of_record, capsys, f"git {command}")
+
+
+@pytest.mark.parametrize("command", ["status", "ls-files", "rev-parse"])
+def test_a_git_command_that_failed_stops_the_run(
+    repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    command: str,
+) -> None:
+    del repo
+    visited = _count_visits(monkeypatch)
+    _git_fails(monkeypatch, command, _GIT_FAILURES[0])
+    assert run_all(tmp_path / "run") == 2
+    assert visited == []
+    assert not RunFiles(tmp_path / "run").meta.exists()
+    assert f"git {command}" in capsys.readouterr().out
+
+
+def test_a_diff_that_failed_stops_the_score(
+    run_of_record: RunFiles,
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    (run_of_record.out / "note.txt").write_text("note\n", encoding="utf-8")
+    _in_repo(repo, "add", "-A")
+    _in_repo(repo, "commit", "--quiet", "-m", "note")
+    _git_fails(monkeypatch, "diff", _GIT_FAILURES[0])
+    _assert_stopped(run_of_record, capsys, "the run started at commit")
 
 
 # -- limits on one candidate --------------------------------------------------------
@@ -1726,6 +1907,279 @@ async def test_where_wcc_landed_is_judged_too(tmp_path: Path) -> None:
     assert load_index(files)["top-1k/002"].status == "captured"
 
 
+_SHUT_OUT = "robots.txt disallows this path"
+
+
+def _robots_refusing(asked: list[str], *refused: str) -> Any:
+    def robots(url: str) -> str | None:
+        asked.append(url)
+        return _SHUT_OUT if url in refused else None
+
+    return robots
+
+
+def _recording_visit(visited: list[str]) -> Any:
+    async def visit(url: str, record: WccRecord) -> None:
+        visited.append(url)
+        record.final_url = url
+
+    return visit
+
+
+@pytest.mark.parametrize("landed", ["https://c1.test/private", "https://elsewhere.test/"])
+async def test_a_redirect_robots_refuses_is_replaced_before_wcc_visits(
+    tmp_path: Path, landed: str
+) -> None:
+    asked: list[str] = []
+    visited: list[str] = []
+    files = RunFiles(tmp_path)
+    settings = _visiting(
+        robots=_robots_refusing(asked, landed),
+        take_capture=_landing_on({"c1.": landed}),
+        visit=_recording_visit(visited),
+        per_stratum=1,
+    )
+    assert (await visit_candidates(files, _candidates(count=2), **settings))["top-1k"] == 1
+    record = load_index(files)["top-1k/001"]
+    assert record.status == "landed_elsewhere"
+    assert landed in record.reason and _SHUT_OUT in record.reason
+    assert record.screenshot == record.text == ""
+    assert visited == ["https://c2.test/"]
+    assert asked[:2] == ["https://c1.test/", landed]
+    # The page may not be read, so nothing of it stays on the disk either.
+    assert not list(files.captures.glob("top-1k-001.*"))
+
+
+async def test_a_hop_on_the_way_is_asked_about_as_well(tmp_path: Path) -> None:
+    async def through(url: str, shot: Path, text: Path, record: CaptureRecord) -> None:
+        await _fake_capture(url, shot, text, record)
+        record.final_url = "https://c1.test/open"
+        record.documents = ["https://c1.test/", "https://c1.test/private", record.final_url]
+
+    asked: list[str] = []
+    visited: list[str] = []
+    files = RunFiles(tmp_path)
+    settings = _visiting(
+        robots=_robots_refusing(asked, "https://c1.test/private"),
+        take_capture=through,
+        visit=_recording_visit(visited),
+    )
+    await visit_candidates(files, _candidates(count=1), **settings)
+    record = load_index(files)["top-1k/001"]
+    assert record.status == "landed_elsewhere" and "/private" in record.reason
+    assert visited == []
+
+
+async def test_a_page_that_did_not_move_is_asked_about_once(tmp_path: Path) -> None:
+    asked: list[str] = []
+    files = RunFiles(tmp_path)
+    settings = _visiting(robots=_robots_refusing(asked), visit=_recording_visit([]))
+    await visit_candidates(files, _candidates(count=1), **settings)
+    assert load_index(files)["top-1k/001"].status == "captured"
+    assert asked == ["https://c1.test/"]
+
+
+async def test_a_redirect_e2_excludes_needs_no_robots_read(tmp_path: Path) -> None:
+    asked: list[str] = []
+    capture_it = _landing_on({"c1.": "https://docs.python.org/3/"})
+    settings = _visiting(robots=_robots_refusing(asked), take_capture=capture_it)
+    await visit_candidates(RunFiles(tmp_path), _candidates(count=1), **settings)
+    assert asked == ["https://c1.test/"]
+
+
+async def test_robots_unread_at_the_landing_address_is_tried_again(tmp_path: Path) -> None:
+    connected = [False]
+
+    def robots(url: str) -> None:
+        if url.endswith("/private") and not connected[0]:
+            raise RobotsUnreachable("robots.txt could not be fetched")
+
+    visited: list[str] = []
+    files = RunFiles(tmp_path)
+    settings = _visiting(
+        robots=robots,
+        take_capture=_landing_on({"c1.": "https://c1.test/private"}),
+        visit=_recording_visit(visited),
+    )
+    await visit_candidates(files, _candidates(count=1), **settings)
+    assert load_index(files)["top-1k/001"].status == "unreachable"
+    assert visited == []
+
+    connected[0] = True
+    await visit_candidates(files, _candidates(count=1), **settings)
+    assert load_index(files)["top-1k/001"].status == "captured"
+
+
+async def test_a_robots_read_of_the_landing_address_that_never_returns_costs_one_candidate(
+    tmp_path: Path,
+) -> None:
+    release = threading.Event()
+    visited: list[str] = []
+
+    def robots(url: str) -> None:
+        if url.endswith("/private"):
+            release.wait(5)
+
+    try:
+        settings = _visiting(
+            robots=robots,
+            take_capture=_landing_on({"c1.": "https://c1.test/private"}),
+            visit=_recording_visit(visited),
+            candidate_timeout=0.2,
+        )
+        await visit_candidates(RunFiles(tmp_path), _candidates(count=1), **settings)
+    finally:
+        release.set()
+    record = load_index(RunFiles(tmp_path))["top-1k/001"]
+    assert record.status == "failed" and "timed out after 0.2 s" in record.reason
+    assert visited == []
+
+
+async def test_where_wcc_landed_is_asked_about_too(tmp_path: Path) -> None:
+    async def visit(url: str, record: WccRecord) -> None:
+        record.final_url = "https://c1.test/private" if "c1." in url else url
+
+    asked: list[str] = []
+    files = RunFiles(tmp_path)
+    settings = _visiting(
+        robots=_robots_refusing(asked, "https://c1.test/private"), visit=visit, per_stratum=1
+    )
+    candidates = [c for c in _candidates(count=3) if c.position != 2]
+    assert (await visit_candidates(files, candidates, **settings))["top-1k"] == 1
+    record = load_index(files)["top-1k/001"]
+    assert record.status == "landed_elsewhere"
+    assert record.reason.startswith("the WCC visit:") and _SHUT_OUT in record.reason
+    assert load_index(files)["top-1k/003"].status == "captured"
+
+
+async def test_robots_unread_where_wcc_landed_is_tried_again(tmp_path: Path) -> None:
+    async def visit(url: str, record: WccRecord) -> None:
+        del url
+        record.final_url = "https://c1.test/private"
+
+    def robots(url: str) -> None:
+        if url.endswith("/private"):
+            raise RobotsUnreachable("robots.txt could not be fetched")
+
+    files = RunFiles(tmp_path)
+    await visit_candidates(
+        files, _candidates(count=1), **_visiting(robots=robots, visit=visit, per_stratum=1)
+    )
+    assert load_index(files)["top-1k/001"].status == "unreachable"
+    assert load_wcc(files) == {}
+
+
+async def test_a_wcc_visit_that_failed_costs_no_robots_read(tmp_path: Path) -> None:
+    async def broken(url: str, record: WccRecord) -> None:
+        del url
+        record.final_url = "https://c1.test/private"
+        record.error = "limit_exceeded: too many elements"
+
+    asked: list[str] = []
+    settings = _visiting(robots=_robots_refusing(asked), visit=broken)
+    await visit_candidates(RunFiles(tmp_path), _candidates(count=1), **settings)
+    assert asked == ["https://c1.test/"]
+
+
+_PAGE = b"<!doctype html><title>t</title><p>page</p>"
+_PRIVATE_ROBOTS = (200, {}, b"User-agent: *\nDisallow: /private\n")
+
+
+async def _visit_one_real_candidate(base: str, tmp_path: Path) -> tuple[CaptureRecord, list[str]]:
+    """The real robots read and the real capture. Only WCC's visit is a recording."""
+    visited: list[str] = []
+    files = RunFiles(tmp_path)
+    await visit_candidates(
+        files,
+        [Candidate("top-1k", 1, base, 1_000)],
+        **_visiting(
+            robots=lambda url: guarded_robots_refusal(url, allow_private_network=True),
+            take_capture=_private_capture,
+            visit=_recording_visit(visited),
+            landing=_one_host,
+        ),
+    )
+    return load_index(files)["top-1k/001"], visited
+
+
+async def test_a_real_redirect_to_a_refused_path_is_replaced(
+    serve: Callable[[Routes], str], tmp_path: Path
+) -> None:
+    base = serve(
+        {
+            "/robots.txt": _PRIVATE_ROBOTS,
+            "/": (302, {"Location": "/private"}, b""),
+            "/private": (200, {}, _PAGE),
+        }
+    )
+    record, visited = await _visit_one_real_candidate(base, tmp_path)
+    assert record.status == "landed_elsewhere" and f"{base}/private" in record.reason
+    assert record.final_url == f"{base}/private"
+    assert visited == []
+
+
+async def test_a_real_redirect_to_a_site_that_refuses_is_replaced(
+    serve: Callable[[Routes], str], tmp_path: Path
+) -> None:
+    shut = b"User-agent: *\nDisallow: /\n"
+    other = serve({"/robots.txt": (200, {}, shut), "/": (200, {}, _PAGE)})
+    base = serve({"/robots.txt": (404, {}, b""), "/": (302, {"Location": f"{other}/"}, b"")})
+    record, visited = await _visit_one_real_candidate(base, tmp_path)
+    assert record.status == "landed_elsewhere" and other in record.reason
+    assert visited == []
+
+
+async def test_a_real_redirect_through_a_refused_path_is_replaced(
+    serve: Callable[[Routes], str], tmp_path: Path
+) -> None:
+    base = serve(
+        {
+            "/robots.txt": _PRIVATE_ROBOTS,
+            "/": (302, {"Location": "/private"}, b""),
+            "/private": (302, {"Location": "/open"}, b""),
+            "/open": (200, {}, _PAGE),
+        }
+    )
+    record, visited = await _visit_one_real_candidate(base, tmp_path)
+    assert record.status == "landed_elsewhere" and f"{base}/private" in record.reason
+    assert record.final_url == f"{base}/open"
+    assert visited == []
+
+
+async def test_a_real_redirect_by_script_through_a_refused_path_is_replaced(
+    serve: Callable[[Routes], str], tmp_path: Path
+) -> None:
+    moves_on = b"<!doctype html><title>t</title><script>location.href='/open'</script>"
+    base = serve(
+        {
+            "/robots.txt": _PRIVATE_ROBOTS,
+            "/": (302, {"Location": "/private"}, b""),
+            "/private": (200, {"Content-Type": "text/html"}, moves_on),
+            "/open": (200, {"Content-Type": "text/html"}, _PAGE),
+        }
+    )
+    record, visited = await _visit_one_real_candidate(base, tmp_path)
+    assert record.status == "landed_elsewhere" and f"{base}/private" in record.reason
+    assert record.final_url == f"{base}/open"
+    assert visited == []
+
+
+async def test_a_real_redirect_robots_allows_is_visited(
+    serve: Callable[[Routes], str], tmp_path: Path
+) -> None:
+    base = serve(
+        {
+            "/robots.txt": _PRIVATE_ROBOTS,
+            "/": (302, {"Location": "/open"}, b""),
+            "/open": (200, {}, _PAGE),
+        }
+    )
+    record, visited = await _visit_one_real_candidate(base, tmp_path)
+    assert record.status == "captured" and record.final_url == f"{base}/open"
+    assert record.documents == [f"{base}/", f"{base}/open"]
+    assert visited == [f"{base}/"]
+
+
 def test_a_page_that_landed_elsewhere_is_counted_as_used_and_not_scored() -> None:
     candidates = _candidates(count=2)
     index = {
@@ -1742,20 +2196,26 @@ def test_a_page_that_landed_elsewhere_is_counted_as_used_and_not_scored() -> Non
 # -- the second annotator -----------------------------------------------------------
 
 
-def _labelled_run(tmp_path: Path) -> RunFiles:
-    """Six pages: 001 no WCC result, 002 excluded, 003-005 scored, 006 past the window."""
+_OTHER_STRATA = [s.name for s in plan.STRATA if s.name != "top-1k"]
+
+
+def _labelled_run(tmp_path: Path, others: int = 3) -> RunFiles:
+    """Six pages in top-1k: 001 no WCC result, 002 excluded, 003-005 scored, 006 past the
+    window. Each other stratum has ``others`` good pages, so at three pages a stratum
+    the default is a run with every stratum finished."""
     files = RunFiles(tmp_path)
     files.captures.mkdir(parents=True)
     records, labels = [], {}
-    for position in range(1, 7):
-        key = f"top-1k/{position:03d}"
-        record = CaptureRecord(
-            key, "top-1k", position, f"https://c{position}.test", "u", "captured"
-        )
-        record.wcc_complete = position != 1
+    places = [("top-1k", position) for position in range(1, 7)]
+    places += [(name, position) for name in _OTHER_STRATA for position in range(1, others + 1)]
+    for stratum, position in places:
+        key = f"{stratum}/{position:03d}"
+        first = stratum == "top-1k"
+        record = CaptureRecord(key, stratum, position, f"https://c{position}.test", "u", "captured")
+        record.wcc_complete = not (first and position == 1)
         record.screenshot, record.text = f"{position}.png", f"{position}.txt"
         records.append(asdict(record))
-        labels[key] = _label(eligible=position != 2)
+        labels[key] = _label(eligible=not (first and position == 2))
     files.index.write_text(json.dumps(records), encoding="utf-8")
     files.labels.write_text(json.dumps({"annotator": "First", "labels": labels}), encoding="utf-8")
     # A directory where the results file would be: reading it would raise.
@@ -1764,6 +2224,9 @@ def _labelled_run(tmp_path: Path) -> RunFiles:
 
 
 _THREE_PAGES = ["top-1k/003", "top-1k/004", "top-1k/005"]
+_SCORED_PAGES = sorted(
+    [*_THREE_PAGES, *(f"{name}/{i:03d}" for name in _OTHER_STRATA for i in range(1, 4))]
+)
 
 
 def test_the_second_annotator_labels_only_scored_pages(tmp_path: Path) -> None:
@@ -1773,12 +2236,12 @@ def test_the_second_annotator_labels_only_scored_pages(tmp_path: Path) -> None:
         files,
         "Second",
         second=True,
-        ask=_scripted(*["y", "n", "n", "n", "n"] * 3),
+        ask=_scripted(*["y", "n", "n", "n", "n"] * len(_SCORED_PAGES)),
         say=shown.append,
         per_stratum=3,
     )
     document = json.loads(path.read_text(encoding="utf-8"))
-    assert sorted(document["labels"]) == document["pages"] == _THREE_PAGES
+    assert sorted(document["labels"]) == document["pages"] == _SCORED_PAGES
     assert not any("top-1k/006" in line or "top-1k/001" in line for line in shown)
 
 
@@ -1786,12 +2249,13 @@ def test_the_pages_for_the_second_annotator_are_the_scores_own(tmp_path: Path) -
     files = _labelled_run(tmp_path)
     index = load_index(files)
     first = json.loads(files.labels.read_text(encoding="utf-8"))["labels"]
-    candidates = [Candidate("top-1k", r.position, r.origin, 1_000) for r in index.values()]
+    candidates = [Candidate(r.stratum, r.position, r.origin, 1_000) for r in index.values()]
     results = {
         k: WccRecord(k, "u", error=None if r.wcc_complete else "x") for k, r in index.items()
     }
     scored, _ = select_scored(candidates, index, results, first, 3)
-    assert scored_keys(index, first, 3) == [key_of(c) for c in scored] == _THREE_PAGES
+    assert scored_and_unfinished(index, first, candidates, 3)[0] == [key_of(c) for c in scored]
+    assert sorted(key_of(c) for c in scored) == _SCORED_PAGES
 
 
 def test_the_pages_drawn_stay_drawn_when_labelling_resumes(tmp_path: Path) -> None:
@@ -1826,6 +2290,53 @@ def test_the_second_annotator_waits_for_the_first(tmp_path: Path) -> None:
     files.labels.unlink()
     with pytest.raises(SystemExit, match="labels first"):
         label_pages(files, "Second", second=True, ask=_scripted(), say=lambda _: None)
+
+
+def _exclude(files: RunFiles, key: str) -> None:
+    document = json.loads(files.labels.read_text(encoding="utf-8"))
+    document["labels"][key] = _label(eligible=False)
+    files.labels.write_text(json.dumps(document), encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("others", "then", "named"),
+    [
+        (0, lambda files: None, "1k-10k, 10k-100k, 100k-1m"),
+        (2, lambda files: None, "1k-10k, 10k-100k, 100k-1m"),
+        (3, lambda files: _exclude(files, "1k-10k/001"), "1k-10k"),
+        (
+            0,
+            lambda files: _with_every_other_candidate(files, "unreachable"),
+            "1k-10k, 10k-100k, 100k-1m",
+        ),
+    ],
+    ids=["three-pages-in-one-stratum", "one-page-short", "excluded-page", "waiting-on-a-retry"],
+)
+def test_the_second_annotator_waits_for_every_stratum(
+    tmp_path: Path, others: int, then: Callable[[RunFiles], None], named: str
+) -> None:
+    files = _labelled_run(tmp_path, others)
+    then(files)
+    with pytest.raises(SystemExit, match=f"not finished.*{named}"):
+        label_pages(
+            files, "Second", second=True, ask=_scripted(), say=lambda _: None, per_stratum=3
+        )
+    assert not (files.out / "labels-second.json").exists()
+
+
+def test_a_stratum_that_used_every_candidate_has_finished(tmp_path: Path) -> None:
+    """Short is an answer the run will not improve on, so it does not hold anyone up."""
+    files = _labelled_run(tmp_path, others=0)
+    _with_every_other_candidate(files, "robots")
+    path = label_pages(
+        files,
+        "Second",
+        second=True,
+        ask=_scripted(*["y", "n", "n", "n", "n"] * len(_THREE_PAGES)),
+        say=lambda _: None,
+        per_stratum=3,
+    )
+    assert json.loads(path.read_text(encoding="utf-8"))["pages"] == _THREE_PAGES
 
 
 # -- the command line, end to end, on loopback ---------------------------------------
