@@ -11,17 +11,18 @@ through an MCP prompt, and WCC has no such path.
 **Pacing.** Requests to one host start at least ``min_interval_seconds`` apart,
 further apart when the site's ``Crawl-delay`` says so, and not before a 429 or
 503's ``Retry-After`` has passed. Fetching ``robots.txt`` is a request like any
-other: it takes a slot, and it can answer 429 or 503 too. A wait the runtime is
-not willing to hold a navigation open for is refused with the time to retry
-instead, because a navigation parked for a minute inside a tool call looks to the
-agent like a hang.
+other: it takes a slot, and it can answer 429 or 503 too. So is a redirect hop,
+to the same host or another. A wait the runtime is not willing to hold a navigation
+open for is refused with the time to retry instead, because a navigation parked
+for a minute inside a tool call looks to the agent like a hang.
 
 How the answers were chosen, and what was left out, is in ``docs/progress.md``
 ("The runtime asks before it fetches"). The parts that matter when reading code:
 
-- *Unreachable* (5xx, 429, no answer, a refused redirect hop) disallows, as RFC
-  9309 section 2.3.1.4 says. A copy cached from an earlier success is used in its
-  place for as long as the site stays unreachable (section 2.4).
+- *Unreachable* (5xx, 429, no answer, a refused redirect hop, a body cut off before
+  the end it declared) disallows, as RFC 9309 section 2.3.1.4 says. A copy cached
+  from an earlier success is used in its place for as long as the site stays
+  unreachable (section 2.4).
 - *Unavailable* (other 4xx, or more than five redirects) restricts nothing, as
   section 2.3.1.3 says.
 - 401 and 403 disallow everything. RFC 9309 counts them as unavailable; this
@@ -37,6 +38,8 @@ How the answers were chosen, and what was left out, is in ``docs/progress.md``
 - The fetch has one deadline and one size limit, kept by the thread doing the
   reading. It runs on a daemon thread, because the default executor is joined when
   the event loop shuts down and one slow site must not hold the process open.
+- ``Retry-After`` is kept however long it is, because the promise is to honour it.
+  Nothing sleeps through a long one: it is refused, with the time to retry.
 """
 
 from __future__ import annotations
@@ -55,7 +58,7 @@ from dataclasses import dataclass, field
 from datetime import UTC
 from email.utils import parsedate_to_datetime
 from enum import StrEnum
-from http.client import HTTPConnection, HTTPResponse
+from http.client import HTTPConnection, HTTPResponse, IncompleteRead
 from urllib.parse import urljoin, urlsplit
 
 from wcc.compiler.route import origin_of
@@ -78,6 +81,11 @@ MAX_ROBOTS_REDIRECTS = 5
 #: lookup can overrun, since ``getaddrinfo`` takes no timeout; the reads cannot.
 _ABANDON_GRACE_SECONDS = 1.0
 
+#: Where an absurd ``Retry-After`` stops counting. Longer than any process holding
+#: this state lives, so it shortens nothing a site could notice. It exists because
+#: ``float`` reads four hundred digits as infinity, and the wait is shown to the agent.
+_LONGEST_RETRY_AFTER_SECONDS = 100.0 * 365 * 24 * 60 * 60
+
 
 @dataclass(frozen=True)
 class PolitenessSettings:
@@ -99,9 +107,11 @@ class PolitenessSettings:
     effect that did not happen rather than one that was postponed."""
 
     robots_timeout_seconds: float = 5.0
-    """For the whole fetch of one origin's file: every redirect hop, every wait for
-    a hop's slot, and every byte. Not per read, or a site sending one byte at a time
-    could hold the fetch open for as long as it liked."""
+    """For the whole fetch of one origin's file: every redirect hop and every byte. Not
+    per read, or a site sending one byte at a time could hold the fetch open for as
+    long as it liked. The waits for each hop's slot are not in it: they are this
+    runtime's own pacing, not the site being slow, and five hops on one host at one per
+    second would otherwise use it all up. ``max_wait_seconds`` limits each of those."""
 
     robots_ttl_seconds: float = 24 * 60 * 60
     """RFC 9309 section 2.4: a cached copy should not be used for more than 24
@@ -114,8 +124,6 @@ class PolitenessSettings:
 
     backoff_seconds: float = 30.0
     """How long a 429 or 503 without ``Retry-After`` holds the host back."""
-
-    max_backoff_seconds: float = 24 * 60 * 60
 
 
 class RobotsStatus(StrEnum):
@@ -213,12 +221,20 @@ def _connect(addresses: Sequence[str], port: int, deadline: float) -> socket.soc
 
 
 def _read_capped(response: HTTPResponse) -> bytes:
-    """At most :data:`MAX_ROBOTS_BYTES` of the body, one network read at a time."""
+    """At most :data:`MAX_ROBOTS_BYTES` of the body, one network read at a time.
+
+    Raises :class:`IncompleteRead` on a body that ends before its ``Content-Length``,
+    which ``read1`` reports only as an empty read. What is missing may be the rule that
+    refuses the page. A chunked body raises by itself, and a body that declares no
+    length ends where the connection does, so nothing can be said about those.
+    """
     chunks: list[bytes] = []
     left = MAX_ROBOTS_BYTES
     while left > 0:
         chunk = response.read1(left)
         if not chunk:
+            if response.length:
+                raise IncompleteRead(b"".join(chunks), response.length)
             break
         chunks.append(chunk)
         left -= len(chunk)
@@ -336,16 +352,20 @@ class PoliteAccess:
     async def admit(
         self, url: str, *, allow_private_network: bool, redirected_from: str | None = None
     ) -> None:
-        host = _host(url)
-        last_start = self._last_start.get(host)
         answer = await self.robots(url, allow_private_network=allow_private_network)
         self._check_robots(answer, url)
         crawl_delay = answer.file.crawl_delay(self.settings.product_token) if answer.file else None
-        # A same-host redirect goes unpaced only because the request before it was
-        # paced. A robots.txt fetch in between is a request the site saw just now.
-        if self._last_start.get(host) != last_start:
-            redirected_from = None
-        await self._take_slot(url, crawl_delay, redirected_from)
+        try:
+            await self._take_slot(url, crawl_delay)
+        except RateLimitedError as refused:
+            if redirected_from is None:
+                raise
+            # Asking for the first URL again would spend the slot on it, be redirected
+            # here again and be refused again, however long the agent waited.
+            raise RateLimitedError(
+                f"{refused.message}, asking for {url}, where the redirect was going",
+                retry_after_seconds=refused.retry_after_seconds,
+            ) from refused
 
     def observe(self, url: str, status: int, retry_after: str | None) -> None:
         if status not in (429, 503):
@@ -353,7 +373,7 @@ class PoliteAccess:
         delay = _retry_after_seconds(retry_after, self.wall_clock())
         if delay is None:
             delay = self.settings.backoff_seconds
-        delay = min(delay, self.settings.max_backoff_seconds)
+        delay = min(delay, _LONGEST_RETRY_AFTER_SECONDS)
         host = _host(url)
         self._not_before[host] = max(self._not_before.get(host, 0.0), self.clock() + delay)
 
@@ -382,11 +402,12 @@ class PoliteAccess:
         timeout = self.settings.robots_timeout_seconds
         deadline = self.clock() + timeout
         url = robots_url
-        previous: str | None = None
         for _ in range(MAX_ROBOTS_REDIRECTS + 1):
+            before_the_wait = self.clock()
             # Outside the ``try``: a host holding requests back refuses this
             # navigation with the time to retry, and is not "unreachable".
-            await self._take_slot(url, None, previous)
+            await self._take_slot(url, None)
+            deadline += self.clock() - before_the_wait
             left = deadline - self.clock()
             if left <= 0:
                 return _unreachable(robots_url, f"no answer within {timeout:g} s")
@@ -408,7 +429,6 @@ class PoliteAccess:
             status = response.status
             self.observe(url, status, response.retry_after)
             if 300 <= status < 400 and response.location:
-                previous = url
                 url = urljoin(url, response.location)
                 continue
             logger.info("%s answered %d", url, status)
@@ -486,34 +506,43 @@ class PoliteAccess:
 
     # -- pacing ------------------------------------------------------------
 
-    async def _take_slot(
-        self, url: str, crawl_delay: float | None, redirected_from: str | None
-    ) -> None:
+    async def _take_slot(self, url: str, crawl_delay: float | None) -> None:
         """Reserve the host's next slot and wait for it, or refuse if it is too far.
 
         Reserved before sleeping and without a lock: nothing between reading the
         last start and writing the new one awaits, so two navigations to the same
         host queue one interval apart instead of both taking the same slot.
+
+        A redirect hop comes through here like anything else. It is a request the site
+        receives, and the site's ``Crawl-delay`` makes no exception for it.
+
+        Another session's page can answer 429 during the sleep, so the sleep ends by
+        looking again. A ``Retry-After`` reaching past the slot sends this back to the
+        queue, one interval behind the slot it reserved, which is not given back: the
+        ones behind it stay spaced, and all of them hold off when the site's time comes.
+        ``max_wait_seconds`` limits the whole stay, however many times that happens.
         """
         host = _host(url)
-        now = self.clock()
-        earliest = self._not_before.get(host, now)
-        # A redirect on the same host is the server's own answer to the request
-        # that was just paced; spacing it again would charge one request twice.
-        # A redirect to another host is a first request there and is paced.
-        same_host_hop = redirected_from is not None and _host(redirected_from) == host
-        if not same_host_hop and host in self._last_start:
-            interval = max(self.settings.min_interval_seconds, crawl_delay or 0.0)
-            earliest = max(earliest, self._last_start[host] + interval)
-        wait = max(0.0, earliest - now)
-        if wait > self.settings.max_wait_seconds:
-            raise RateLimitedError(
-                f"the next request to {host} may start in {wait:.1f} s; retry after that",
-                retry_after_seconds=wait,
-            )
-        self._last_start[host] = now + wait
-        if wait > 0:
+        interval = max(self.settings.min_interval_seconds, crawl_delay or 0.0)
+        hold_until = self.clock() + self.settings.max_wait_seconds
+        while True:
+            now = self.clock()
+            earliest = self._not_before.get(host, now)
+            if host in self._last_start:
+                earliest = max(earliest, self._last_start[host] + interval)
+            wait = max(0.0, earliest - now)
+            if now + wait > hold_until:
+                raise RateLimitedError(
+                    f"the next request to {host} may start in {wait:.1f} s; retry after that",
+                    retry_after_seconds=wait,
+                )
+            slot = now + wait
+            self._last_start[host] = slot
+            if wait <= 0:
+                return
             await self.sleep(wait)
+            if self._not_before.get(host, slot) <= slot:
+                return
 
 
 def _unreachable(robots_url: str, reason: str) -> RobotsAnswer:

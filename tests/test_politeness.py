@@ -12,6 +12,7 @@ import asyncio
 import functools
 import http.server
 import ipaddress
+import math
 import socket
 import ssl
 import threading
@@ -19,6 +20,7 @@ import time
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from email.utils import format_datetime
+from http.client import IncompleteRead
 from pathlib import Path
 from urllib.error import URLError
 
@@ -59,6 +61,32 @@ class Clock:
         self.slept.append(round(seconds, 6))
         self.woke.append(round(self.now + seconds, 6))
         self.now += seconds
+
+
+class ParkedClock(Clock):
+    """A sleep that really suspends, as ``asyncio.sleep`` does, until the test moves time.
+
+    ``Clock.sleep`` returns without letting anything else run, so nothing can happen
+    during a wait and a test using it cannot see what a wait fails to notice.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.parked: list[tuple[float, asyncio.Future[None]]] = []
+
+    async def sleep(self, seconds: float) -> None:
+        future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        self.parked.append((self.now + seconds, future))
+        await future
+
+    async def advance(self, seconds: float) -> None:
+        self.now += seconds
+        due = [entry for entry in self.parked if entry[0] <= self.now + 1e-9]
+        self.parked = [entry for entry in self.parked if entry not in due]
+        for _, future in due:
+            future.set_result(None)
+        for _ in range(10):
+            await asyncio.sleep(0)
 
 
 class Site:
@@ -369,9 +397,8 @@ async def test_a_busy_robots_txt_without_retry_after_backs_off_by_the_default() 
 
 
 async def test_a_same_host_redirect_that_needed_a_robots_fetch_is_paced() -> None:
-    """http to https is one host and two origins. The exemption for a same-host hop
-    rests on the request before it having been paced, and here a robots.txt fetch has
-    just gone out in between."""
+    """http to https is one host and two origins: the hop's robots.txt fetch and the
+    hop itself are two requests, and each takes its own slot."""
     clock = Clock()
     polite = access(Site({}), clock)
     await admit(polite, "http://a.test/")
@@ -458,7 +485,9 @@ async def test_a_wait_longer_than_the_limit_is_refused_with_the_time_to_retry() 
     await admit(polite, "https://a.test/2")
 
 
-async def test_a_redirect_on_the_same_host_is_not_paced_again() -> None:
+async def test_a_redirect_on_the_same_host_is_paced_like_any_request() -> None:
+    """A hop is a request the site receives. The site cannot tell it from any other, and
+    its Crawl-delay does not make an exception for it."""
     clock = Clock()
     polite = access(Site({}), clock)
     # Every robots.txt read and its slot spent, so only the hops are left to pace.
@@ -468,12 +497,83 @@ async def test_a_redirect_on_the_same_host_is_not_paced_again() -> None:
     clock.slept.clear()
 
     await admit(polite, "http://a.test/")
+    assert clock.slept == []
     await admit(polite, "https://a.test/", previous="http://a.test/")
     await admit(polite, "https://a.test/en/", previous="https://a.test/")
-    assert clock.slept == []
+    assert clock.slept == [1.0, 1.0]
     await admit(polite, "https://b.test/", previous="https://a.test/en/")
+    assert clock.slept == [1.0, 1.0]
     await admit(polite, "https://b.test/x", previous="https://c.test/")
-    assert clock.slept == [1.0]
+    assert clock.slept == [1.0, 1.0, 1.0]
+
+
+async def test_a_redirect_on_the_same_host_waits_out_the_crawl_delay() -> None:
+    site = Site({"https://a.test/robots.txt": ok("User-agent: wcc\nCrawl-delay: 1.5\n")})
+    clock = Clock()
+    polite = access(site, clock)
+    await admit(polite, "https://a.test/1")
+    assert clock.slept == [1.5]
+    await admit(polite, "https://a.test/2", previous="https://a.test/1")
+    assert clock.slept == [1.5, 1.5]
+
+
+async def test_a_redirect_too_soon_is_refused_naming_where_it_was_going() -> None:
+    """Asking for the first URL again would be redirected again and refused again, every
+    time, however long the agent waited. The hop's own address is what can be retried."""
+    site = Site({"https://a.test/robots.txt": ok("User-agent: *\nCrawl-delay: 10\n")})
+    clock = Clock()
+    polite = access(site, clock)
+    with pytest.raises(RateLimitedError):
+        await admit(polite, "https://a.test/1")
+    clock.now += 10
+    await admit(polite, "https://a.test/1")
+
+    with pytest.raises(RateLimitedError) as refused:
+        await admit(polite, "https://a.test/2", previous="https://a.test/1")
+    assert refused.value.retry_after_seconds == pytest.approx(10)
+    assert "https://a.test/2" in refused.value.message
+    assert clock.slept == []
+
+    clock.now += 10
+    await admit(polite, "https://a.test/2")
+
+
+async def test_a_robots_redirect_on_the_same_host_is_paced() -> None:
+    clock = Clock()
+    started: list[float] = []
+    site = Site(
+        {
+            "https://a.test/robots.txt": FetchedResponse(301, "/moved.txt", b""),
+            "https://a.test/moved.txt": ok(""),
+        }
+    )
+
+    def timed(url: str, timeout: float, user_agent: str) -> FetchedResponse:
+        started.append(clock.now)
+        return site(url, timeout, user_agent)
+
+    polite = access(site, clock)
+    polite.fetch = timed
+    await polite.robots("https://a.test/", allow_private_network=False)
+    assert started == [1_000.0, 1_001.0]
+
+
+async def test_the_fetchs_deadline_is_not_spent_on_this_runtimes_own_pacing() -> None:
+    """RFC 9309 2.3.1.2 asks for five redirects to be followed. On one host, at one per
+    second, those are five seconds of waiting, which would use up a five-second deadline
+    before the last answer and read a patient site as an unreachable one."""
+    clock = Clock()
+    hops: dict[str, FetchedResponse | Exception] = {
+        f"https://a.test/r{i}" if i else "https://a.test/robots.txt": FetchedResponse(
+            301, f"https://a.test/r{i + 1}", b""
+        )
+        for i in range(MAX_ROBOTS_REDIRECTS)
+    }
+    hops[f"https://a.test/r{MAX_ROBOTS_REDIRECTS}"] = ok("User-agent: *\nDisallow: /x\n")
+    polite = access(Site(hops), clock)
+    answer = await polite.robots("https://a.test/", allow_private_network=False)
+    assert answer.status is RobotsStatus.PARSED
+    assert clock.slept == [1.0] * MAX_ROBOTS_REDIRECTS
 
 
 async def test_a_429_holds_the_host_back_for_its_retry_after() -> None:
@@ -498,6 +598,162 @@ async def test_retry_after_may_be_a_date() -> None:
     with pytest.raises(RateLimitedError) as refused:
         await admit(polite, "https://a.test/")
     assert refused.value.retry_after_seconds == pytest.approx(120)
+
+
+@pytest.mark.parametrize("days", [1, 2, 30])
+async def test_a_retry_after_longer_than_a_day_is_kept_to_the_second(days: int) -> None:
+    clock = Clock()
+    polite = access(Site({}), clock)
+    seconds = days * 24 * 60 * 60 + 60
+    polite.observe("https://a.test/", 429, str(seconds))
+    with pytest.raises(RateLimitedError) as refused:
+        await admit(polite, "https://a.test/")
+    assert refused.value.retry_after_seconds == pytest.approx(seconds)
+
+    clock.now += seconds - 60
+    with pytest.raises(RateLimitedError) as refused:
+        await admit(polite, "https://a.test/")
+    assert refused.value.retry_after_seconds == pytest.approx(60)
+
+    clock.now += 60
+    await admit(polite, "https://a.test/")
+
+
+async def test_a_retry_after_date_days_away_is_kept_too() -> None:
+    clock = Clock()
+    clock.now = datetime(2026, 11, 4, 12, 0, tzinfo=UTC).timestamp()
+    polite = access(Site({}), clock)
+    later = format_datetime(datetime(2026, 11, 7, 12, 0, tzinfo=UTC), usegmt=True)
+    polite.observe("https://a.test/", 503, later)
+    clock.now += 2 * 24 * 60 * 60
+    with pytest.raises(RateLimitedError) as refused:
+        await admit(polite, "https://a.test/")
+    assert refused.value.retry_after_seconds == pytest.approx(24 * 60 * 60)
+
+
+@pytest.mark.parametrize("value", ["9" * 400, "9" * 40, "Fri, 31 Dec 9999 23:59:59 GMT"])
+async def test_an_absurd_retry_after_refuses_with_a_number_that_can_be_shown(value: str) -> None:
+    """``float`` reads four hundred digits as infinity, which would then be the number
+    handed to the agent. The refusal holds; its text stays readable."""
+    clock = Clock()
+    polite = access(Site({}), clock)
+    polite.observe("https://a.test/", 429, value)
+    clock.now += 365 * 24 * 60 * 60
+    with pytest.raises(RateLimitedError) as refused:
+        await admit(polite, "https://a.test/")
+    assert math.isfinite(refused.value.retry_after_seconds)
+    assert len(refused.value.message) < 200
+
+
+async def _with_robots_read(clock: ParkedClock) -> PoliteAccess:
+    """A polite access that has read a.test's rules and just sent a page there."""
+    polite = access(Site({}), clock)
+    polite.sleep = functools.partial(Clock.sleep, clock)
+    await admit(polite, "https://a.test/first")
+    polite.sleep = clock.sleep
+    return polite
+
+
+async def test_a_retry_after_heard_during_the_wait_stops_the_request() -> None:
+    """A request parked for its slot when another session's page answers 429."""
+    clock = ParkedClock()
+    polite = await _with_robots_read(clock)
+    waiting = asyncio.create_task(admit(polite, "https://a.test/next"))
+    await clock.advance(0)
+    assert len(clock.parked) == 1
+
+    polite.observe("https://a.test/other", 429, "120")
+    await clock.advance(1)
+    with pytest.raises(RateLimitedError) as refused:
+        await waiting
+    assert refused.value.retry_after_seconds == pytest.approx(119)
+
+
+async def test_everyone_in_the_queue_hears_the_retry_after() -> None:
+    clock = ParkedClock()
+    polite = await _with_robots_read(clock)
+    queue = [asyncio.create_task(admit(polite, f"https://a.test/{i}")) for i in range(2)]
+    await clock.advance(0)
+    assert len(clock.parked) == 2
+
+    polite.observe("https://a.test/other", 503, "120")
+    await clock.advance(2)
+    answers = await asyncio.gather(*queue, return_exceptions=True)
+    assert all(isinstance(answer, RateLimitedError) for answer in answers)
+
+
+async def test_a_short_retry_after_heard_during_the_wait_is_waited_out() -> None:
+    clock = ParkedClock()
+    polite = await _with_robots_read(clock)
+    start = clock.now
+    waiting = asyncio.create_task(admit(polite, "https://a.test/next"))
+    await clock.advance(0)
+    await clock.advance(0.5)
+
+    polite.observe("https://a.test/other", 429, "1")
+    await clock.advance(0.5)  # the slot it was waiting for has come, the site's time has not
+    assert not waiting.done()
+    await clock.advance(0.5)  # the site's time has come; one interval after that slot has not
+    assert not waiting.done()
+    await clock.advance(0.5)
+    assert waiting.done()
+    await waiting
+    assert clock.now == pytest.approx(start + 2)
+
+
+async def test_the_limit_on_holding_a_navigation_covers_the_whole_wait() -> None:
+    """Waited out, this Retry-After would make 2.9 s of a limit of two."""
+    clock = ParkedClock()
+    polite = await _with_robots_read(clock)
+    waiting = asyncio.create_task(admit(polite, "https://a.test/next"))
+    await clock.advance(0)
+    await clock.advance(0.9)
+
+    polite.observe("https://a.test/other", 429, "2")
+    await clock.advance(0.1)
+    with pytest.raises(RateLimitedError) as refused:
+        await waiting
+    assert refused.value.retry_after_seconds == pytest.approx(1.9)
+
+
+async def test_a_retry_after_over_before_the_slot_comes_changes_nothing() -> None:
+    clock = ParkedClock()
+    polite = await _with_robots_read(clock)
+    waiting = asyncio.create_task(admit(polite, "https://a.test/next"))
+    await clock.advance(0)
+    await clock.advance(0.1)
+
+    polite.observe("https://a.test/other", 429, "0")
+    await clock.advance(0.9)
+    assert waiting.done()
+    await waiting
+
+
+async def test_another_hosts_retry_after_does_not_stop_the_wait() -> None:
+    clock = ParkedClock()
+    polite = await _with_robots_read(clock)
+    waiting = asyncio.create_task(admit(polite, "https://a.test/next"))
+    await clock.advance(0)
+    polite.observe("https://b.test/", 429, "120")
+    await clock.advance(1)
+    assert waiting.done()
+    await waiting
+
+
+async def test_a_retry_after_during_a_real_wait_on_the_real_clock() -> None:
+    polite = PoliteAccess(
+        UrlPolicy(resolver=resolver),
+        PolitenessSettings(user_agent="wcc/test", min_interval_seconds=0.2),
+        fetch=Site({}),
+    )
+    await admit(polite, "https://a.test/first")
+    waiting = asyncio.create_task(admit(polite, "https://a.test/next"))
+    await asyncio.sleep(0.05)
+    assert not waiting.done()
+    polite.observe("https://a.test/other", 429, "120")
+    with pytest.raises(RateLimitedError) as refused:
+        await waiting
+    assert 115 < refused.value.retry_after_seconds <= 120
 
 
 async def test_a_429_without_retry_after_backs_off_by_the_default() -> None:
@@ -622,6 +878,93 @@ def test_the_fetch_caps_a_chunked_body_too(scripted: int) -> None:
     )
     answer = http_get(f"http://127.0.0.1:{scripted}/robots.txt", 5, "wcc/test", ["127.0.0.1"])
     assert len(answer.body) == MAX_ROBOTS_BYTES
+
+
+_CUT_OFF = pytest.mark.parametrize(
+    "answer",
+    [
+        pytest.param(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nUser-agent: *\n",
+            id="short-of-its-content-length",
+        ),
+        pytest.param(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n", id="no-body-at-all"),
+        pytest.param(
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n40\r\nUser-agent: *\n",
+            id="inside-a-chunk",
+        ),
+        pytest.param(
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\ne\r\nUser-agent: *\n\r\n",
+            id="between-chunks",
+        ),
+    ],
+)
+
+
+@_CUT_OFF
+def test_the_fetch_raises_on_a_body_cut_off_before_its_end(scripted: int, answer: bytes) -> None:
+    _Scripted.answer = answer
+    with pytest.raises(IncompleteRead):
+        http_get(f"http://127.0.0.1:{scripted}/robots.txt", 5, "wcc/test", ["127.0.0.1"])
+
+
+@_CUT_OFF
+async def test_a_robots_txt_cut_off_before_its_end_is_unreachable(
+    scripted: int, answer: bytes
+) -> None:
+    """The rest of the file may be the rule that refuses this page. RFC 9309 2.3.1.4,
+    and remembered as a failure rather than cached for a day as the site's rules."""
+    _Scripted.answer = answer
+    polite = PoliteAccess(UrlPolicy(), PolitenessSettings(min_interval_seconds=0.0))
+    url = f"http://127.0.0.1:{scripted}/page"
+    with pytest.raises(RobotsDisallowedError, match="could not be read"):
+        await polite.admit(url, allow_private_network=True)
+    answered = await polite.robots(url, allow_private_network=True)
+    assert answered.status is RobotsStatus.UNREACHABLE
+    assert len(_Scripted.asked) == 1
+
+    # The next read, five minutes on, starts again rather than trusting anything.
+    complete = b"User-agent: *\nDisallow: /page\n"
+    head = b"HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n" % len(complete)
+    _Scripted.answer = head + complete
+    polite.clock = lambda: time.monotonic() + 5 * 60 + 1
+    with pytest.raises(RobotsDisallowedError, match="does not allow"):
+        await polite.admit(url, allow_private_network=True)
+
+
+async def test_a_cut_off_file_leaves_the_last_good_copy_in_charge(scripted: int) -> None:
+    complete = b"User-agent: *\nDisallow: /x\n"
+    head = b"HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n" % len(complete)
+    _Scripted.answer = head + complete
+    polite = PoliteAccess(UrlPolicy(), PolitenessSettings(min_interval_seconds=0.0))
+    url = f"http://127.0.0.1:{scripted}/"
+    await polite.robots(url, allow_private_network=True)
+
+    _Scripted.answer = head + complete[:14]
+    polite.clock = lambda: time.monotonic() + 24 * 60 * 60 + 1
+    answer = await polite.robots(url, allow_private_network=True)
+    assert len(_Scripted.asked) == 2
+    assert answer.status is RobotsStatus.PARSED
+    assert answer.file is not None and not answer.file.allows("/x", "wcc")
+
+
+@pytest.mark.parametrize(
+    ("answer", "body"),
+    [
+        pytest.param(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok", b"ok", id="as-declared"),
+        pytest.param(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n", b"", id="declared-empty"),
+        # Nothing was promised, so the end of the connection is the end of the body.
+        pytest.param(b"HTTP/1.1 200 OK\r\n\r\nok", b"ok", id="no-length-at-all"),
+        pytest.param(
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\n\r\n",
+            b"ok",
+            id="chunked",
+        ),
+    ],
+)
+def test_a_body_that_arrived_whole_is_read(scripted: int, answer: bytes, body: bytes) -> None:
+    _Scripted.answer = answer
+    fetched = http_get(f"http://127.0.0.1:{scripted}/robots.txt", 5, "wcc/test", ["127.0.0.1"])
+    assert (fetched.status, fetched.body) == (200, body)
 
 
 # -- the address that is connected to is the address that was judged ---------

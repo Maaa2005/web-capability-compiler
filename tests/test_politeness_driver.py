@@ -351,6 +351,52 @@ async def test_a_hop_is_paced_like_any_request_to_its_host(
     assert "/public.html" not in _paths("127.0.0.2")
 
 
+@pytest.mark.parametrize(
+    ("interval", "robots", "gap"),
+    [
+        pytest.param(0.4, "User-agent: *\nAllow: /\n", 0.3, id="interval"),
+        pytest.param(0.0, "User-agent: wcc\nCrawl-delay: 0.6\n", 0.45, id="crawl-delay"),
+    ],
+)
+async def test_a_same_host_redirect_reaches_the_site_after_the_interval(
+    site: str, interval: float, robots: str, gap: float
+) -> None:
+    """Measured where it counts, on the site's side of the connection.
+
+    Not to the millisecond: pacing times when a request is let go, and the first one
+    also has a connection to set up, so the site can see the two a little closer
+    together. Unpaced, they arrive about 15 ms apart.
+    """
+    _Site.robots = robots
+    driver = _driver(_polite(min_interval_seconds=interval))
+    try:
+        await driver.open_session(OpenSessionRequest(url=f"{site}/redirect?to=/public.html"))
+    finally:
+        await driver.shutdown()
+    started = {path: when for _, path, when in _Site.hits}
+    assert started["/public.html"] - started["/redirect?to=/public.html"] >= gap
+
+
+async def test_a_same_host_redirect_too_soon_is_refused_before_it_is_sent(site: str) -> None:
+    _Site.robots = "User-agent: wcc\nCrawl-delay: 60\n"
+    polite = _polite()
+    ahead = [0.0]
+    polite.clock = lambda: time.monotonic() + ahead[0]
+    driver = _driver(polite)
+    try:
+        with pytest.raises(RateLimitedError):
+            await driver.open_session(OpenSessionRequest(url=f"{site}/redirect?to=/public.html"))
+        ahead[0] += 60
+        with pytest.raises(RateLimitedError) as refused:
+            await driver.open_session(OpenSessionRequest(url=f"{site}/redirect?to=/public.html"))
+        assert 55 < refused.value.retry_after_seconds <= 60
+        assert f"{site}/public.html" in refused.value.message
+    finally:
+        await driver.shutdown()
+    assert "/redirect?to=/public.html" in _paths()
+    assert "/public.html" not in _paths()
+
+
 async def test_a_frames_redirect_answers_to_neither_the_rules_nor_the_pace(
     polite_driver: PlaywrightDriver, site: str
 ) -> None:

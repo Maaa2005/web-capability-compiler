@@ -2510,7 +2510,9 @@ is stricter than the RFC, and it is a judgement the owner may want to reverse.
 - `Retry-After` is read in both forms of RFC 9110 10.2.3. A 429 or 503 without
   it holds the host back 30 s. Crawlee v4 does the same with a 2 s doubling
   backoff; Crawl4AI backs off on 429 and 503 without reading the header.
-- A redirect to the same host is not paced again; a hop to another host is.
+- A redirect to the same host was not paced again; a hop to another host was. Reversed
+  on 2026-11-06 ("Review findings on the politeness branch", at the end of this file):
+  every hop is paced.
 - A wait longer than 2 s is refused, not slept. A navigation parked inside a
   tool call looks like a hang. Worse, an action's settle budget is 5 s, so a
   click whose navigation was still waiting would be reported as an effect that
@@ -2778,3 +2780,18 @@ Second round on the review findings (11/4), each written as a failing test first
 Public pages through the proxy (`benchmarks/results/coverage-20261104-egress-proxy.json`, run 2026-11-04 with the benchmark's `robots.txt` handling and pauses): 22 visited, 5 skipped by `robots.txt` or unreachable `robots.txt` (as on 2026-10-23), 0 failed, 17 observed, 13 with a capability (76%), 21 refusals. The same numbers as `coverage-20261023.json`, so the proxy changes nothing the compiler sees on real sites, including HTTPS, redirects and subresources.
 
 `COMPILER_REVISION` is 2 from the result-list margin on: stored page classes compiled under revision 1 are compiled again on their next inspection, so the margin reaches pages already in the store.
+
+### Review findings on the politeness branch (2026-11-06)
+
+A review of PR #6 found five things. Each was written as a failing test first, against loopback servers and fake clocks only; no public site was contacted.
+
+- **A `robots.txt` cut off before its `Content-Length` counted as the whole file (P1).** `read1` reports the missing bytes only as an empty read, so a file that lost its `Disallow` lines in transit allowed the page and was cached for a day. It now raises `IncompleteRead`, which makes the file unreachable: the page is refused, or the last good copy stands in. Chunked bodies already raised, and now have a test. A body declaring no length ends where the connection ends, so a cut there cannot be told from the end.
+- **A redirect on the same host skipped the interval and `Crawl-delay` (P1).** The exemption argued that a hop was the server's own answer to a request already paced. The site still receives it as a request, and its `Crawl-delay` makes no exception. The exemption is gone, for page hops and for hops of the `robots.txt` fetch. `test_a_redirect_on_the_same_host_is_not_paced_again` held the wrong behaviour as its right answer and was rewritten. Three consequences:
+  - Each same-host hop now costs at least 1 s. A click whose chain takes longer than the 5 s settle budget would be reported as an effect that did not happen; a chain of five, or three under `Crawl-delay: 2`, gets there. Not addressed here.
+  - A hop whose wait is over 2 s is refused, and asking for the first URL again would never succeed: it spends the slot and is redirected into the same refusal. The refusal therefore names the hop's address, which an agent can ask for directly. It is still an agent having to read that sentence, on any site with a redirect and a `Crawl-delay` over 2 s.
+  - Five same-host hops of the `robots.txt` fetch are five seconds of waiting, which used up the fetch's five-second deadline and read as unreachable. The waits for a hop's slot no longer count against that deadline: they are this runtime's pacing and not the site being slow. RFC 9309 2.3.1.2's five redirects still fit, and `test_more_than_five_redirects_count_as_no_file` still passes unchanged. The worst-case hold grows from about 5 s to 5 s plus 2 s per hop, 17 s in all. Not chosen: leaving the waits in the deadline and refusing such a file, which keeps the shorter bound and gives up the five redirects.
+- **A `Retry-After` arriving during a wait was ignored (P1).** The sleep now ends by looking again. If the site's time reaches past the reserved slot the request goes back to the queue, one interval behind that slot, or is refused if the whole stay would pass `max_wait_seconds`. The earlier concurrency test could not see this, because its fake sleep never let anything else run; `ParkedClock` in `test_politeness.py` really suspends, and one test does it on the real clock.
+- **`%24` and `%2A` in a rule did not match `$` and `*` in a URL (P2).** RFC 9309 2.2.3's two examples. Those two characters are now compared encoded wherever they are not special: throughout the URL, and for a `$` in the middle of a rule. A rule's length is measured after that, so `/a$b` and `/a%24b` are the same rule and an `Allow` of one beats a `Disallow` of the other.
+- **A `Retry-After` over 24 hours was shortened to 24 hours (P2).** The cap and its `max_backoff_seconds` setting are gone. Nothing sleeps through a long one, since anything over 2 s is refused with the time to retry. A value is only limited at 100 years, because `float` reads four hundred digits as infinity and the wait is shown to the agent. The state is in memory, so a restart still forgets it.
+
+Not checked: the RFC's text, which was not fetched for this; the two examples are as the review cites them. `scripts/test.sh` was run as its parts, and `test_hostile_dom`'s deeply nested case fails on Windows as it did before.

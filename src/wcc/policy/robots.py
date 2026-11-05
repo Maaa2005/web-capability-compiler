@@ -35,6 +35,9 @@ What is implemented, with the section of RFC 9309 each rule comes from:
 - Paths are compared after the same percent-encoding normalisation on both
   sides: non-ASCII is encoded as UTF-8, and an encoded unreserved character is
   decoded (2.2.2).
+- ``%2A`` and ``%24`` in a rule mean the characters ``*`` and ``$`` (2.2.3). They
+  stay encoded, so those two characters are compared encoded everywhere they are
+  not special: throughout the URL, and for a ``$`` in the middle of a rule.
 - ``/robots.txt`` itself is always allowed (2.2.2).
 - At most :data:`MAX_ROBOTS_BYTES` are parsed; the RFC asks for at least
   500 KiB (2.5).
@@ -169,7 +172,7 @@ def parse_robots(content: bytes | str) -> RobotsFile:
             # An empty value matches nothing (RFC 9309 2.2.2's grammar allows it,
             # and "Disallow:" has meant "nothing is disallowed" since 1994).
             if value:
-                rules.append(Rule(allow=key == "allow", pattern=_normalise(value)))
+                rules.append(Rule(allow=key == "allow", pattern=_pattern(value)))
         elif key == "crawl-delay":
             in_rules = True
             parsed = _seconds(value)
@@ -209,7 +212,20 @@ def _target(url: str) -> str:
     path = parts.path or "/"
     if parts.query:
         path = f"{path}?{parts.query}"
-    return _normalise(path)
+    return _normalise(path).replace("*", "%2A").replace("$", "%24")
+
+
+def _pattern(value: str) -> str:
+    """A rule's path, normalised, with only its special characters left bare.
+
+    After this a bare ``*`` is a wildcard and a bare ``$`` is the anchor at the end,
+    and neither can be mistaken for the same character in a URL, which :func:`_target`
+    has encoded.
+    """
+    pattern = _normalise(value)
+    anchored = pattern.endswith("$")
+    body = (pattern[:-1] if anchored else pattern).replace("$", "%24")
+    return f"{body}$" if anchored else body
 
 
 def _normalise(path: str) -> str:

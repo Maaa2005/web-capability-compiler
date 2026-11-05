@@ -69,6 +69,40 @@ def test_percent_encoding_is_normalised_on_both_sides() -> None:
     assert allows("User-agent: *\nDisallow: /a%2Fb\n", "https://a.test/a/b")
 
 
+def test_an_encoded_star_or_dollar_is_that_character_and_not_a_wildcard() -> None:
+    """RFC 9309 2.2.3 gives these two as how a rule names ``*`` or ``$`` itself. ``%2A``
+    and ``%24`` stay encoded, being outside the unreserved set, so the URL's literal
+    character has to be compared in the same form."""
+    dollar = "User-agent: *\nDisallow: /file-%24\n"
+    assert not allows(dollar, "https://a.test/file-$")
+    assert not allows(dollar, "https://a.test/file-%24")
+    assert not allows(dollar, "https://a.test/file-$/more")
+    assert allows(dollar, "https://a.test/file-")
+    assert allows(dollar, "https://a.test/file-x")
+
+    star = "User-agent: *\nDisallow: /file-%2A.html\n"
+    assert not allows(star, "https://a.test/file-*.html")
+    assert not allows(star, "https://a.test/file-%2a.html")
+    assert allows(star, "https://a.test/file-x.html")
+    assert not allows("User-agent: *\nDisallow: /file-%2a.html\n", "https://a.test/file-*.html")
+
+
+def test_a_url_holding_a_star_or_dollar_still_meets_the_special_characters() -> None:
+    assert not allows("User-agent: *\nDisallow: /a*c\n", "https://a.test/a*c")
+    assert not allows("User-agent: *\nDisallow: /a*$\n", "https://a.test/a$")
+    assert not allows("User-agent: *\nDisallow: /a%24$\n", "https://a.test/a$")
+    assert allows("User-agent: *\nDisallow: /a%24$\n", "https://a.test/a$b")
+    assert allows("User-agent: *\nDisallow: /*.gif$\n", "https://a.test/x.gif$")
+
+
+def test_a_literal_dollar_mid_rule_and_its_encoding_are_the_same_rule() -> None:
+    """Same meaning, same length: neither spelling gets to outrank the other."""
+    assert not allows("User-agent: *\nDisallow: /a$b\n", "https://a.test/a%24b")
+    assert not allows("User-agent: *\nDisallow: /a%24b\n", "https://a.test/a$b")
+    assert allows("User-agent: *\nDisallow: /a%24b\nAllow: /a$b\n", "https://a.test/a$b")
+    assert allows("User-agent: *\nAllow: /a%24b\nDisallow: /a$b\n", "https://a.test/a$b")
+
+
 def test_the_named_group_replaces_the_star_group() -> None:
     text = "User-agent: *\nDisallow: /\n\nUser-agent: wcc\nDisallow: /private\n"
     assert allows(text, "https://a.test/page")
