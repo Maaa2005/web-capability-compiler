@@ -2,7 +2,8 @@
 
 Each candidate is visited once, in the order ``sample.json`` gives, until each
 stratum has the plan's number of complete pages. The run can be stopped and
-resumed: everything is written after each candidate.
+resumed: everything is written after each candidate. A candidate the connection
+failed on says nothing about the site, so a resumed run tries it again.
 
 Two files, kept apart on purpose:
 
@@ -28,7 +29,7 @@ import sys
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
-from http.client import HTTPException
+from http.client import HTTPException, InvalidURL
 from importlib.metadata import version
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -48,18 +49,26 @@ from urllib.request import (
 )
 from urllib.robotparser import RobotFileParser
 
+from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import Response
 
 from benchmarks.heldout import plan
-from benchmarks.heldout.sample import SAMPLE_PATH, Candidate, load_sample
+from benchmarks.heldout.sample import (
+    SAMPLE_PATH,
+    Candidate,
+    landing_exclusion,
+    load_sample,
+    site_key,
+)
 from benchmarks.measure_coverage import PAUSE_SECONDS, ROBOTS_TIMEOUT_SECONDS, USER_AGENT
 from wcc.compiler.navigation import find_result_links
-from wcc.driver.base import DriverError, DriverSettings
+from wcc.driver.base import DriverError, DriverSettings, ElementNotResolvedError
 from wcc.driver.egress_proxy import EgressProxy
 from wcc.driver.playwright_driver import PlaywrightDriver, _Session
 from wcc.enrich.enricher import Enricher
 from wcc.limits import ResourceLimits
 from wcc.models.capability import RiskLevel
+from wcc.models.element import NormalizedElement
 from wcc.models.session import OpenSessionRequest
 from wcc.policy.url_policy import UrlPolicy
 from wcc.runtime.coordinator import Coordinator
@@ -71,6 +80,55 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 MAX_SCREENSHOT_HEIGHT = 8_000
 MAX_TEXT_CHARS = 50_000
 NETWORK_QUIET_MS = 3_000
+#: RFC 9309 section 2.5 asks a crawler to parse at least 500 KiB. What is past this
+#: is not read; what came before it is parsed, as that section allows.
+ROBOTS_MAX_BYTES = 512 * 1024
+#: The whole read, however many redirects. The socket's timeout only bounds the
+#: silence between two packets, so a server sending a byte at a time never meets it.
+ROBOTS_DEADLINE_SECONDS = 40.0
+#: One candidate, from ``robots.txt`` to the end of the WCC visit. Far above what an
+#: ordinary page takes, because hitting it replaces the page.
+CANDIDATE_TIMEOUT_SECONDS = 180.0
+#: A browser that will not close must not hold up the rest of the run.
+SHUTDOWN_TIMEOUT_SECONDS = 30.0
+MAX_LABEL_CHARS = 4_096
+
+#: The words WCC's egress proxy and Chromium use for a connection that failed. Each
+#: is a statement about the network: the proxy reports a name that does not resolve
+#: through the same callback as a refused address, and neither this list nor anyone
+#: reading the record should take that for a refusal. Tests hold the proxy's wording.
+CONNECTION_FAILURES: tuple[str, ...] = (
+    "does not resolve",
+    "resolved to no addresses",
+    "did not finish resolving and connecting",
+    "net::ERR_INTERNET_DISCONNECTED",
+    "net::ERR_NETWORK_",
+    "net::ERR_ADDRESS_",
+    "net::ERR_CONNECTION_",
+    "net::ERR_TUNNEL_CONNECTION_FAILED",
+    "net::ERR_PROXY_CONNECTION_FAILED",
+    "net::ERR_NAME_",
+    "net::ERR_DNS_",
+    "net::ERR_EMPTY_RESPONSE",
+    "net::ERR_TIMED_OUT",
+    "net::ERR_SOCKET_",
+)
+
+#: The statuses a resumed run tries again.
+RETRIED_ON_RESUME = frozenset({"unreachable"})
+
+
+class RobotsUnreachable(Exception):
+    """``robots.txt`` is unread because the connection failed, so no page is opened.
+
+    An exception rather than a refusal string: the file still disallows for now, as
+    RFC 9309 section 2.3.1 says, but the site has not refused anything, and a run
+    that records this as a refusal never asks again.
+    """
+
+
+def is_connection_failure(message: str) -> bool:
+    return any(words in message for words in CONNECTION_FAILURES)
 
 
 def key_of(candidate: Candidate) -> str:
@@ -85,7 +143,9 @@ class CaptureRecord:
     origin: str
     url: str
     status: str = "pending"
-    """``captured``, ``robots`` (refused by robots.txt) or ``failed``."""
+    """``captured``; ``robots`` (refused by robots.txt or by the URL policy on the way
+    to it); ``unreachable`` (the connection failed, so it is tried again on resume);
+    ``landed_elsewhere`` (the page it ended on is out by E2 or E4); or ``failed``."""
 
     reason: str = ""
     final_url: str = ""
@@ -96,6 +156,9 @@ class CaptureRecord:
     text: str = ""
     text_sha256: str = ""
     captured_at: str = ""
+    wcc_complete: bool = False
+    """Whether the WCC visit finished. All the second annotator's selection needs to
+    know about WCC, kept here so that labelling never opens the results."""
 
 
 @dataclass
@@ -109,10 +172,20 @@ class WccRecord:
     forms_seen: int = 0
     offered: list[dict[str, Any]] = field(default_factory=list)
     """Each bound capability: ``name``, ``category``, ``text_parameters`` (free-text
-    arguments) and the visible ``labels`` of the elements its evidence names,
-    which the unsafe-exposure check reads."""
+    arguments), the visible ``labels`` of the elements its evidence names, which the
+    unsafe-exposure check reads, and their accessible ``names``, which it does not."""
 
     result_list: list[str] = field(default_factory=list)
+    """The visible text of each link in the list WCC took, which titles are matched to."""
+
+    result_list_names: list[str] = field(default_factory=list)
+    """The same links' accessible names. An ``aria-label`` takes priority over the text
+    there, and an annotator cannot see one."""
+
+    visible_text_unread: int = 0
+    """Elements WCC could not find again to read their text. Their name stands in for
+    it in ``labels`` and ``result_list``, so an exposure is not missed by not looking."""
+
     unbound: list[str] = field(default_factory=list)
     refused_codes: list[str] = field(default_factory=list)
     refused_above_low: int = 0
@@ -163,6 +236,47 @@ class _CaptureDriver(PlaywrightDriver):
         )
 
 
+#: What a person sees of an element: its rendered text, the words on an input
+#: button, or for a field the label beside it or else its placeholder.
+_VISIBLE_TEXT = """(element) => {
+  if (!element.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) return '';
+  const type = (element.getAttribute('type') || '').toLowerCase();
+  if (element.tagName === 'INPUT' && ['submit', 'button', 'reset'].includes(type)) {
+    return element.value || '';
+  }
+  const field = element.tagName === 'SELECT' || element.tagName === 'TEXTAREA';
+  const own = field ? '' : (element.innerText || '').trim();
+  if (own) return own;
+  const labels = Array.from(element.labels || []).map((label) => label.innerText || '');
+  return labels.join(' ').trim() || element.getAttribute('placeholder') || '';
+}"""
+
+
+class _VisibleTextDriver(PlaywrightDriver):
+    """WCC's driver, plus the one reading the plan compares with and the IR does not keep."""
+
+    async def visible_text(self, session_id: str, element_id: str) -> str | None:
+        """The element's visible text, or ``None`` if it cannot be found again."""
+        session = self._session(session_id)
+        try:
+            handle_id = await self.resolve(session_id, element_id)
+            try:
+                text = await session.page.evaluate(_VISIBLE_TEXT, self._handle(session, handle_id))
+            finally:
+                self.release(session_id, handle_id)
+        except (ElementNotResolvedError, PlaywrightError):
+            return None
+        return " ".join(str(text).split())[:MAX_LABEL_CHARS]
+
+
+async def _shut_down(driver: PlaywrightDriver) -> None:
+    """Close the browser, within limits: this also runs when a candidate is cut off."""
+    try:
+        await asyncio.wait_for(driver.shutdown(), SHUTDOWN_TIMEOUT_SECONDS)
+    except TimeoutError:
+        print(f"  the browser did not close within {SHUTDOWN_TIMEOUT_SECONDS:g} s; going on")
+
+
 async def capture(
     url: str,
     shot: Path,
@@ -196,7 +310,7 @@ async def capture(
         record.title = identity.title or ""
         text.write_text(visible[:MAX_TEXT_CHARS], encoding="utf-8")
     finally:
-        await driver.shutdown()
+        await _shut_down(driver)
 
 
 class _ThroughProxy(BaseHandler):
@@ -238,7 +352,7 @@ def _read_through(proxy_url: str, url: str) -> bytes:
     ):
         opener.add_handler(handler)
     with opener.open(url, timeout=ROBOTS_TIMEOUT_SECONDS) as response:
-        return response.read()
+        return response.read(ROBOTS_MAX_BYTES)
 
 
 def guarded_robots_refusal(url: str, *, allow_private_network: bool = False) -> str | None:
@@ -251,8 +365,11 @@ def guarded_robots_refusal(url: str, *, allow_private_network: bool = False) -> 
     disallows, as RFC 9309 section 2.3.1 says of an unreachable file.
 
     The status rules are copied because that function takes no way to pass a
-    connection; a test holds the two to the same answers. Opens its own event loop,
-    so call it from a worker thread.
+    connection; a test holds the two to the same answers. It differs in one way: a
+    connection that failed raises :class:`RobotsUnreachable` instead of returning a
+    refusal, because the site has not refused anything, and a redirect to a URL that
+    cannot be parsed raises ``ValueError``. Neither lets a page be opened. Opens its
+    own event loop, so call it from a worker thread.
     """
     parts = urlsplit(url)
     robots_url = f"{parts.scheme}://{parts.netloc}/robots.txt"
@@ -266,7 +383,15 @@ def guarded_robots_refusal(url: str, *, allow_private_network: bool = False) -> 
         )
         proxy_url = await proxy.start()
         try:
-            return await asyncio.to_thread(_read_through, proxy_url, robots_url)
+            # Closing the proxy cuts the worker's connection, which is what ends a
+            # read the deadline gave up on. A thread cannot be cancelled.
+            return await asyncio.wait_for(
+                asyncio.to_thread(_read_through, proxy_url, robots_url), ROBOTS_DEADLINE_SECONDS
+            )
+        except TimeoutError as late:
+            raise RobotsUnreachable(
+                f"robots.txt was not read within {ROBOTS_DEADLINE_SECONDS:g} s"
+            ) from late
         finally:
             await proxy.close()
 
@@ -278,13 +403,21 @@ def guarded_robots_refusal(url: str, *, allow_private_network: bool = False) -> 
         if 400 <= status.code < 500:
             return None
         return f"robots.txt answered {status.code}, so it is unreachable and disallows"
+    except (ValueError, InvalidURL) as unusable:
+        raise ValueError(f"robots.txt redirected to an unusable URL ({unusable})") from unusable
     except (URLError, OSError, HTTPException) as failed:
-        if refused:
-            return f"robots.txt refused by the URL policy ({refused[0]}), so it disallows"
+        by_policy = [reason for reason in refused if not is_connection_failure(reason)]
+        if by_policy:
+            return f"robots.txt refused by the URL policy ({by_policy[0]}), so it disallows"
         cause = failed.reason if isinstance(failed, URLError) else failed
+        if isinstance(cause, str):
+            # ``UnknownHandler``'s words: the site redirected to a scheme not read here.
+            return f"robots.txt redirected outside HTTP ({cause}), so it disallows"
         if isinstance(cause, ssl.SSLCertVerificationError):
-            return f"certificate not trusted on this machine; robots.txt unread ({cause})"
-        return f"robots.txt could not be fetched ({failed}), so it disallows"
+            raise RobotsUnreachable(
+                f"certificate not trusted on this machine; robots.txt unread ({cause})"
+            ) from failed
+        raise RobotsUnreachable(f"robots.txt could not be fetched ({failed})") from failed
     parser = RobotFileParser(robots_url)
     parser.parse(raw.decode("utf-8", errors="replace").splitlines())
     if not parser.can_fetch(USER_AGENT, url):
@@ -294,7 +427,7 @@ def guarded_robots_refusal(url: str, *, allow_private_network: bool = False) -> 
 
 async def wcc_visit(url: str, record: WccRecord, *, allow_private_network: bool = False) -> None:
     """What WCC offers on ``url``, compiled cold, as ``measure_coverage.visit`` does."""
-    driver = PlaywrightDriver(
+    driver = _VisibleTextDriver(
         UrlPolicy(),
         DriverSettings(allow_private_network=allow_private_network, limits=ResourceLimits()),
     )
@@ -311,19 +444,32 @@ async def wcc_visit(url: str, record: WccRecord, *, allow_private_network: bool 
         snapshot = inspection.snapshot
         record.final_url = snapshot.url
         by_id = {element.element_id: element for element in snapshot.elements}
-        record.result_list = [
-            link.resolved_label or link.accessible_name or ""
-            for link in find_result_links(snapshot.elements, snapshot.collections)
-        ]
+        seen: dict[str, str] = {}
+
+        async def visible(element: NormalizedElement) -> str:
+            if element.element_id not in seen:
+                text = await driver.visible_text(session.session_id, element.element_id)
+                if text is None:
+                    record.visible_text_unread += 1
+                    text = _name_of(element)
+                seen[element.element_id] = text
+            return seen[element.element_id]
+
+        links = find_result_links(snapshot.elements, snapshot.collections)
+        record.result_list = [await visible(link) for link in links]
+        record.result_list_names = [_name_of(link) for link in links]
         for binding in inspection.capabilities:
             template = inspection.templates[binding.template_id]
-            labels = []
+            labels: list[str] = []
+            names: list[str] = []
             for evidence in template.evidence:
                 element = by_id.get(evidence.element_id or "")
                 if element is not None:
-                    label = element.resolved_label or element.accessible_name
-                    if label and label not in labels:
-                        labels.append(label)
+                    shown, name = await visible(element), _name_of(element)
+                    if shown and shown not in labels:
+                        labels.append(shown)
+                    if name and name not in names:
+                        names.append(name)
             record.offered.append(
                 {
                     "name": template.name,
@@ -331,6 +477,7 @@ async def wcc_visit(url: str, record: WccRecord, *, allow_private_network: bool 
                     "risk": str(template.risk.level),
                     "text_parameters": free_text_parameters(template.parameters),
                     "labels": labels,
+                    "names": names,
                 }
             )
         record.unbound = [f"{t.name}: {t.reason}" for t in inspection.unbound]
@@ -346,7 +493,11 @@ async def wcc_visit(url: str, record: WccRecord, *, allow_private_network: bool 
     finally:
         store.close()
         store_directory.cleanup()
-        await driver.shutdown()
+        await _shut_down(driver)
+
+
+def _name_of(element: NormalizedElement) -> str:
+    return element.resolved_label or element.accessible_name or ""
 
 
 def free_text_parameters(schema: dict[str, object]) -> int:
@@ -498,9 +649,87 @@ def resume_mismatches(recorded: dict[str, Any], now: dict[str, Any], out: Path) 
     return [commit, *problems] if commit else problems
 
 
+def uncommitted(path: Path) -> str | None:
+    """Why ``path`` is not committed as it stands, or ``None``. Unsure counts as no."""
+    try:
+        relative = path.resolve().relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        return f"{path} is outside the repository, so it cannot be committed"
+    if not _git("ls-files", "--", relative):
+        return f"{path} is not committed"
+    if _git("status", "--porcelain", "--", relative):
+        return f"{path} has changes that are not committed"
+    return None
+
+
 Capture = Callable[[str, Path, Path, CaptureRecord], Awaitable[None]]
 Visit = Callable[[str, WccRecord], Awaitable[None]]
 Robots = Callable[[str], str | None]
+Landing = Callable[[str, dict[str, str]], str | None]
+
+
+async def _visit_one(
+    candidate: Candidate,
+    record: CaptureRecord,
+    files: RunFiles,
+    kept: dict[str, str],
+    *,
+    robots: Robots,
+    take_capture: Capture,
+    visit: Visit,
+    landing: Landing,
+    seconds: float,
+) -> WccRecord | None:
+    """Fill in ``record``, and return WCC's result if the visit has one worth keeping."""
+    stem = record.key.replace("/", "-")
+    shot, text = files.captures / f"{stem}.png", files.captures / f"{stem}.txt"
+    phase = "robots.txt"
+    outcome: WccRecord | None = None
+    limit = asyncio.timeout(seconds)
+    try:
+        async with limit:
+            refusal = await asyncio.to_thread(robots, candidate.url)
+            if refusal is not None:
+                record.status, record.reason = "robots", refusal
+                return None
+            phase = "the capture"
+            record.captured_at = _now()
+            await take_capture(candidate.url, shot, text, record)
+            elsewhere = landing(record.final_url, kept)
+            if elsewhere is not None:
+                record.status, record.reason = "landed_elsewhere", elsewhere
+                return None
+            record.status = "captured"
+            record.screenshot, record.text = shot.name, text.name
+            record.screenshot_sha256 = _sha256(shot) if shot.exists() else ""
+            record.text_sha256 = _sha256(text) if text.exists() else ""
+            phase = "the WCC visit"
+            outcome = WccRecord(record.key, candidate.url, observed_at=_now())
+            await visit(candidate.url, outcome)
+    except Exception as failed:
+        cut_off = limit.expired()
+        reason = (
+            f"timed out after {seconds:g} s during {phase}"
+            if cut_off
+            else f"{type(failed).__name__}: {failed}"
+        )
+        if outcome is not None:
+            outcome.error = reason
+        else:
+            connection = isinstance(failed, RobotsUnreachable) or is_connection_failure(reason)
+            record.status = "unreachable" if connection and not cut_off else "failed"
+            record.reason = reason
+            return None
+
+    assert outcome is not None
+    if outcome.error is not None and is_connection_failure(outcome.error):
+        record.status, record.reason = "unreachable", f"the WCC visit: {outcome.error}"
+        return None
+    record.wcc_complete = outcome.complete
+    elsewhere = landing(outcome.final_url, kept)
+    if elsewhere is not None:
+        record.status, record.reason = "landed_elsewhere", f"the WCC visit: {elsewhere}"
+    return outcome
 
 
 async def visit_candidates(
@@ -513,9 +742,14 @@ async def visit_candidates(
     pause_seconds: float = PAUSE_SECONDS,
     per_stratum: int = plan.PAGES_PER_STRATUM,
     log: Callable[[str], None] = print,
+    candidate_timeout: float = CANDIDATE_TIMEOUT_SECONDS,
+    landing: Landing = landing_exclusion,
 ) -> dict[str, int]:
     """Visit in order until each stratum has ``per_stratum`` complete, unexcluded pages.
 
+    A candidate is skipped if it has a final record. One the connection failed on
+    does not, so resuming tries it again. ``landing`` is a parameter because the
+    loopback tests serve every candidate from one host, which E4 would rule out.
     Returns how many such pages each stratum has afterwards.
     """
     files.captures.mkdir(parents=True, exist_ok=True)
@@ -523,45 +757,53 @@ async def visit_candidates(
     results = load_wcc(files)
     excluded = excluded_by_labels(files)
 
-    def counted(stratum: str) -> int:
-        return sum(
-            1
-            for key, record in index.items()
-            if record.stratum == stratum
-            and record.status == "captured"
+    def is_page(key: str, record: CaptureRecord) -> bool:
+        return (
+            record.status == "captured"
             and key in results
             and results[key].complete
             and key not in excluded
         )
 
+    def counted(stratum: str) -> int:
+        return sum(
+            1 for key, record in index.items() if record.stratum == stratum and is_page(key, record)
+        )
+
+    def kept_sites() -> dict[str, str]:
+        """E4's "already kept": each page so far, by where it started and where it ended."""
+        sites: dict[str, str] = {}
+        for key, record in index.items():
+            if is_page(key, record):
+                for url in (record.url, record.final_url, results[key].final_url):
+                    host = urlsplit(url).hostname
+                    if host:
+                        sites.setdefault(site_key(host), key)
+        return sites
+
     for candidate in candidates:
         key = key_of(candidate)
-        if key in index or counted(candidate.stratum) >= per_stratum:
+        final = key in index and index[key].status not in RETRIED_ON_RESUME
+        if final or counted(candidate.stratum) >= per_stratum:
             continue
         log(f"  {key} {candidate.url}")
         record = CaptureRecord(
             key, candidate.stratum, candidate.position, candidate.origin, candidate.url
         )
-        refusal = await asyncio.to_thread(robots, candidate.url)
-        if refusal is not None:
-            record.status, record.reason = "robots", refusal
-        else:
-            stem = key.replace("/", "-")
-            shot, text = files.captures / f"{stem}.png", files.captures / f"{stem}.txt"
-            record.captured_at = _now()
-            try:
-                await take_capture(candidate.url, shot, text, record)
-            except Exception as failed:
-                record.status, record.reason = "failed", f"{type(failed).__name__}: {failed}"
-            else:
-                record.status = "captured"
-                record.screenshot, record.text = shot.name, text.name
-                record.screenshot_sha256 = _sha256(shot) if shot.exists() else ""
-                record.text_sha256 = _sha256(text) if text.exists() else ""
-                outcome = WccRecord(key, candidate.url, observed_at=_now())
-                await visit(candidate.url, outcome)
-                results[key] = outcome
-                _write(files.wcc, list(results.values()))
+        outcome = await _visit_one(
+            candidate,
+            record,
+            files,
+            kept_sites(),
+            robots=robots,
+            take_capture=take_capture,
+            visit=visit,
+            landing=landing,
+            seconds=candidate_timeout,
+        )
+        if outcome is not None:
+            results[key] = outcome
+            _write(files.wcc, list(results.values()))
         index[key] = record
         _write(files.index, list(index.values()))
         log(f"    {record.status} {record.reason[:80]}")
@@ -595,5 +837,8 @@ def run_all(out: Path, *, only_stratum: str = "") -> int:
     for stratum, count in counts.items():
         short = "" if count >= plan.PAGES_PER_STRATUM else "  (short)"
         print(f"{stratum}: {count} of {plan.PAGES_PER_STRATUM} complete pages{short}")
+    waiting = sum(1 for r in load_index(files).values() if r.status in RETRIED_ON_RESUME)
+    if waiting:
+        print(f"{waiting} candidates could not be reached. Run this again to try them again.")
     print(f"\nNext: label without opening {files.wcc}.")
     return 0

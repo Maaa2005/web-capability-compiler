@@ -12,6 +12,7 @@ import hashlib
 import io
 import random
 from collections import Counter
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -63,13 +64,17 @@ def read_frame(path: Path, expected_sha256: str = plan.FRAME_SHA256) -> list[tup
     return rows
 
 
+def on_development_domain(host: str) -> bool:
+    return any(host == d or host.endswith(f".{d}") for d in plan.DEVELOPMENT_DOMAINS)
+
+
 def exclusion(origin: str) -> str | None:
     """The rule among E1 to E3 that excludes ``origin``, or ``None``."""
     parts = urlsplit(origin)
     if parts.scheme != "https":
         return "E1"
     host = (parts.hostname or "").lower()
-    if any(host == d or host.endswith(f".{d}") for d in plan.DEVELOPMENT_DOMAINS):
+    if on_development_domain(host):
         return "E2"
     if any(word in host for word in plan.ADULT_HOST_WORDS):
         return "E3"
@@ -83,6 +88,22 @@ def site_key(host: str) -> str:
         if host.startswith(prefix):
             return host[len(prefix) :]
     return host
+
+
+def landing_exclusion(final_url: str, kept: Mapping[str, str]) -> str | None:
+    """E2 or E4 for the page a candidate ended on, which the draw could not see.
+
+    The draw judged the origin. A redirect can still put a development site in the
+    run, or a second page of a site already kept. ``kept`` maps each site so far to
+    its page's key.
+    """
+    host = (urlsplit(final_url).hostname or "").lower()
+    if not host:
+        return None
+    if on_development_domain(host):
+        return f"E2: it landed on {host}, a development domain"
+    earlier = kept.get(site_key(host))
+    return None if earlier is None else f"E4: it landed on {host}, the site of {earlier}"
 
 
 def draw(

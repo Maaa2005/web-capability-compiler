@@ -17,7 +17,9 @@ from pathlib import Path
 from typing import Any
 
 from benchmarks.heldout import plan
-from benchmarks.heldout.run import CaptureRecord, RunFiles, load_index
+from benchmarks.heldout.run import CaptureRecord, RunFiles, WccRecord, key_of, load_index
+from benchmarks.heldout.sample import Candidate
+from benchmarks.heldout.score import NotReady, select_scored
 
 EXCLUSIONS = ("adult", "login-or-age-wall", "blank-or-error", "parked", "not-a-web-page")
 
@@ -78,6 +80,44 @@ def agreement_keys(eligible_keys: list[str]) -> list[str]:
     return sorted(random.Random(plan.SEED).sample(chosen, count))
 
 
+def scored_keys(
+    index: dict[str, CaptureRecord],
+    first: dict[str, dict[str, Any]],
+    per_stratum: int = plan.PAGES_PER_STRATUM,
+) -> list[str]:
+    """The pages the score will count, by its own rule, from the index alone.
+
+    ``select_scored`` needs only whether each WCC visit finished, and the index says
+    that, so WCC's results stay closed.
+    """
+    records = sorted(index.values(), key=lambda r: (r.stratum, r.position))
+    candidates = [Candidate(r.stratum, r.position, r.origin, 0) for r in records]
+    finished = {
+        r.key: WccRecord(r.key, r.url, error=None if r.wcc_complete else "did not finish")
+        for r in records
+    }
+    scored, _ = select_scored(candidates, index, finished, first, per_stratum)
+    return [key_of(c) for c in scored]
+
+
+def _second_annotators_pages(
+    files: RunFiles, index: dict[str, CaptureRecord], annotator: str, per_stratum: int
+) -> list[str]:
+    """Check the second annotator may start, and draw from the scored pages."""
+    if not files.labels.exists():
+        raise SystemExit(f"{files.labels} does not exist; the first annotator labels first")
+    document = json.loads(files.labels.read_text(encoding="utf-8"))
+    if str(document.get("annotator", "")).strip().casefold() == annotator.strip().casefold():
+        raise SystemExit(
+            f"{files.labels} was written by {document['annotator']!r}; agreement needs "
+            "a second person"
+        )
+    try:
+        return agreement_keys(scored_keys(index, document["labels"], per_stratum))
+    except NotReady as missing:
+        raise SystemExit(f"the first annotator has not finished: {missing}") from missing
+
+
 def _show(files: RunFiles, record: CaptureRecord, say: Callable[[str], None]) -> None:
     say("")
     say(f"=== {record.key}  {record.url}")
@@ -100,6 +140,7 @@ def label_pages(
     second: bool = False,
     ask: Ask = input,
     say: Callable[[str], None] = print,
+    per_stratum: int = plan.PAGES_PER_STRATUM,
 ) -> Path:
     index = load_index(files)
     captured = sorted(
@@ -123,9 +164,11 @@ def label_pages(
         )
 
     if second:
-        first = json.loads(files.labels.read_text(encoding="utf-8"))["labels"]
-        eligible = [key for key, label in first.items() if label.get("eligible")]
-        wanted = set(agreement_keys(eligible))
+        # Kept from the first session on: a run resumed later moves the scored pages,
+        # and the pages already labelled must stay the ones that were drawn.
+        if "pages" not in document:
+            document["pages"] = _second_annotators_pages(files, index, annotator, per_stratum)
+        wanted = set(document["pages"])
         captured = [r for r in captured if r.key in wanted]
 
     for record in captured:

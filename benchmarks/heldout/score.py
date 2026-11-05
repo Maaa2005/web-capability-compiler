@@ -1,8 +1,13 @@
 """Score WCC's held-out results against the labels, by the rules of ``PLAN.md``.
 
-Everything here is a pure function of four files: ``sample.json``, the capture
-index, ``wcc/results.json`` and ``labels.json``. The report names each file's
-SHA-256, so anyone can check that a published score came from the published files.
+The score is a pure function of four files: ``sample.json``, the capture index,
+``wcc/results.json`` and ``labels.json``. The report names each file's SHA-256, and
+the plan's, so anyone can check that a published score came from the published files
+and was judged by the published line.
+
+``score_run`` is the step of record. Before it reads WCC's results it stops unless
+the code, the plan and the sample are the ones the run started with and the labels
+are committed. ``score_files`` has no such check, and only tests call it directly.
 """
 
 from __future__ import annotations
@@ -24,6 +29,9 @@ from benchmarks.heldout.run import (
     key_of,
     load_index,
     load_wcc,
+    resume_mismatches,
+    run_metadata,
+    uncommitted,
 )
 from benchmarks.heldout.sample import SAMPLE_PATH, Candidate, load_sample
 
@@ -172,11 +180,14 @@ def metrics(pages: list[PageScore]) -> dict[str, Any]:
     }
 
 
-def verdict(m: dict[str, Any], unfinished: Sequence[str] = ()) -> dict[str, Any]:
-    """The plan's pass line. ``unfinished`` names strata the run has not finished.
+def verdict(
+    m: dict[str, Any], unfinished: Sequence[str] = (), short: Sequence[str] = ()
+) -> dict[str, Any]:
+    """The plan's pass line. ``unfinished`` names strata the run has not finished, and
+    ``short`` those that ran out of candidates before the plan's number of pages.
 
     A number that clears the line over part of the sample says nothing about the
-    rest, so an unfinished run can fail but cannot pass.
+    rest, so a run with either can fail but cannot pass.
     """
 
     def judged(entry: dict[str, Any], floor: float) -> str:
@@ -206,9 +217,14 @@ def verdict(m: dict[str, Any], unfinished: Sequence[str] = ()) -> dict[str, Any]
     }
     outcomes = set(criteria.values())
     overall = "fail" if "fail" in outcomes else "not judged" if "not judged" in outcomes else "pass"
-    if overall == "pass" and unfinished:
+    if overall == "pass" and (unfinished or short):
         overall = "not judged"
-    return {"criteria": criteria, "unfinished_strata": list(unfinished), "overall": overall}
+    return {
+        "criteria": criteria,
+        "unfinished_strata": list(unfinished),
+        "short_strata": list(short),
+        "overall": overall,
+    }
 
 
 def select_scored(
@@ -222,7 +238,16 @@ def select_scored(
     scored: list[Candidate] = []
     accounting: dict[str, dict[str, int]] = {}
     for stratum in plan.STRATA:
-        tally = {"used": 0, "robots": 0, "failed": 0, "wcc_error": 0, "excluded": 0, "scored": 0}
+        tally = {
+            "used": 0,
+            "robots": 0,
+            "unreachable": 0,
+            "landed_elsewhere": 0,
+            "failed": 0,
+            "wcc_error": 0,
+            "excluded": 0,
+            "scored": 0,
+        }
         for candidate in (c for c in candidates if c.stratum == stratum.name):
             if tally["scored"] >= per_stratum:
                 break
@@ -231,8 +256,8 @@ def select_scored(
             if record is None:
                 break
             tally["used"] += 1
-            if record.status == "robots":
-                tally["robots"] += 1
+            if record.status in ("robots", "unreachable", "landed_elsewhere"):
+                tally[record.status] += 1
                 continue
             if record.status != "captured":
                 tally["failed"] += 1
@@ -259,14 +284,19 @@ def stratum_states(
     per_stratum: int = plan.PAGES_PER_STRATUM,
 ) -> dict[str, str]:
     """``complete``, ``short`` (all the plan's candidates used, too few pages) or
-    ``unfinished`` (candidates are left, so the stratum has not been measured)."""
+    ``unfinished`` (candidates are left, or some are waiting to be tried again because
+    the connection failed, so the stratum has not been measured)."""
     states: dict[str, str] = {}
     for stratum in plan.STRATA:
         tally = accounting[stratum.name]
         total = sum(1 for c in candidates if c.stratum == stratum.name)
         if tally["scored"] >= per_stratum:
             states[stratum.name] = "complete"
-        elif total >= plan.CANDIDATES_PER_STRATUM and tally["used"] >= total:
+        elif (
+            total >= plan.CANDIDATES_PER_STRATUM
+            and tally["used"] >= total
+            and not tally.get("unreachable")
+        ):
             states[stratum.name] = "short"
         else:
             states[stratum.name] = "unfinished"
@@ -320,8 +350,11 @@ def score_files(
     m = metrics(pages)
     states = stratum_states(candidates, accounting, per_stratum)
     unfinished = [name for name, state in states.items() if state == "unfinished"]
+    short = [name for name, state in states.items() if state == "short"]
     document: dict[str, Any] = {
         "inputs": {
+            "PLAN.md": _sha256(Path(plan.__file__).with_name("PLAN.md")),
+            "plan.py": _sha256(Path(plan.__file__)),
             "sample.json": _sha256(SAMPLE_PATH),
             "captures/index.json": _sha256(files.index),
             "wcc/results.json": _sha256(files.wcc),
@@ -332,7 +365,8 @@ def score_files(
         "accounting": accounting,
         "strata": states,
         "metrics": m,
-        "verdict": verdict(m, unfinished),
+        "visible_text_unread": sum(results[key_of(c)].visible_text_unread for c in scored),
+        "verdict": verdict(m, unfinished, short),
         "pages": [asdict(p) for p in pages],
     }
     second = files.out / "labels-second.json"
@@ -355,12 +389,22 @@ def _stratum_warnings(states: dict[str, str]) -> list[str]:
     lines = []
     for state, meaning in (
         ("unfinished", "not finished, so the run cannot pass"),
-        ("short", "used every candidate and came up short"),
+        ("short", "used every candidate and came up short, so the run cannot pass"),
     ):
         names = [name for name, seen in states.items() if seen == state]
         if names:
             lines += ["", f"**Strata {meaning}:** {', '.join(names)}."]
     return lines
+
+
+def _offered(capability: dict[str, Any]) -> str:
+    """One capability for the report: every label, so a reader can check T1 from here."""
+    labels = capability.get("labels", [])
+    named = [name for name in capability.get("names", []) if name not in labels]
+    return (
+        f"{capability['name']} [{capability.get('risk', 'risk unknown')}] "
+        f"({', '.join(labels)})" + (f" named {', '.join(named)}" if named else "")
+    )
 
 
 def report(document: dict[str, Any]) -> str:
@@ -388,17 +432,22 @@ def report(document: dict[str, Any]) -> str:
         f"Unsafe exposures: {unsafe['pages']} pages"
         + (f" (95% upper bound {upper:.3f})" if upper is not None else ""),
         "",
+        "Elements whose visible text could not be read, with their name used instead: "
+        f"{document['visible_text_unread']}",
+        "",
         "Any capability on a page with something to find (the old measure):",
         f"- old proxy denominator: {_fmt(m['any_capability']['old_proxy_denominator'])}",
         f"- labels' denominator: {_fmt(m['any_capability']['label_denominator'])}",
         "",
-        "| Stratum | used | robots | failed | WCC error | excluded | scored |",
-        "|---|---:|---:|---:|---:|---:|---:|",
+        "| Stratum | used | robots | unreachable | landed elsewhere | failed | WCC error | "
+        "excluded | scored |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for stratum, tally in document["accounting"].items():
         lines.append(
-            f"| {stratum} | {tally['used']} | {tally['robots']} | {tally['failed']} | "
-            f"{tally['wcc_error']} | {tally['excluded']} | {tally['scored']} |"
+            f"| {stratum} | {tally['used']} | {tally['robots']} | {tally['unreachable']} | "
+            f"{tally['landed_elsewhere']} | {tally['failed']} | {tally['wcc_error']} | "
+            f"{tally['excluded']} | {tally['scored']} |"
         )
     if "agreement" in document:
         a = document["agreement"]
@@ -413,10 +462,7 @@ def report(document: dict[str, Any]) -> str:
     ]
     yn = {True: "y", False: "n"}
     for page in document["pages"]:
-        offered = "; ".join(
-            f"{o['name']} [{o.get('risk', 'risk unknown')}] ({', '.join(o.get('labels', [])[:3])})"
-            for o in page["offered"]
-        )
+        offered = "; ".join(_offered(o) for o in page["offered"])
         lines.append(
             f"| {page['key']} {page['origin']} "
             f"| {yn[page['search_labelled']]}/{yn[page['search_offered']]} "
@@ -427,11 +473,36 @@ def report(document: dict[str, Any]) -> str:
         )
     lines += ["", "Inputs (SHA-256):", ""]
     lines += [f"- `{name}`: `{digest}`" for name, digest in document["inputs"].items()]
+    run = document.get("run") or {}
+    lines += ["", f"Run at commit `{run.get('commit')}`, code `{run.get('code_sha256')}`."]
     return "\n".join(lines) + "\n"
+
+
+def scoring_blockers(files: RunFiles) -> list[str]:
+    """Why this run may not be scored yet. Reads no results and no labels' answers."""
+    if not files.meta.exists():
+        return [f"{files.meta} is missing, so the conditions of the run cannot be checked"]
+    try:
+        recorded = json.loads(files.meta.read_text(encoding="utf-8"))
+    except ValueError as unreadable:
+        return [f"{files.meta} cannot be read: {unreadable}"]
+    problems = resume_mismatches(recorded, run_metadata(), files.out)
+    second = files.out / "labels-second.json"
+    for path in (files.labels, *([second] if second.exists() else [])):
+        problem = uncommitted(path)
+        if problem is not None:
+            problems.append(problem)
+    return problems
 
 
 def score_run(out: Path) -> int:
     files = RunFiles(out)
+    blockers = scoring_blockers(files)
+    if blockers:
+        print(f"not scored: {out} does not meet the plan's conditions for scoring.")
+        for blocker in blockers:
+            print(f"  {blocker}")
+        return 2
     try:
         document = score_files(files)
     except NotReady as missing:

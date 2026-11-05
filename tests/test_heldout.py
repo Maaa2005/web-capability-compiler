@@ -11,6 +11,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import contextlib
+import functools
 import gzip
 import hashlib
 import http.server
@@ -22,6 +23,7 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 from collections import Counter
 from collections.abc import Callable, Iterator
 from dataclasses import asdict
@@ -32,20 +34,26 @@ from urllib.parse import urlsplit
 import pytest
 from benchmarks.heldout import plan
 from benchmarks.heldout import run as run_module
-from benchmarks.heldout.__main__ import _printing_never_fails
-from benchmarks.heldout.label import agreement_keys, ask_page, label_pages
+from benchmarks.heldout import score as score_module
+from benchmarks.heldout.__main__ import _printing_never_fails, main
+from benchmarks.heldout.label import agreement_keys, ask_page, label_pages, scored_keys
 from benchmarks.heldout.run import (
     REPO_ROOT,
     CaptureRecord,
+    RobotsUnreachable,
     RunFiles,
     WccRecord,
     _commit_mismatch,
+    _shut_down,
     capture,
     code_sha256,
     free_text_parameters,
     guarded_robots_refusal,
     key_of,
+    load_index,
+    load_wcc,
     run_all,
+    run_metadata,
     visit_candidates,
     wcc_visit,
 )
@@ -55,6 +63,7 @@ from benchmarks.heldout.sample import (
     FrameMismatch,
     draw,
     exclusion,
+    landing_exclusion,
     read_frame,
     site_key,
 )
@@ -65,6 +74,7 @@ from benchmarks.heldout.score import (
     report,
     score_files,
     score_page,
+    score_run,
     select_scored,
     stratum_states,
     title_found,
@@ -382,6 +392,8 @@ def test_scoring_takes_the_first_eligible_pages_and_refuses_an_unlabelled_one() 
     assert tally["top-1k"] == {
         "used": 4,
         "robots": 1,
+        "unreachable": 0,
+        "landed_elsewhere": 0,
         "failed": 0,
         "wcc_error": 0,
         "excluded": 1,
@@ -419,35 +431,77 @@ async def test_the_capture_refuses_what_the_url_policy_refuses(
         )
 
 
-async def test_the_whole_harness_runs_on_the_fixtures(fixture_server: str, tmp_path: Path) -> None:
-    """A dry run: visit, label by script, score. It checks the plumbing only."""
-    pages = ["search-page", "product-list", "filter-page"]
-    candidates = [
-        Candidate("top-1k", i, f"{fixture_server}/{name}", 1_000)
-        for i, name in enumerate(pages, start=1)
+async def _private_capture(url: str, shot: Path, text: Path, record: CaptureRecord) -> None:
+    await capture(url, shot, text, record, allow_private_network=True)
+
+
+async def _private_visit(url: str, record: WccRecord) -> None:
+    await wcc_visit(url, record, allow_private_network=True)
+
+
+def _one_host(final_url: str, kept: dict[str, str]) -> None:
+    """Every loopback candidate has one host, so E4 would rule out all but the first."""
+    del final_url, kept
+
+
+_FIXTURE_PAGES = ("search-page", "product-list", "filter-page")
+
+
+def _fixture_candidates(base: str) -> list[Candidate]:
+    return [
+        Candidate("top-1k", i, f"{base}/{name}", 1_000)
+        for i, name in enumerate(_FIXTURE_PAGES, start=1)
     ]
 
-    async def private_capture(url: str, shot: Path, text: Path, record: CaptureRecord) -> None:
-        await capture(url, shot, text, record, allow_private_network=True)
 
-    async def private_visit(url: str, record: WccRecord) -> None:
-        await wcc_visit(url, record, allow_private_network=True)
+def _assert_the_fixtures_score_as_labelled(document: dict[str, Any]) -> None:
+    """What these three pages must score, given the labels both dry runs write."""
+    m = document["metrics"]
+    assert m["pages"] == 3
+    expected = {"search": (2, 2, 2, 2), "result_list": (1, 1, 1, 1), "next_page": (1, 1, 1, 1)}
+    for kind, (precision_k, precision_n, recall_k, recall_n) in expected.items():
+        assert (m[kind]["precision"]["k"], m[kind]["precision"]["n"]) == (precision_k, precision_n)
+        assert (m[kind]["recall"]["k"], m[kind]["recall"]["n"]) == (recall_k, recall_n)
+        assert m[kind]["precision"]["judged"] is False
+    assert m["unsafe_exposures"]["pages"] == 0
+    assert m["any_capability"]["label_denominator"]["k"] == 3
+    criteria = document["verdict"]["criteria"]
+    assert list(criteria.values()) == ["pass", "not judged", "not judged"]
+    assert document["verdict"]["overall"] == "not judged"
+    assert document["accounting"]["top-1k"]["scored"] == 3
+    by_key = {page["key"]: page for page in document["pages"]}
+    assert by_key["top-1k/001"]["search_right"] and not by_key["top-1k/001"]["results_offered"]
+    assert by_key["top-1k/002"]["results_matched"] and by_key["top-1k/002"]["next_right"]
+    assert by_key["top-1k/003"]["search_right"]
 
+
+async def test_the_whole_harness_runs_on_the_fixtures(fixture_server: str, tmp_path: Path) -> None:
+    """A dry run: visit, label by script, score. It checks the plumbing only."""
+    candidates = _fixture_candidates(fixture_server)
     files = RunFiles(tmp_path)
     await visit_candidates(
         files,
         candidates,
         robots=lambda url: None,
-        take_capture=private_capture,
-        visit=private_visit,
+        take_capture=_private_capture,
+        visit=_private_visit,
         pause_seconds=0,
         per_stratum=3,
         log=lambda _: None,
+        landing=_one_host,
     )
     results = json.loads(files.wcc.read_text())
-    assert all(r["error"] is None for r in results), results
+    assert [r["error"] for r in results] == [None, None, None]
+    assert [r.wcc_complete for r in load_index(files).values()] == [True, True, True]
     search = next(r for r in results if r["key"] == "top-1k/001")
-    assert any(o["category"] == "search" and o["labels"] for o in search["offered"])
+    form = next(o for o in search["offered"] if o["category"] == "search")
+    assert "Search" in form["labels"] and "Search" in form["names"]
+    products = next(r for r in results if r["key"] == "top-1k/002")
+    assert products["result_list"] == [
+        "Wireless Earbuds",
+        "Noise Cancelling Headphones",
+        "Bluetooth Speaker",
+    ]
 
     files.labels.write_text(
         json.dumps(
@@ -455,16 +509,21 @@ async def test_the_whole_harness_runs_on_the_fixtures(fixture_server: str, tmp_p
                 "annotator": "script",
                 "labels": {
                     "top-1k/001": _label(search=True),
-                    "top-1k/002": _label(),
+                    "top-1k/002": _label(
+                        result_list=True,
+                        titles=["Wireless Earbuds", "Bluetooth Speaker"],
+                        next_page=True,
+                    ),
                     "top-1k/003": _label(search=True),
                 },
             }
         )
     )
     document = score_files(files, candidates, per_stratum=3)
-    assert document["metrics"]["pages"] == 3
+    _assert_the_fixtures_score_as_labelled(document)
     assert document["inputs"]["labels.json"]
-    assert document["verdict"]["overall"] in {"pass", "fail", "not judged"}
+    assert document["strata"]["top-1k"] == "complete"
+    assert document["verdict"]["unfinished_strata"] == ["1k-10k", "10k-100k", "100k-1m"]
 
 
 # -- the capture and robots.txt stay inside the URL policy -----------------------
@@ -621,10 +680,8 @@ def test_robots_over_https_tunnels_to_the_origin_and_speaks_tls_itself(
     internal: _Internal,
 ) -> None:
     """The proxy decrypts nothing: what arrives at the origin is the client's handshake."""
-    answer = guarded_robots_refusal(
-        f"https://127.0.0.2:{internal.port}/", allow_private_network=True
-    )
-    assert answer is not None and "disallows" in answer
+    with pytest.raises(RobotsUnreachable):
+        guarded_robots_refusal(f"https://127.0.0.2:{internal.port}/", allow_private_network=True)
     assert internal.hits and internal.hits[0][:1] == b"\x16"  # a TLS handshake record
 
 
@@ -662,8 +719,10 @@ def test_an_unreachable_robots_file_disallows_as_the_benchmarks_reader_does() ->
     with socket.socket() as unused:
         unused.bind(("127.0.0.1", 0))
         port = unused.getsockname()[1]
-    answer = guarded_robots_refusal(f"http://127.0.0.1:{port}/", allow_private_network=True)
-    assert answer is not None and robots_refusal(f"http://127.0.0.1:{port}/") is not None
+    # Neither opens the page. Only the reason differs: nothing here was refused.
+    with pytest.raises(RobotsUnreachable):
+        guarded_robots_refusal(f"http://127.0.0.1:{port}/", allow_private_network=True)
+    assert robots_refusal(f"http://127.0.0.1:{port}/") is not None
 
 
 def test_the_run_of_record_reads_robots_through_the_guard() -> None:
@@ -960,3 +1019,888 @@ def test_the_cli_prints_what_the_console_cannot_encode(monkeypatch: pytest.Monke
     _printing_never_fails()
     print(_NOT_IN_CP932)
     assert b"\\U0001f600" in raw.getvalue()
+
+
+# -- a lost connection is not a refusal --------------------------------------------
+
+
+def _closed_port() -> int:
+    with socket.socket() as unused:
+        unused.bind(("127.0.0.1", 0))
+        return unused.getsockname()[1]
+
+
+def _visiting(**overrides: Any) -> dict[str, Any]:
+    return {
+        "robots": lambda url: None,
+        "take_capture": _fake_capture,
+        "visit": _fake_visit,
+        "pause_seconds": 0,
+        "per_stratum": 2,
+        "log": lambda _: None,
+    } | overrides
+
+
+async def test_a_dropped_connection_is_recorded_as_such_and_tried_on_resume(
+    tmp_path: Path,
+) -> None:
+    files = RunFiles(tmp_path)
+    connected = [True]
+
+    def robots(url: str) -> str | None:
+        if "c1." in url:
+            return "robots.txt disallows this path"
+        if not connected[0]:
+            raise RobotsUnreachable("robots.txt could not be fetched")
+        return None
+
+    async def good_capture(url: str, shot: Path, text: Path, record: CaptureRecord) -> None:
+        await _fake_capture(url.replace("c2.", "cc."), shot, text, record)
+
+    candidates = _candidates(count=4)
+    connected[0] = False
+    settings = _visiting(robots=robots, take_capture=good_capture)
+    assert (await visit_candidates(files, candidates, **settings))["top-1k"] == 0
+    statuses = {key: r.status for key, r in load_index(files).items()}
+    assert statuses == {
+        "top-1k/001": "robots",
+        "top-1k/002": "unreachable",
+        "top-1k/003": "unreachable",
+        "top-1k/004": "unreachable",
+    }
+
+    connected[0] = True
+    assert (await visit_candidates(files, candidates, **settings))["top-1k"] == 2
+    statuses = {key: r.status for key, r in load_index(files).items()}
+    assert statuses == {
+        "top-1k/001": "robots",  # a refusal is final
+        "top-1k/002": "captured",
+        "top-1k/003": "captured",
+        "top-1k/004": "unreachable",  # the stratum had its number, so it was not needed
+    }
+
+
+@pytest.mark.parametrize(
+    ("failure", "status"),
+    [
+        ("navigation to u failed: Page.goto: net::ERR_INTERNET_DISCONNECTED at u", "unreachable"),
+        (
+            "navigation to u failed: Page.goto: net::ERR_TUNNEL_CONNECTION_FAILED at u",
+            "unreachable",
+        ),
+        ("'a.test' does not resolve: getaddrinfo failed", "unreachable"),
+        ("'a.test' resolves to 10.0.0.1, which the policy refuses: private", "failed"),
+        ("the page was too large", "failed"),
+    ],
+)
+async def test_a_capture_that_lost_the_connection_is_tried_again(
+    tmp_path: Path, failure: str, status: str
+) -> None:
+    async def failing(url: str, shot: Path, text: Path, record: CaptureRecord) -> None:
+        del url, shot, text, record
+        raise RuntimeError(failure)
+
+    files = RunFiles(tmp_path)
+    await visit_candidates(files, _candidates(count=1), **_visiting(take_capture=failing))
+    assert load_index(files)["top-1k/001"].status == status
+    await visit_candidates(files, _candidates(count=1), **_visiting())
+    resumed = load_index(files)["top-1k/001"].status
+    assert resumed == ("captured" if status == "unreachable" else status)
+
+
+async def test_a_wcc_visit_that_lost_the_connection_is_tried_again(tmp_path: Path) -> None:
+    async def offline(url: str, record: WccRecord) -> None:
+        del url
+        record.error = "driver_error: navigation failed: net::ERR_CONNECTION_RESET"
+
+    async def broken_page(url: str, record: WccRecord) -> None:
+        del url
+        record.error = "limit_exceeded: too many elements"
+
+    files = RunFiles(tmp_path)
+    await visit_candidates(files, _candidates(count=1), **_visiting(visit=offline))
+    assert load_index(files)["top-1k/001"].status == "unreachable"
+    assert load_wcc(files) == {}
+    await visit_candidates(files, _candidates(count=1), **_visiting(visit=broken_page))
+    record = load_index(files)["top-1k/001"]
+    assert (record.status, record.wcc_complete) == ("captured", False)
+    assert load_wcc(files)["top-1k/001"].error == "limit_exceeded: too many elements"
+
+
+@pytest.mark.parametrize("scheme", ["http", "https"])
+async def test_the_real_capture_and_visit_call_a_closed_port_unreachable(
+    tmp_path: Path, scheme: str
+) -> None:
+    url = f"{scheme}://127.0.0.1:{_closed_port()}"
+    candidates = [Candidate("top-1k", 1, url, 1_000)]
+
+    async def no_capture(url: str, shot: Path, text: Path, record: CaptureRecord) -> None:
+        del shot, text
+        record.final_url = url
+
+    files = RunFiles(tmp_path / "capture")
+    await visit_candidates(files, candidates, **_visiting(take_capture=_private_capture))
+    assert load_index(files)["top-1k/001"].status == "unreachable"
+
+    files = RunFiles(tmp_path / "visit")
+    settings = _visiting(take_capture=no_capture, visit=_private_visit)
+    await visit_candidates(files, candidates, **settings)
+    assert load_index(files)["top-1k/001"].status == "unreachable"
+
+
+def test_a_name_that_does_not_resolve_is_not_a_refusal_by_the_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The proxy reports it through the callback a refused address uses."""
+    real = socket.getaddrinfo
+
+    def no_such_name(host: Any, *args: Any, **kwargs: Any) -> Any:
+        if host == "nowhere.invalid":
+            raise socket.gaierror("no such name")
+        return real(host, *args, **kwargs)
+
+    monkeypatch.setattr(socket, "getaddrinfo", no_such_name)
+    for scheme in ("http", "https"):
+        with pytest.raises(RobotsUnreachable):
+            guarded_robots_refusal(f"{scheme}://nowhere.invalid/")
+
+
+@pytest.mark.parametrize("answer", [[], "slow"])
+def test_a_name_with_no_answer_is_not_a_refusal_by_the_policy(
+    monkeypatch: pytest.MonkeyPatch, answer: Any
+) -> None:
+    async def resolver(host: str, port: int) -> list[str]:
+        del host, port
+        if answer == "slow":
+            await asyncio.sleep(30)
+        return []
+
+    proxy = functools.partial(EgressProxy, resolver=resolver, connect_deadline_s=0.2)
+    monkeypatch.setattr(run_module, "EgressProxy", proxy)
+    with pytest.raises(RobotsUnreachable):
+        guarded_robots_refusal("https://nowhere.invalid/")
+
+
+def test_the_run_says_when_candidates_are_waiting_to_be_tried_again(
+    tmp_path: Path, visits: list[int], capsys: pytest.CaptureFixture[str]
+) -> None:
+    files = RunFiles(tmp_path)
+    assert run_all(tmp_path) == 0
+    assert "could not be reached" not in capsys.readouterr().out
+    run_module._write(files.index, [CaptureRecord("k", "s", 1, "o", "u", "unreachable")])
+    assert run_all(tmp_path) == 0
+    assert "1 candidates could not be reached" in capsys.readouterr().out
+    assert len(visits) == 2
+
+
+def _with_every_other_candidate(files: RunFiles, status: str) -> None:
+    index = json.loads(files.index.read_text(encoding="utf-8"))
+    seen = {record["key"] for record in index}
+    for candidate in _all_candidates():
+        if key_of(candidate) not in seen:
+            index.append(
+                asdict(
+                    CaptureRecord(
+                        key_of(candidate),
+                        candidate.stratum,
+                        candidate.position,
+                        candidate.origin,
+                        candidate.url,
+                        status,
+                    )
+                )
+            )
+    files.index.write_text(json.dumps(index), encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("status", "state"), [("robots", "short"), ("failed", "short"), ("unreachable", "unfinished")]
+)
+def test_two_strata_of_no_pages_are_not_a_pass(tmp_path: Path, status: str, state: str) -> None:
+    files = _write_run(tmp_path, {"top-1k": 15, "1k-10k": 15}, offered=_RIGHT)
+    _with_every_other_candidate(files, status)
+    document = score_files(files, _all_candidates())
+    assert set(document["verdict"]["criteria"].values()) == {"pass"}
+    assert document["strata"]["10k-100k"] == document["strata"]["100k-1m"] == state
+    assert document["verdict"]["overall"] == "not judged"
+    assert document["accounting"]["10k-100k"][status] == plan.CANDIDATES_PER_STRATUM
+
+
+def test_one_stratum_one_page_short_is_not_a_pass(tmp_path: Path) -> None:
+    pages = {s.name: 15 for s in plan.STRATA} | {"top-1k": 14}
+    files = _write_run(tmp_path, pages, offered=_RIGHT)
+    _with_every_other_candidate(files, "robots")
+    document = score_files(files, _all_candidates())
+    assert document["verdict"]["short_strata"] == ["top-1k"]
+    assert document["verdict"]["overall"] == "not judged"
+    assert "used every candidate and came up short, so the run cannot pass" in report(document)
+
+    files = _write_run(tmp_path / "all", {s.name: 15 for s in plan.STRATA}, offered=_RIGHT)
+    assert score_files(files, _all_candidates())["verdict"]["overall"] == "pass"
+
+
+# -- the scoring step checks the conditions before it reads anything ----------------
+
+
+def _in_repo(root: Path, *args: str) -> None:
+    identity = ["-c", "user.name=t", "-c", "user.email=t@t.test", "-c", "commit.gpgsign=false"]
+    subprocess.run(["git", *identity, *args], cwd=root, check=True, capture_output=True)
+
+
+@pytest.fixture
+def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A real git repository standing in for this one. Nothing here touches the real one."""
+    root = (tmp_path / "repo").resolve()
+    root.mkdir()
+    _in_repo(root, "init", "--quiet")
+    _in_repo(root, "commit", "--quiet", "--allow-empty", "-m", "start")
+    monkeypatch.setattr(run_module, "REPO_ROOT", root)
+    monkeypatch.setattr(run_module, "code_sha256", lambda: "code")
+    monkeypatch.setattr(score_module, "load_sample", _all_candidates)
+    return root
+
+
+@pytest.fixture
+def run_of_record(repo: Path) -> RunFiles:
+    """Finished, labelled and committed: half the search labels make T2 fail."""
+    out = repo / "benchmarks" / "results" / "heldout-x"
+    files = _write_run(out, {s.name: 15 for s in plan.STRATA}, offered=_RIGHT)
+    files.meta.write_text(json.dumps(run_metadata()), encoding="utf-8")
+    document = json.loads(files.labels.read_text(encoding="utf-8"))
+    for i, label in enumerate(document["labels"].values()):
+        label["search"] = i % 2 == 0
+    files.labels.write_text(json.dumps(document), encoding="utf-8")
+    _in_repo(repo, "add", "-A")
+    _in_repo(repo, "commit", "--quiet", "-m", "the run and its labels")
+    return files
+
+
+def _assert_stopped(files: RunFiles, capsys: pytest.CaptureFixture[str], reason: str) -> None:
+    capsys.readouterr()
+    assert score_run(files.out) == 2
+    out = capsys.readouterr().out
+    assert "not scored" in out and reason in out
+    assert not (files.out / "score.json").exists()
+    assert not (files.out / "report.md").exists()
+
+
+def test_a_run_under_its_own_conditions_is_scored_and_names_its_plan(
+    run_of_record: RunFiles, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert score_run(run_of_record.out) == 0
+    document = json.loads((run_of_record.out / "score.json").read_text(encoding="utf-8"))
+    assert document["verdict"]["overall"] == "fail"
+    assert (
+        document["run"]["plan_py_sha256"]
+        == hashlib.sha256(Path(plan.__file__).read_bytes()).hexdigest()
+    )
+    text = capsys.readouterr().out
+    for name in ("PLAN.md", "plan.py", "sample.json", "labels.json"):
+        assert f"`{name}`: `{document['inputs'][name]}`" in text
+    assert document["inputs"]["plan.py"] == document["run"]["plan_py_sha256"]
+    assert document["inputs"]["PLAN.md"] == document["run"]["plan_sha256"]
+    assert f"commit `{document['run']['commit']}`" in text
+
+
+def test_a_lowered_threshold_stops_the_score(
+    run_of_record: RunFiles,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source = Path(plan.__file__).read_text(encoding="utf-8")
+    assert "SEARCH_MIN_PRECISION = 0.90" in source
+    edited = tmp_path / "plan.py"
+    edited.write_text(
+        source.replace("SEARCH_MIN_PRECISION = 0.90", "SEARCH_MIN_PRECISION = 0.10"),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(plan, "__file__", str(edited))
+    _assert_stopped(run_of_record, capsys, "plan_py_sha256")
+
+
+@pytest.mark.parametrize(
+    "key", ["code_sha256", "plan_sha256", "plan_py_sha256", "sample_sha256", "commit"]
+)
+def test_a_fingerprint_that_differs_stops_the_score(
+    run_of_record: RunFiles, capsys: pytest.CaptureFixture[str], key: str
+) -> None:
+    recorded = json.loads(run_of_record.meta.read_text(encoding="utf-8"))
+    recorded[key] = "0" * 40
+    run_of_record.meta.write_text(json.dumps(recorded), encoding="utf-8")
+    _in_repo(run_of_record.out, "add", "-A")
+    _in_repo(run_of_record.out, "commit", "--quiet", "-m", "edited")
+    _assert_stopped(run_of_record, capsys, key if key != "commit" else "the run started at commit")
+
+
+def test_a_commit_outside_the_run_stops_the_score(
+    run_of_record: RunFiles, repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (repo / "elsewhere.py").write_text("x = 1\n", encoding="utf-8")
+    _in_repo(repo, "add", "-A")
+    _in_repo(repo, "commit", "--quiet", "-m", "code")
+    _assert_stopped(run_of_record, capsys, "the run started at commit")
+
+
+def test_a_commit_inside_the_run_does_not_stop_the_score(
+    run_of_record: RunFiles, repo: Path
+) -> None:
+    (run_of_record.out / "note.txt").write_text("note\n", encoding="utf-8")
+    _in_repo(repo, "add", "-A")
+    _in_repo(repo, "commit", "--quiet", "-m", "note")
+    assert score_run(run_of_record.out) == 0
+
+
+def test_no_run_file_stops_the_score(
+    run_of_record: RunFiles, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run_of_record.meta.unlink()
+    _assert_stopped(run_of_record, capsys, "run.json is missing")
+
+
+def test_an_unreadable_run_file_stops_the_score(
+    run_of_record: RunFiles, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run_of_record.meta.write_text("{", encoding="utf-8")
+    _assert_stopped(run_of_record, capsys, "cannot be read")
+
+
+@pytest.mark.parametrize("state", ["edited", "staged", "untracked"])
+def test_labels_not_committed_as_they_stand_stop_the_score(
+    run_of_record: RunFiles, repo: Path, capsys: pytest.CaptureFixture[str], state: str
+) -> None:
+    labels = run_of_record.labels
+    if state == "untracked":
+        _in_repo(repo, "rm", "--quiet", "--cached", str(labels))
+        _in_repo(repo, "commit", "--quiet", "-m", "labels out")
+    else:
+        labels.write_text(labels.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+        if state == "staged":
+            _in_repo(repo, "add", "-A")
+    _assert_stopped(run_of_record, capsys, "committed")
+
+
+def test_second_labels_not_committed_stop_the_score(
+    run_of_record: RunFiles, capsys: pytest.CaptureFixture[str]
+) -> None:
+    second = run_of_record.out / "labels-second.json"
+    second.write_text(json.dumps({"annotator": "b", "labels": {}}), encoding="utf-8")
+    _assert_stopped(run_of_record, capsys, "labels-second.json is not committed")
+
+
+def test_a_run_outside_the_repository_cannot_be_scored(
+    repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    del repo
+    files = _write_run(tmp_path / "elsewhere", {"top-1k": 1}, offered=_RIGHT)
+    files.meta.write_text(json.dumps(run_metadata()), encoding="utf-8")
+    _assert_stopped(files, capsys, "outside the repository")
+
+
+# -- limits on one candidate --------------------------------------------------------
+
+
+def test_an_unusable_redirect_on_robots_is_a_failed_candidate(
+    serve: Callable[[Routes], str], tmp_path: Path
+) -> None:
+    base = serve({"/robots.txt": (302, {"Location": "http://[bad/x"}, b"")})
+    good = serve({"/robots.txt": (404, {}, b"")})
+    candidates = [Candidate("top-1k", 1, base, 1_000), Candidate("top-1k", 2, good, 1_000)]
+
+    async def run() -> None:
+        await visit_candidates(
+            RunFiles(tmp_path),
+            candidates,
+            **_visiting(
+                robots=lambda url: guarded_robots_refusal(url, allow_private_network=True),
+                per_stratum=1,
+                landing=_one_host,
+            ),
+        )
+
+    asyncio.run(run())
+    index = load_index(RunFiles(tmp_path))
+    assert index["top-1k/001"].status == "failed"
+    assert "unusable URL" in index["top-1k/001"].reason
+    assert index["top-1k/002"].status == "captured"
+
+
+def test_only_the_start_of_a_huge_robots_file_is_read(serve: Callable[[Routes], str]) -> None:
+    past_the_limit = b"#" * run_module.ROBOTS_MAX_BYTES + b"\nDisallow: /\n"
+    base = serve({"/robots.txt": (200, {}, b"User-agent: *\n" + past_the_limit)})
+    assert guarded_robots_refusal(f"{base}/", allow_private_network=True) is None
+    within = serve({"/robots.txt": (200, {}, b"User-agent: *\nDisallow: /\n#" + past_the_limit)})
+    assert guarded_robots_refusal(f"{within}/", allow_private_network=True) is not None
+
+
+@pytest.mark.parametrize("stage", ["head", "body"])
+def test_a_robots_file_sent_a_byte_at_a_time_runs_out_of_time(
+    monkeypatch: pytest.MonkeyPatch, stage: str
+) -> None:
+    """Each byte resets the socket's timeout, so only a deadline on the whole read ends it."""
+    monkeypatch.setattr(run_module, "ROBOTS_DEADLINE_SECONDS", 1.0)
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+
+    def drip() -> None:
+        with contextlib.suppress(OSError):
+            connection, _ = listener.accept()
+            with connection:
+                connection.recv(65_536)
+                connection.sendall(b"HTTP/1.1 200 OK\r\nX-Slow: ")
+                if stage == "body":
+                    connection.sendall(b"yes\r\n\r\n")
+                while True:
+                    connection.sendall(b"a")
+                    time.sleep(0.05)
+
+    threading.Thread(target=drip, daemon=True).start()
+    started = time.monotonic()
+    try:
+        with pytest.raises(RobotsUnreachable, match="not read within"):
+            guarded_robots_refusal(
+                f"http://127.0.0.1:{listener.getsockname()[1]}/", allow_private_network=True
+            )
+    finally:
+        listener.close()
+    assert time.monotonic() - started < 10
+
+
+async def _never(*args: Any) -> None:
+    del args
+    await asyncio.sleep(3_600)
+
+
+async def test_a_capture_that_never_returns_costs_one_candidate(tmp_path: Path) -> None:
+    async def hangs_on_the_first(url: str, shot: Path, text: Path, record: CaptureRecord) -> None:
+        if "c1." in url:
+            await _never()
+        await _fake_capture(url, shot, text, record)
+
+    files = RunFiles(tmp_path)
+    settings = _visiting(take_capture=hangs_on_the_first, candidate_timeout=0.2, per_stratum=1)
+    assert (await visit_candidates(files, _candidates(count=3), **settings))["top-1k"] == 1
+    index = load_index(files)
+    assert index["top-1k/001"].status == "failed"
+    assert index["top-1k/001"].reason == "timed out after 0.2 s during the capture"
+    assert index["top-1k/003"].status == "captured"
+
+
+async def test_a_wcc_visit_that_never_returns_is_recorded_and_not_counted(tmp_path: Path) -> None:
+    files = RunFiles(tmp_path)
+    settings = _visiting(visit=_never, candidate_timeout=0.2, per_stratum=1)
+    assert (await visit_candidates(files, _candidates(count=1), **settings))["top-1k"] == 0
+    assert load_index(files)["top-1k/001"].status == "captured"
+    assert load_index(files)["top-1k/001"].wcc_complete is False
+    assert load_wcc(files)["top-1k/001"].error == "timed out after 0.2 s during the WCC visit"
+
+
+async def test_a_robots_read_that_never_returns_costs_one_candidate(tmp_path: Path) -> None:
+    release = threading.Event()
+    try:
+        settings = _visiting(robots=lambda url: release.wait(5), candidate_timeout=0.2)
+        await visit_candidates(RunFiles(tmp_path), _candidates(count=1), **settings)
+    finally:
+        release.set()
+    record = load_index(RunFiles(tmp_path))["top-1k/001"]
+    assert (record.status, record.reason) == ("failed", "timed out after 0.2 s during robots.txt")
+
+
+_HUNG = b"<!doctype html><title>h</title><p>h</p><script>setTimeout(()=>{while(1){}},50)</script>"
+
+
+@pytest.mark.parametrize("phase", ["the capture", "the WCC visit"])
+async def test_a_page_that_hangs_the_browser_is_cut_off_and_the_run_goes_on(
+    serve: Callable[[Routes], str], tmp_path: Path, phase: str
+) -> None:
+    base = serve({"/": (200, {"Content-Type": "text/html"}, _HUNG)})
+    candidates = [Candidate("top-1k", 1, base, 1_000)]
+    files = RunFiles(tmp_path)
+    settings = (
+        _visiting(take_capture=_private_capture)
+        if phase == "the capture"
+        else _visiting(visit=_private_visit)
+    )
+    started = time.monotonic()
+    await visit_candidates(files, candidates, **settings, candidate_timeout=6)
+    assert time.monotonic() - started < 40
+    record = load_index(files)["top-1k/001"]
+    if phase == "the capture":
+        assert record.status == "failed"
+        assert record.reason == "timed out after 6 s during the capture"
+    else:
+        assert load_wcc(files)["top-1k/001"].error == "timed out after 6 s during the WCC visit"
+
+
+async def test_a_browser_that_will_not_close_does_not_hold_up_the_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Stuck:
+        shutdown = staticmethod(_never)
+
+    monkeypatch.setattr(run_module, "SHUTDOWN_TIMEOUT_SECONDS", 0.05)
+    await asyncio.wait_for(_shut_down(Stuck()), 5)  # type: ignore[arg-type]
+
+
+# -- labels are compared with what a person can see ---------------------------------
+
+
+_VISIBLE_AND_NAMED = (
+    b"<!doctype html><title>t</title><main>"
+    b"<form action=/search role=search><input type=search name=q aria-label=Search>"
+    b'<button aria-label="Run a query">Go</button></form>'
+    b"<ul>"
+    + b"".join(
+        f'<li class=card><a href="/j{i}" aria-label="Open offer {i}">Join now {i}</a>'
+        f"<p>description {i}</p></li>".encode()
+        for i in range(6)
+    )
+    + b"</ul></main>"
+)
+
+
+async def test_visible_text_is_recorded_and_compared_and_the_name_is_kept(
+    serve: Callable[[Routes], str],
+) -> None:
+    base = serve({"/": (200, {"Content-Type": "text/html"}, _VISIBLE_AND_NAMED)})
+    record = WccRecord("k", f"{base}/")
+    await wcc_visit(f"{base}/", record, allow_private_network=True)
+    assert record.error is None and record.visible_text_unread == 0
+    assert record.result_list[:2] == ["Join now 0", "Join now 1"]
+    assert record.result_list_names[:2] == ["Open offer 0", "Open offer 1"]
+    by_name = {o["name"]: o for o in record.offered}
+    assert by_name["submit_search_form"]["labels"] == ["Go"]
+    assert by_name["submit_search_form"]["names"] == ["Search", "Run a query"]
+    assert by_name["open_result_item"]["labels"][0] == "Join now 0"
+    assert by_name["open_result_item"]["names"][0] == "Open offer 0"
+
+    label = _label(
+        search=True,
+        result_list=True,
+        titles=["Join now 0", "Join now 1"],
+        controls=["Join now 0"],
+    )
+    page = score_page("k", "s", "o", label, record)
+    assert page.results_matched
+    assert page.unsafe == ["open_result_item: Join now 0"]
+    hidden_name = _label(result_list=True, titles=["Open offer 0", "Open offer 1"])
+    assert not score_page("k", "s", "o", hidden_name, record).results_matched
+
+
+_SEARCH_BOX = "<input type=search name=q aria-label=Q>"
+
+
+@pytest.mark.parametrize(
+    ("form", "visible"),
+    [
+        (f"{_SEARCH_BOX}<input type=submit value=Join>", "Join"),
+        (f"{_SEARCH_BOX}<button><span style='display:none'>Hidden </span>Shown</button>", "Shown"),
+        (
+            "<label for=q>Your words</label><input id=q type=search name=q><button>Go</button>",
+            "Your words",
+        ),
+        ("<input type=search name=q placeholder=Words><button>Go</button>", "Words"),
+        (
+            f"{_SEARCH_BOX}<label for=b>Sort</label><select id=b name=b><option>x<option>y</select>"
+            "<button>Go</button>",
+            "Sort",
+        ),
+    ],
+)
+async def test_the_visible_text_of_each_kind_of_control(
+    serve: Callable[[Routes], str], form: str, visible: str
+) -> None:
+    page = f"<!doctype html><title>t</title><form role=search action=/s>{form}</form>"
+    base = serve({"/": (200, {"Content-Type": "text/html"}, page.encode())})
+    record = WccRecord("k", f"{base}/")
+    await wcc_visit(f"{base}/", record, allow_private_network=True)
+    assert record.error is None
+    labels = {label for o in record.offered for label in o["labels"]}
+    assert visible in labels, record.offered
+    assert "Hidden" not in " ".join(labels)
+    assert "x" not in labels
+
+
+def test_the_report_counts_elements_whose_name_stood_in(tmp_path: Path) -> None:
+    files = _write_run(tmp_path, {"top-1k": 2}, offered=_RIGHT)
+    results = json.loads(files.wcc.read_text(encoding="utf-8"))
+    results[0]["visible_text_unread"] = 3
+    files.wcc.write_text(json.dumps(results), encoding="utf-8")
+    document = score_files(files, _all_candidates())
+    assert document["visible_text_unread"] == 3
+    assert "with their name used instead: 3" in report(document)
+
+
+def test_the_report_prints_every_label_and_the_names_that_differ(tmp_path: Path) -> None:
+    labels = ["One", "Two", "Three", "Four", "Five"]
+    offered = [
+        {"name": "x", "category": "submit", "risk": "low", "labels": labels, "names": ["Aria"]}
+    ]
+    files = _write_run(tmp_path, {"top-1k": 1}, offered=offered)
+    text = report(score_files(files, _all_candidates()))
+    assert "x [low] (One, Two, Three, Four, Five) named Aria" in text
+
+
+# -- the landing address is judged too ----------------------------------------------
+
+
+def test_the_landing_rules() -> None:
+    assert landing_exclusion("https://shop.test/", {}) is None
+    assert landing_exclusion("", {}) is None
+    assert "E2" in (landing_exclusion("https://docs.python.org/x", {}) or "")
+    assert "E2" in (landing_exclusion("https://WWW.Wikipedia.ORG/", {}) or "")
+    assert "E4" in (landing_exclusion("https://m.a.test/", {"a.test": "k"}) or "")
+    assert "E4" in (landing_exclusion("https://a.test/", {"a.test": "k"}) or "")
+    assert landing_exclusion("https://b.a.test/", {"a.test": "k"}) is None
+
+
+def _landing_on(where: dict[str, str]) -> Any:
+    async def lands(url: str, shot: Path, text: Path, record: CaptureRecord) -> None:
+        await _fake_capture(url.replace("c2.", "cc."), shot, text, record)
+        for needle, final in where.items():
+            if needle in url:
+                record.final_url = final
+
+    return lands
+
+
+async def test_a_redirect_to_a_development_site_is_replaced_before_wcc_visits(
+    tmp_path: Path,
+) -> None:
+    visited: list[str] = []
+
+    async def visit(url: str, record: WccRecord) -> None:
+        visited.append(url)
+        record.final_url = url
+
+    files = RunFiles(tmp_path)
+    capture_it = _landing_on({"c1.": "https://docs.python.org/3/"})
+    settings = _visiting(take_capture=capture_it, visit=visit, per_stratum=1)
+    assert (await visit_candidates(files, _candidates(count=2), **settings))["top-1k"] == 1
+    record = load_index(files)["top-1k/001"]
+    assert record.status == "landed_elsewhere" and record.reason.startswith("E2")
+    assert visited == ["https://c2.test/"]
+
+
+async def test_a_redirect_to_a_site_already_kept_is_replaced(tmp_path: Path) -> None:
+    files = RunFiles(tmp_path)
+    capture_it = _landing_on(
+        {
+            "c1.": "https://www.shared.test/",
+            "c2.": "https://m.shared.test/",
+            "c3.": "https://c1.test/",
+        }
+    )
+    settings = _visiting(take_capture=capture_it, per_stratum=2)
+    assert (await visit_candidates(files, _candidates(count=4), **settings))["top-1k"] == 2
+    index = load_index(files)
+    assert index["top-1k/001"].status == "captured"
+    for key in ("top-1k/002", "top-1k/003"):  # by where the first ended, and started
+        assert index[key].status == "landed_elsewhere"
+        assert index[key].reason.endswith("the site of top-1k/001")
+    assert index["top-1k/004"].status == "captured"
+
+
+async def test_a_page_that_failed_keeps_no_site_for_itself(tmp_path: Path) -> None:
+    async def broken(url: str, record: WccRecord) -> None:
+        record.final_url = url
+        record.error = "limit_exceeded: too many elements" if "c1." in url else None
+
+    files = RunFiles(tmp_path)
+    capture_it = _landing_on({"c3.": "https://c1.test/"})
+    settings = _visiting(take_capture=capture_it, visit=broken, per_stratum=2)
+    await visit_candidates(files, [c for c in _candidates(count=3) if c.position != 2], **settings)
+    assert load_index(files)["top-1k/003"].status == "captured"
+
+
+async def test_where_wcc_landed_is_judged_too(tmp_path: Path) -> None:
+    async def visit(url: str, record: WccRecord) -> None:
+        record.final_url = "https://docs.python.org/" if "c1." in url else url
+
+    files = RunFiles(tmp_path)
+    settings = _visiting(take_capture=_landing_on({}), visit=visit, per_stratum=1)
+    assert (await visit_candidates(files, _candidates(count=2), **settings))["top-1k"] == 1
+    record = load_index(files)["top-1k/001"]
+    assert record.status == "landed_elsewhere" and "E2" in record.reason
+    assert load_index(files)["top-1k/002"].status == "captured"
+
+
+def test_a_page_that_landed_elsewhere_is_counted_as_used_and_not_scored() -> None:
+    candidates = _candidates(count=2)
+    index = {
+        key_of(c): CaptureRecord(key_of(c), c.stratum, c.position, c.origin, c.url, "captured")
+        for c in candidates
+    }
+    index["top-1k/001"].status = "landed_elsewhere"
+    results = {key: WccRecord(key, "u") for key in index}
+    scored, tally = select_scored(candidates, index, results, {"top-1k/002": _label()}, 1)
+    assert [key_of(c) for c in scored] == ["top-1k/002"]
+    assert tally["top-1k"]["landed_elsewhere"] == 1 and tally["top-1k"]["used"] == 2
+
+
+# -- the second annotator -----------------------------------------------------------
+
+
+def _labelled_run(tmp_path: Path) -> RunFiles:
+    """Six pages: 001 no WCC result, 002 excluded, 003-005 scored, 006 past the window."""
+    files = RunFiles(tmp_path)
+    files.captures.mkdir(parents=True)
+    records, labels = [], {}
+    for position in range(1, 7):
+        key = f"top-1k/{position:03d}"
+        record = CaptureRecord(
+            key, "top-1k", position, f"https://c{position}.test", "u", "captured"
+        )
+        record.wcc_complete = position != 1
+        record.screenshot, record.text = f"{position}.png", f"{position}.txt"
+        records.append(asdict(record))
+        labels[key] = _label(eligible=position != 2)
+    files.index.write_text(json.dumps(records), encoding="utf-8")
+    files.labels.write_text(json.dumps({"annotator": "First", "labels": labels}), encoding="utf-8")
+    # A directory where the results file would be: reading it would raise.
+    files.wcc.mkdir(parents=True)
+    return files
+
+
+_THREE_PAGES = ["top-1k/003", "top-1k/004", "top-1k/005"]
+
+
+def test_the_second_annotator_labels_only_scored_pages(tmp_path: Path) -> None:
+    files = _labelled_run(tmp_path)
+    shown: list[str] = []
+    path = label_pages(
+        files,
+        "Second",
+        second=True,
+        ask=_scripted(*["y", "n", "n", "n", "n"] * 3),
+        say=shown.append,
+        per_stratum=3,
+    )
+    document = json.loads(path.read_text(encoding="utf-8"))
+    assert sorted(document["labels"]) == document["pages"] == _THREE_PAGES
+    assert not any("top-1k/006" in line or "top-1k/001" in line for line in shown)
+
+
+def test_the_pages_for_the_second_annotator_are_the_scores_own(tmp_path: Path) -> None:
+    files = _labelled_run(tmp_path)
+    index = load_index(files)
+    first = json.loads(files.labels.read_text(encoding="utf-8"))["labels"]
+    candidates = [Candidate("top-1k", r.position, r.origin, 1_000) for r in index.values()]
+    results = {
+        k: WccRecord(k, "u", error=None if r.wcc_complete else "x") for k, r in index.items()
+    }
+    scored, _ = select_scored(candidates, index, results, first, 3)
+    assert scored_keys(index, first, 3) == [key_of(c) for c in scored] == _THREE_PAGES
+
+
+def test_the_pages_drawn_stay_drawn_when_labelling_resumes(tmp_path: Path) -> None:
+    files = _labelled_run(tmp_path)
+    second = files.out / "labels-second.json"
+    second.write_text(
+        json.dumps({"annotator": "Second", "pages": ["top-1k/006"], "labels": {}}),
+        encoding="utf-8",
+    )
+    label_pages(
+        files, "Second", second=True, ask=_scripted("y", "n", "n", "n", "n"), say=lambda _: None
+    )
+    assert list(json.loads(second.read_text(encoding="utf-8"))["labels"]) == ["top-1k/006"]
+
+
+@pytest.mark.parametrize("name", ["First", " first "])
+def test_the_second_annotator_cannot_be_the_first(tmp_path: Path, name: str) -> None:
+    files = _labelled_run(tmp_path)
+    with pytest.raises(SystemExit, match="second person"):
+        label_pages(files, name, second=True, ask=_scripted(), say=lambda _: None)
+    assert not (files.out / "labels-second.json").exists()
+
+
+def test_the_second_annotator_waits_for_the_first(tmp_path: Path) -> None:
+    files = _labelled_run(tmp_path)
+    document = json.loads(files.labels.read_text(encoding="utf-8"))
+    del document["labels"]["top-1k/004"]
+    files.labels.write_text(json.dumps(document), encoding="utf-8")
+    with pytest.raises(SystemExit, match="has not finished"):
+        label_pages(files, "Second", second=True, ask=_scripted(), say=lambda _: None)
+
+    files.labels.unlink()
+    with pytest.raises(SystemExit, match="labels first"):
+        label_pages(files, "Second", second=True, ask=_scripted(), say=lambda _: None)
+
+
+# -- the command line, end to end, on loopback ---------------------------------------
+
+
+def test_the_command_line_takes_a_run_from_visits_to_a_report(
+    fixture_server: str,
+    repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``run``, ``label``, ``score``, with the visits pointed at this machine.
+
+    Only three things are replaced: the sample, because the real one is the web; the
+    private-network allowance, because the real one refuses loopback; and the number
+    of pages. The real robots read, capture, WCC visit, labelling prompts, git checks
+    and report all run.
+    """
+    candidates = _fixture_candidates(fixture_server)
+    real_visits = run_module.visit_candidates
+
+    async def on_loopback(files: RunFiles, chosen: list[Candidate]) -> dict[str, int]:
+        return await real_visits(
+            files,
+            chosen,
+            robots=lambda url: guarded_robots_refusal(url, allow_private_network=True),
+            take_capture=_private_capture,
+            visit=_private_visit,
+            pause_seconds=0,
+            per_stratum=3,
+            log=lambda _: None,
+            landing=_one_host,
+        )
+
+    monkeypatch.setattr(run_module, "visit_candidates", on_loopback)
+    monkeypatch.setattr(run_module, "load_sample", lambda: candidates)
+    monkeypatch.setattr(score_module, "load_sample", lambda: candidates)
+
+    out = repo / "benchmarks" / "results" / "heldout-cli"
+    arguments = ["--out", str(out)]
+    assert main(["run", *arguments]) == 0
+    assert "top-1k: 3 of 15 complete pages  (short)" in capsys.readouterr().out
+    assert sorted(r.status for r in load_index(RunFiles(out)).values()) == ["captured"] * 3
+
+    answers = [
+        *("y", "y", "n", "n", "n"),
+        *("y", "n", "y", "Wireless Earbuds", "Bluetooth Speaker", "y", "y", "Add to cart", ""),
+        *("y", "y", "n", "n", "n"),
+    ]
+    monkeypatch.setattr(sys, "stdin", io.StringIO("\n".join(answers) + "\n"))
+    assert main(["label", *arguments, "--annotator", "tester"]) == 0
+    with pytest.raises(SystemExit, match="second person"):
+        main(["label", *arguments, "--annotator", "tester", "--second"])
+    capsys.readouterr()
+
+    # The labels are not committed yet, so WCC's results stay unread.
+    assert main(["score", *arguments]) == 2
+    assert "labels.json is not committed" in capsys.readouterr().out
+    assert not (out / "report.md").exists()
+
+    _in_repo(repo, "add", str(out / "labels.json"))
+    _in_repo(repo, "commit", "--quiet", "-m", "labels")
+    assert main(["score", *arguments]) == 0
+    text = capsys.readouterr().out
+    assert "**Verdict: not judged** over 3 scored pages" in text
+    assert "not finished, so the run cannot pass" in text
+    document = json.loads((out / "score.json").read_text(encoding="utf-8"))
+    _assert_the_fixtures_score_as_labelled(document)
+    assert (out / "report.md").read_text(encoding="utf-8") == text.rstrip("\n") + "\n"
+    assert f"`plan.py`: `{document['run']['plan_py_sha256']}`" in text
+
+    # The same run, with the line moved afterwards, is no longer scored.
+    edited = tmp_path / "plan.py"
+    edited.write_text("SEARCH_MIN_PRECISION = 0.10\n", encoding="utf-8")
+    monkeypatch.setattr(plan, "__file__", str(edited))
+    assert main(["score", *arguments]) == 2
+    assert "plan_py_sha256" in capsys.readouterr().out

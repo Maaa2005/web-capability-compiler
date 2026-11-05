@@ -72,11 +72,21 @@ browser would follow them. For each candidate, in order:
 1. **`robots.txt`.** Read it through WCC's egress proxy, so the URL policy judges
    every redirect hop before anything connects to it, and answer by the rules of
    the benchmark's `robots_refusal`. If it refuses, or the proxy refuses a hop,
-   record the reason and move to the next candidate.
+   record the reason and move to the next candidate. At most 512 KiB is read and
+   parsed (RFC 9309 section 2.5), within 40 s for the whole read. A connection that
+   fails, or a read that runs out of time, is no refusal: the candidate is recorded
+   as unreachable, the run moves on, and a resumed run tries it again. So is a
+   connection that fails at step 2 or 3. A redirect to a URL that cannot be parsed
+   counts as a failed candidate.
 2. **Capture.** Open the page through WCC's driver, behind the same proxy, and
    compile nothing. Wait for the load event plus up to 3 s for the page to go
    quiet. Save a full-page screenshot (cut at 8,000 px) and the visible text.
-   This is what the annotator will see.
+   This is what the annotator will see. The address the page ended on is then
+   judged by E2 and E4, because the draw judged only the origin. If either rule
+   excludes it, the candidate is recorded as landed elsewhere and replaced. The
+   address WCC ended on at step 3 is judged the same way. For E4, "already kept"
+   means the pages so far that have both a capture and a WCC result, by the
+   address each started from and the addresses it ended on.
 3. **WCC.** Open the same URL with WCC:
    - the code as it is at the run's commit, recorded in the results;
    - a fresh store, so every page is compiled cold;
@@ -84,12 +94,18 @@ browser would follow them. For each candidate, in order:
 
    Record:
    - every bound capability with its name and category;
-   - the visible labels of the elements its evidence names;
-   - the result list WCC took;
+   - the visible text of the elements its evidence names, and beside it their
+     accessible names, which can differ (`aria-label`) and which nothing is
+     compared with;
+   - the result list WCC took, the same two ways;
    - its refusals.
 
-   Results go to a file the annotator does not open.
+   An element WCC cannot find again has its name recorded in place of the visible
+   text, and is counted. Results go to a file the annotator does not open.
 4. Pause 2 s, as `measure_coverage.py` does.
+
+A candidate that takes more than 180 s from step 1 to the end of step 3 is cut off,
+recorded with the step it reached, and replaced.
 
 A stratum stops once 15 candidates have both a capture and a WCC result. A
 candidate that failed either is recorded with the reason and replaced by the
@@ -100,8 +116,9 @@ candidate used, so the share of the web that could not be measured is visible.
 A stratum that uses up its 60 candidates before reaching 15 scored pages is
 reported short. It is not topped up with a second draw.
 
-A stratum with fewer than 15 scored pages and candidates still unused is
-unfinished, and is reported as such.
+A stratum with fewer than 15 scored pages and candidates still unused, or still
+waiting to be tried again after a connection failed, is unfinished, and is reported
+as such.
 
 A stopped run can be resumed only under the conditions it started with: the same
 commit, code, plan and sample. `run.json` holds their fingerprints, and a mismatch
@@ -113,7 +130,10 @@ the labels, is not a mismatch.
 - **Who.** A person who has not seen WCC's output for these pages. The
   annotator's name and the time are recorded in `labels.json`.
 - **When.** All labels are committed before the scoring step reads WCC's
-  results.
+  results. The scoring step checks this first, and stops if a labels file is not
+  committed as it stands, if `run.json` is missing, or if the commit, code, plan or
+  sample is not what `run.json` recorded, under the same rule as resuming. The
+  report prints the plan's and the sample's SHA-256.
 - **From what.** The capture only: the screenshot and the visible text. Not the
   live site, which may have changed.
 
@@ -128,7 +148,10 @@ Questions, asked by `python -m benchmarks.heldout label` for each page:
 | Q4 | Is there a control that would change something if used: sign up, log in, subscribe, add to cart, post, vote? | yes / no. If yes, type the visible text of up to three. |
 
 **Agreement (optional).** If a second annotator is available, they label 15 of
-the scored pages, drawn with the same seed, without seeing the first labels.
+the scored pages, drawn with the same seed, without seeing the first labels. They
+are a different person from the first annotator and start once the first has
+finished. The pages are worked out without opening WCC's results: the capture index
+says whether each WCC visit finished, and nothing else about it.
 Cohen's κ is reported for Q1 to Q3. With one annotator, the report says
 "single annotator" as a limitation. The second annotator's labels never replace
 the first annotator's.
@@ -192,8 +215,8 @@ The run **passes** only if all of these hold:
 
 All are point estimates. A precision or recall with fewer than 10 cases behind
 it is reported but not judged. The overall verdict is then **not judged**, not
-a pass. The same goes for a run with an unfinished stratum: it can fail, but it
-cannot pass.
+a pass. The same goes for a run with a stratum that is unfinished or short of 15
+scored pages: it can fail, but it cannot pass.
 
 Why these numbers:
 
@@ -278,3 +301,26 @@ sites were blocked here:
     those WCC would run. The threshold stays at 0.
   - **Resuming.** A run resumed under a different commit, plan or sample without
     saying so. It now stops.
+- 2026-11-06, before any visit: a second review of the harness found more, each
+  reproduced on loopback. No held-out page had been visited. No threshold changed.
+  - **Lost connections.** Every candidate after a dropped connection was recorded as
+    refused by `robots.txt` and never tried again, and a name that did not resolve
+    read as refused by the URL policy. They are now unreachable, and tried again on
+    resume.
+  - **Short strata.** Two strata of 15 and two of 0 scored as a pass, because a
+    short stratum did not stop one. It now does. This is stricter than before.
+  - **Scoring.** Nothing compared `run.json` with the present state or looked at
+    whether the labels were committed, so an edited threshold changed the verdict
+    silently. The scoring step now stops.
+  - **Limits.** A `robots.txt` that never ended, and a page that hung the capture,
+    each stopped the run. A bad redirect target on `robots.txt` crashed it. Each now
+    costs one candidate at most.
+  - **Visible text.** The harness recorded the name with `aria-label` first, while
+    this plan compares what a person can see. It now records both and compares
+    the visible text.
+  - **Redirects.** E2 and E4 were judged on the origin only. The landing address is
+    now judged too. E4 itself is unchanged and still compares hosts, so subdomains
+    of one site can both be drawn; `sample.json` is unchanged.
+  - **Second annotator.** The pages were drawn from everything the first annotator
+    called eligible, not from the scored pages. A second annotator with the first's
+    name is now refused.
