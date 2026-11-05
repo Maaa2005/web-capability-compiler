@@ -10,9 +10,11 @@ through an MCP prompt, and WCC has no such path.
 
 **Pacing.** Requests to one host start at least ``min_interval_seconds`` apart,
 further apart when the site's ``Crawl-delay`` says so, and not before a 429 or
-503's ``Retry-After`` has passed. A wait the runtime is not willing to hold a
-navigation open for is refused with the time to retry instead, because a
-navigation parked for a minute inside a tool call looks to the agent like a hang.
+503's ``Retry-After`` has passed. Fetching ``robots.txt`` is a request like any
+other: it takes a slot, and it can answer 429 or 503 too. A wait the runtime is
+not willing to hold a navigation open for is refused with the time to retry
+instead, because a navigation parked for a minute inside a tool call looks to the
+agent like a hang.
 
 How the answers were chosen, and what was left out, is in ``docs/progress.md``
 ("The runtime asks before it fetches"). The parts that matter when reading code:
@@ -25,24 +27,36 @@ How the answers were chosen, and what was left out, is in ``docs/progress.md``
 - 401 and 403 disallow everything. RFC 9309 counts them as unavailable; this
   follows the reference MCP ``fetch`` server and Python's own reader instead,
   reading a refusal to show the rules as a refusal.
-- Every hop of the ``robots.txt`` fetch passes the same URL policy as a page, so
-  this module cannot be made to request an address the browser could not.
+- Every hop of the ``robots.txt`` fetch passes the same URL policy as a page, and
+  connects to the addresses the policy judged rather than resolving the name again
+  (:func:`http_get`), so neither a redirect nor a DNS answer that changes after the
+  check can make this module request an address the browser could not.
+- A refusal says what kind of answer the file got, not which status it was. The
+  text reaches the agent, and it should not learn more about a host from asking
+  for its ``robots.txt`` than the rules themselves.
+- The fetch has one deadline and one size limit, kept by the thread doing the
+  reading. It runs on a daemon thread, because the default executor is joined when
+  the event loop shuts down and one slow site must not hold the process open.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import functools
+import io
+import logging
+import socket
+import ssl
+import threading
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC
 from email.utils import parsedate_to_datetime
 from enum import StrEnum
-from http.client import HTTPMessage
-from typing import IO
-from urllib.error import HTTPError
+from http.client import HTTPConnection, HTTPResponse
 from urllib.parse import urljoin, urlsplit
-from urllib.request import HTTPRedirectHandler, OpenerDirector, Request, build_opener
 
 from wcc.compiler.route import origin_of
 from wcc.driver.base import (
@@ -52,10 +66,17 @@ from wcc.driver.base import (
     RobotsDisallowedError,
 )
 from wcc.policy.robots import MAX_ROBOTS_BYTES, PRODUCT_TOKEN, RobotsFile, parse_robots
+from wcc.policy.url_policy import Resolver, UrlPolicy, resolve_addresses
+
+logger = logging.getLogger(__name__)
 
 #: RFC 9309 section 2.3.1.2 asks a crawler to follow at least five consecutive
 #: redirects when fetching ``robots.txt``, and lets it treat more as unavailable.
 MAX_ROBOTS_REDIRECTS = 5
+
+#: How much longer than its own deadline the event loop waits for the worker. Only a
+#: lookup can overrun, since ``getaddrinfo`` takes no timeout; the reads cannot.
+_ABANDON_GRACE_SECONDS = 1.0
 
 
 @dataclass(frozen=True)
@@ -78,6 +99,10 @@ class PolitenessSettings:
     effect that did not happen rather than one that was postponed."""
 
     robots_timeout_seconds: float = 5.0
+    """For the whole fetch of one origin's file: every redirect hop, every wait for
+    a hop's slot, and every byte. Not per read, or a site sending one byte at a time
+    could hold the fetch open for as long as it liked."""
+
     robots_ttl_seconds: float = 24 * 60 * 60
     """RFC 9309 section 2.4: a cached copy should not be used for more than 24
     hours unless the file is unreachable."""
@@ -115,6 +140,7 @@ class FetchedResponse:
     status: int
     location: str | None
     body: bytes
+    retry_after: str | None = None
 
 
 Fetch = Callable[[str, float, str], FetchedResponse]
@@ -122,35 +148,160 @@ Fetch = Callable[[str, float, str], FetchedResponse]
 redirects. Raises on a network failure. Blocking; it runs in a worker thread."""
 
 
-class _NoRedirect(HTTPRedirectHandler):
-    """Hand a 3xx back to the caller, which checks the next hop before taking it."""
-
-    def redirect_request(
-        self,
-        req: Request,
-        fp: IO[bytes],
-        code: int,
-        msg: str,
-        headers: HTTPMessage,
-        newurl: str,
-    ) -> Request | None:
-        del req, fp, code, msg, headers, newurl
-        return None
+def _remaining(deadline: float) -> float:
+    """Seconds left before ``deadline``; raises once there are none."""
+    left = deadline - time.monotonic()
+    if left <= 0:
+        raise TimeoutError("the deadline passed")
+    return left
 
 
-_OPENER: OpenerDirector = build_opener(_NoRedirect)
+class _DeadlineReader(io.RawIOBase):
+    """Reads from a socket, with one deadline shared by every read.
+
+    A socket timeout restarts with each ``recv``, so a peer sending one byte per
+    timeout would never trip it, whether in the status line, the headers or the body.
+    """
+
+    def __init__(self, sock: socket.socket, deadline: float) -> None:
+        super().__init__()
+        self._sock = sock
+        self._deadline = deadline
+
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, buffer: bytearray | memoryview) -> int:  # type: ignore[override]
+        self._sock.settimeout(_remaining(self._deadline))
+        return self._sock.recv_into(buffer)
 
 
-def http_get(url: str, timeout: float, user_agent: str) -> FetchedResponse:
-    """One GET with the standard library, reading at most :data:`MAX_ROBOTS_BYTES`."""
-    request = Request(url, headers={"User-Agent": user_agent})
+class _DeadlineSocket:
+    """What :mod:`http.client` is given in place of a socket.
+
+    ``close`` does nothing because ``http.client`` closes its connection as soon as
+    it has a response that ends with the connection, relying on the reference count
+    a real ``makefile`` keeps. :func:`http_get` owns the socket and closes it.
+    """
+
+    def __init__(self, sock: socket.socket, deadline: float) -> None:
+        self._sock = sock
+        self._deadline = deadline
+
+    def sendall(self, data: bytes) -> None:
+        self._sock.settimeout(_remaining(self._deadline))
+        self._sock.sendall(data)
+
+    def makefile(self, mode: str = "rb") -> io.BufferedReader:
+        del mode
+        return io.BufferedReader(_DeadlineReader(self._sock, self._deadline))
+
+    def close(self) -> None:
+        pass
+
+
+def _connect(addresses: Sequence[str], port: int, deadline: float) -> socket.socket:
+    """Connect to the first address that answers, sharing the time between them."""
+    last: OSError | None = None
+    for index, address in enumerate(addresses):
+        share = _remaining(deadline) / (len(addresses) - index)
+        try:
+            return socket.create_connection((address, port), timeout=share)
+        except OSError as failed:
+            last = failed
+    raise last if last is not None else OSError("no address to connect to")
+
+
+def _read_capped(response: HTTPResponse) -> bytes:
+    """At most :data:`MAX_ROBOTS_BYTES` of the body, one network read at a time."""
+    chunks: list[bytes] = []
+    left = MAX_ROBOTS_BYTES
+    while left > 0:
+        chunk = response.read1(left)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        left -= len(chunk)
+    return b"".join(chunks)
+
+
+def http_get(
+    url: str, timeout: float, user_agent: str, addresses: Sequence[str]
+) -> FetchedResponse:
+    """One GET to one of ``addresses``, without following a redirect.
+
+    ``addresses`` are what the URL policy already judged. The name in ``url`` is used
+    only for the ``Host`` header and for checking the certificate, and is never looked
+    up, so there is no moment between the judgement and the connection for a changed
+    DNS answer to use. :mod:`wcc.driver.egress_proxy` holds the browser to the same
+    rule.
+
+    ``timeout`` covers everything from connecting to the last byte, and at most
+    :data:`MAX_ROBOTS_BYTES` of the body is kept.
+    """
+    deadline = time.monotonic() + timeout
+    parts = urlsplit(url)
+    host = parts.hostname or ""
+    secure = parts.scheme.lower() == "https"
+    port = parts.port or (443 if secure else 80)
+    sock = _connect(addresses, port, deadline)
     try:
-        with _OPENER.open(request, timeout=timeout) as response:
-            return FetchedResponse(response.status, None, response.read(MAX_ROBOTS_BYTES))
-    except HTTPError as answered:
-        location = answered.headers.get("Location") if answered.headers else None
-        answered.close()
-        return FetchedResponse(answered.code, location, b"")
+        if secure:
+            sock.settimeout(_remaining(deadline))
+            # Takes the socket over, and closes it if the handshake fails.
+            sock = ssl.create_default_context().wrap_socket(sock, server_hostname=host)
+        connection = HTTPConnection(host, port)
+        # A connection that already has a socket never opens one of its own.
+        connection.sock = _DeadlineSocket(sock, deadline)  # type: ignore[assignment]
+        target = (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
+        connection.request(
+            "GET",
+            target,
+            headers={"Host": parts.netloc, "User-Agent": user_agent, "Connection": "close"},
+        )
+        with connection.getresponse() as response:
+            body = _read_capped(response) if 200 <= response.status < 300 else b""
+            return FetchedResponse(
+                response.status,
+                response.getheader("Location"),
+                body,
+                response.getheader("Retry-After"),
+            )
+    finally:
+        sock.close()
+
+
+async def _on_worker_thread[T](work: Callable[[], T]) -> T:
+    """Run blocking ``work`` on a daemon thread of its own.
+
+    Not :func:`asyncio.to_thread`: its pool is joined when the event loop shuts down,
+    so a worker stuck in ``getaddrinfo``, which no timeout reaches, would hold up the
+    exit of a process that had already stopped waiting for it.
+    """
+    loop = asyncio.get_running_loop()
+    future: asyncio.Future[T] = loop.create_future()
+
+    def deliver(result: T | None, failure: BaseException | None) -> None:
+        if future.done():
+            return  # The caller gave up on this worker.
+        if failure is not None:
+            future.set_exception(failure)
+        else:
+            future.set_result(result)  # type: ignore[arg-type]
+
+    def run() -> None:
+        result: T | None = None
+        failure: BaseException | None = None
+        try:
+            result = work()
+        except BaseException as failed:  # handed to the awaiting coroutine
+            failure = failed
+        # The loop may be gone by the time an abandoned worker finishes.
+        with contextlib.suppress(RuntimeError):
+            loop.call_soon_threadsafe(deliver, result, failure)
+
+    threading.Thread(target=run, name="wcc-robots", daemon=True).start()
+    return await future
 
 
 @dataclass
@@ -165,12 +316,13 @@ class PoliteAccess:
 
     One instance per process, shared by every session, so two sessions on the
     same host share its pace. ``clock``, ``wall_clock``, ``sleep`` and ``fetch``
-    are injectable for tests; nothing else should replace them.
+    are injectable for tests; nothing else should replace them. Leaving ``fetch``
+    out is what connects to the addresses the policy judged.
     """
 
     guard: NavigationGuard
     settings: PolitenessSettings = field(default_factory=PolitenessSettings)
-    fetch: Fetch = http_get
+    fetch: Fetch | None = None
     clock: Callable[[], float] = time.monotonic
     wall_clock: Callable[[], float] = time.time
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
@@ -184,9 +336,15 @@ class PoliteAccess:
     async def admit(
         self, url: str, *, allow_private_network: bool, redirected_from: str | None = None
     ) -> None:
+        host = _host(url)
+        last_start = self._last_start.get(host)
         answer = await self.robots(url, allow_private_network=allow_private_network)
         self._check_robots(answer, url)
         crawl_delay = answer.file.crawl_delay(self.settings.product_token) if answer.file else None
+        # A same-host redirect goes unpaced only because the request before it was
+        # paced. A robots.txt fetch in between is a request the site saw just now.
+        if self._last_start.get(host) != last_start:
+            redirected_from = None
         await self._take_slot(url, crawl_delay, redirected_from)
 
     def observe(self, url: str, status: int, retry_after: str | None) -> None:
@@ -222,45 +380,93 @@ class PoliteAccess:
     async def _fetch_robots(self, origin: str, allow_private_network: bool) -> RobotsAnswer:
         robots_url = f"{origin}/robots.txt"
         timeout = self.settings.robots_timeout_seconds
+        deadline = self.clock() + timeout
         url = robots_url
+        previous: str | None = None
         for _ in range(MAX_ROBOTS_REDIRECTS + 1):
+            # Outside the ``try``: a host holding requests back refuses this
+            # navigation with the time to retry, and is not "unreachable".
+            await self._take_slot(url, None, previous)
+            left = deadline - self.clock()
+            if left <= 0:
+                return _unreachable(robots_url, f"no answer within {timeout:g} s")
             try:
-                await asyncio.to_thread(
-                    self.guard.check, url, allow_private_network=allow_private_network
-                )
                 response = await asyncio.wait_for(
-                    asyncio.to_thread(self.fetch, url, timeout, self.settings.user_agent),
-                    timeout + 1,
+                    _on_worker_thread(
+                        functools.partial(self._fetch_hop, url, left, allow_private_network)
+                    ),
+                    left + _ABANDON_GRACE_SECONDS,
                 )
             except NavigationBlockedError as refused:
                 return _unreachable(robots_url, f"{url} is refused by the URL policy: {refused}")
             except TimeoutError:
                 return _unreachable(robots_url, f"no answer within {timeout:g} s")
             except Exception as failed:  # network, TLS, and malformed-response errors
-                return _unreachable(robots_url, f"{type(failed).__name__}: {failed}")
+                logger.info("fetching %s failed: %s", url, failed)
+                return _unreachable(robots_url, f"the fetch failed ({type(failed).__name__})")
 
             status = response.status
+            self.observe(url, status, response.retry_after)
             if 300 <= status < 400 and response.location:
+                previous = url
                 url = urljoin(url, response.location)
                 continue
+            logger.info("%s answered %d", url, status)
             if 200 <= status < 300:
                 return RobotsAnswer(RobotsStatus.PARSED, robots_url, parse_robots(response.body))
             if status in (401, 403):
                 return RobotsAnswer(
-                    RobotsStatus.RESTRICTED, robots_url, reason=f"it answered {status}"
+                    RobotsStatus.RESTRICTED, robots_url, reason="the site refused to show it"
                 )
             if 400 <= status < 500 and status != 429:
                 return RobotsAnswer(
-                    RobotsStatus.UNAVAILABLE, robots_url, reason=f"it answered {status}"
+                    RobotsStatus.UNAVAILABLE, robots_url, reason="the site has none to show"
                 )
             # 5xx, 429 (which Google also reads as a server error), and anything
             # else that is neither rules nor a clear "there are none".
-            return _unreachable(robots_url, f"it answered {status}")
+            return _unreachable(robots_url, "the site answered with an error")
         return RobotsAnswer(
             RobotsStatus.UNAVAILABLE,
             robots_url,
             reason=f"more than {MAX_ROBOTS_REDIRECTS} redirects",
         )
+
+    def _fetch_hop(self, url: str, timeout: float, allow_private_network: bool) -> FetchedResponse:
+        """Judge ``url`` and ask it. Blocking; runs on the worker thread.
+
+        Judged here rather than before the wait for the slot, so the answer that is
+        connected to is the newest one. The time a lookup takes comes out of
+        ``timeout``.
+        """
+        deadline = time.monotonic() + timeout
+        self.guard.check(url, allow_private_network=allow_private_network)
+        user_agent = self.settings.user_agent
+        if self.fetch is not None:
+            return self.fetch(url, timeout, user_agent)
+        addresses = self._judged_addresses(url, allow_private_network)
+        return http_get(url, _remaining(deadline), user_agent, addresses)
+
+    def _judged_addresses(self, url: str, allow_private_network: bool) -> list[str]:
+        """Every address the name in ``url`` has now, all of them admitted by the guard.
+
+        What ``guard.check(url)`` looked at cannot be reused: the protocol answers
+        yes or no, and does not say which addresses it meant. So this looks the name
+        up once more and judges each address as itself, which is how the egress proxy
+        does it, and those literals are all that gets connected to.
+        """
+        host = _host(url)
+        resolver: Resolver = (
+            self.guard.resolver if isinstance(self.guard, UrlPolicy) else resolve_addresses
+        )
+        addresses = list(dict.fromkeys(resolver(host)))
+        if not addresses:
+            raise NavigationBlockedError(f"{host!r} resolved to no addresses")
+        for address in addresses:
+            if "%" in address:
+                raise NavigationBlockedError(f"{host!r} resolved to the scoped address {address}")
+            literal = f"[{address}]" if ":" in address else address
+            self.guard.check(f"http://{literal}/", allow_private_network=allow_private_network)
+        return addresses
 
     def _check_robots(self, answer: RobotsAnswer, url: str) -> None:
         token = self.settings.product_token
@@ -323,7 +529,9 @@ def _retry_after_seconds(value: str | None, now: float) -> float | None:
     if value is None:
         return None
     value = value.strip()
-    if value.isdigit():
+    # ``isdigit`` alone also accepts characters such as a superscript two, which
+    # ``float`` then rejects.
+    if value.isascii() and value.isdigit():
         return float(value)
     try:
         when = parsedate_to_datetime(value)
