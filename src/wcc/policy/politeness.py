@@ -531,7 +531,7 @@ class PoliteAccess:
             if host in self._last_start:
                 earliest = max(earliest, self._last_start[host] + interval)
             wait = max(0.0, earliest - now)
-            if now + wait > hold_until:
+            if wait > 0 and now + wait > hold_until:  # the clock has moved on since hold_until
                 raise RateLimitedError(
                     f"the next request to {host} may start in {wait:.1f} s; retry after that",
                     retry_after_seconds=wait,

@@ -465,6 +465,22 @@ async def test_crawl_delay_widens_the_interval() -> None:
     assert clock.slept == [1.5, 1.5]
 
 
+class TickingClock(Clock):
+    """A clock that moves on between two reads, as a fine-grained real one does."""
+
+    def __call__(self) -> float:
+        self.now += 0.000001
+        return self.now
+
+
+async def test_a_request_with_nothing_to_wait_for_is_never_refused() -> None:
+    site = Site({"https://a.test/robots.txt": ok("User-agent: *\n")})
+    polite = access(site, TickingClock(), max_wait_seconds=0, min_interval_seconds=60)
+    with pytest.raises(RateLimitedError):
+        await admit(polite, "https://a.test/1")
+    assert [url for url, _ in site.calls] == ["https://a.test/robots.txt"]
+
+
 async def test_a_wait_longer_than_the_limit_is_refused_with_the_time_to_retry() -> None:
     site = Site({"https://a.test/robots.txt": ok("User-agent: *\nCrawl-delay: 10\n")})
     clock = Clock()
