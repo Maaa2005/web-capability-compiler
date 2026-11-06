@@ -1,0 +1,6 @@
+# Pinned by SHA-256 in benchmarks/heldout/plan.py: the bytes must not change on checkout.
+benchmarks/heldout/public_suffix_list.dat -text
+benchmarks/heldout/blocked_in_frame.txt -text
+benchmarks/heldout/sample.json -text
+benchmarks/heldout/PLAN.md -text
+benchmarks/heldout/plan.py -text

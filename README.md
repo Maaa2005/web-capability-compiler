@@ -84,6 +84,13 @@ the `*` and `$` wildcards of RFC 9309; a file that cannot be read counts as
 disallowing. (This is the benchmark script, not the MCP server: see below.)
 Observed 2026-10-23 — reproduce with `uv run python -m benchmarks.measure_coverage`.
 
+**These are not unseen pages any more.** The compiler's rules have been changed by
+looking at these same 22 pages since August, so the figure below is a development
+figure, and it counts any capability as success, right or wrong. A held-out
+measurement on 60 sites drawn from the Chrome UX Report top million, with its pass
+line fixed in advance, is planned in
+[`benchmarks/heldout/PLAN.md`](benchmarks/heldout/PLAN.md) and has not been run yet.
+
 | | |
 |---|---|
 | observed (5 skipped by robots.txt) | 17 |

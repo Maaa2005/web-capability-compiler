@@ -22,3 +22,8 @@ benchmarks/results/smoke/
 
 # Loop-harness state, which is a scratch file rather than a fact about the repo.
 loop_status.md
+
+# Held-out captures are screenshots and text of other people's sites. Their
+# SHA-256 is in captures/index.json; the files themselves stay local.
+benchmarks/results/heldout-*/captures/*.png
+benchmarks/results/heldout-*/captures/*.txt
