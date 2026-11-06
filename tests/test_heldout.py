@@ -1834,7 +1834,7 @@ def test_the_landing_rules() -> None:
     assert "E4" in (landing_exclusion("https://m.a.test/", {"a.test": "k"}) or "")
     assert "E4" in (landing_exclusion("https://a.test/", {"a.test": "k"}) or "")
     assert "E4" in (landing_exclusion("https://b.a.test/", {"a.test": "k"}) or "")
-        assert landing_exclusion("https://b.test/", {"a.test": "k"}) is None
+    assert landing_exclusion("https://b.test/", {"a.test": "k"}) is None
 
 
 def _landing_on(where: dict[str, str]) -> Any:
@@ -2491,9 +2491,7 @@ def test_the_site_of_a_host_follows_the_pinned_list(host: str, site: str) -> Non
     assert site_key(host) == site
 
 
-def test_a_changed_suffix_list_is_refused(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_changed_suffix_list_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from benchmarks.heldout import sample
 
     edited = tmp_path / "public_suffix_list.dat"

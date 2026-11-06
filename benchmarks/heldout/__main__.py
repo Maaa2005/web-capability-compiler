@@ -53,9 +53,7 @@ def main(argv: list[str] | None = None) -> int:
 
         files = {name: arguments.ut1 / f"{name}.domains" for name in plan.UT1_CATEGORIES}
         hosts = build_frame_blocklist(read_frame(arguments.frame), files)
-        BLOCKLIST_PATH.write_text(
-            "\n".join(hosts) + "\n", encoding="utf-8", newline="\n"
-        )
+        BLOCKLIST_PATH.write_text("\n".join(hosts) + "\n", encoding="utf-8", newline="\n")
         print(f"{len(hosts)} hosts -> {BLOCKLIST_PATH}")
         return 0
     if arguments.step == "sample":
