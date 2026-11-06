@@ -59,8 +59,16 @@ The rules, all fixed before drawing:
   subdomain of one.
 - **E3.** The host contains none of the adult words in `plan.py`. Nobody should
   be asked to label such a site; the annotator excludes any that get through.
-- **E4.** Its host differs from every origin already kept, in any stratum, once a
-  leading `www.` or `m.` is removed. One site gets one page.
+- **E5.** Neither the host nor any parent domain of it is in a pinned public
+  category list as adult or gambling (added 2026-11-04, before any visit; see the
+  change log). The list is the University of Toulouse Capitole's UT1 blacklists,
+  categories `adult`, `mixed_adult`, `gambling` and `arjel`. The draw reads
+  `blocked_in_frame.txt`, the frame's hosts those files list.
+- **E4.** Its registrable domain differs from that of every origin already kept, in
+  any stratum, by the pinned Public Suffix List (`public_suffix_list.dat`, private
+  section included, so `a.github.io` and `b.github.io` are two sites and
+  `one.google.com` and `myactivity.google.com` are one). One site gets one page.
+  Changed from a host comparison on 2026-11-07; see the change log.
 
 The drawn candidates are committed as `sample.json` before any visit.
 
@@ -300,6 +308,48 @@ sites were blocked here:
   - **Search.** A form WCC classifies as a filter but which has a free-text box
     lets an agent search by words, which is what Q1 asks. The table counted
     only category `search`.
+- 2026-11-04, before any visit and before this sample was visited: **the project
+  owner asked that adult and gambling sites be left out** (reported by the parent
+  session: "成人向け・賭け事のサイトを除いて"). The host-word rule E3 catches only
+  names with an obvious word, so rule **E5** was added.
+  - **List.** UT1 (Université Toulouse Capitole), fetched from the university's
+    own site, `https://dsi.ut-capitole.fr/blacklists/download/blacklists.tar.gz`
+    (Last-Modified 2026-11-03 21:50:17 GMT, SHA-256 in `plan.py`). Licence CC BY-SA
+    4.0, as stated in a GitHub mirror's README; the university's own page was
+    unavailable (503) when read. Chosen over the Blocklist Project (licence stated
+    two ways, repository archived), StevenBlack/hosts and OISD (much smaller, or no
+    licence and no way to pin a version), and Cloudflare's categories (no bulk
+    list). Precedent: RefinedWeb filters with a blocklist built on the same
+    university's lists (arXiv 2306.01116, appendix G.1); *Beyond the Crawl*
+    (arXiv 2502.01608) drops adult and gambling sites from a CrUX sample with
+    Cloudflare's categories and says so under its limitations.
+  - **Categories.** `adult` ("some adult site from erotic to hard pornography"),
+    `mixed_adult` ("websites which contain adult sections unstructured"),
+    `gambling` ("gambling and games sites, casino, etc") and `arjel` (the French
+    gambling regulator's approved operators). Not used: `sexual_education`,
+    which the list's own description says "can be misdetected as porn".
+  - **Matching.** A host is out if it or any parent domain is listed. The lists
+    carry no `www.`, so that is how `www.` hosts match.
+  - **Pinning.** UT1 changes daily and publishes no hash, so the four category
+    files are pinned by SHA-256 (`plan.py`), and their intersection with the
+    frame is committed as `blocked_in_frame.txt` (15,342 hosts, SHA-256 in
+    `plan.py`); the draw reads that file. Anyone with the same four files can
+    rebuild it (`python -m benchmarks.heldout blocklist`).
+  - **Limits, stated in advance.** A domain list marks a site, not a page, and its
+    coverage is imperfect: Vallina et al. (IMC 2020) found category coverage
+    "varies enormously" between providers and labels inconsistent. Some adult or
+    gambling sites will remain, and the annotator still excludes any (Q0). Some
+    sites listed will not be adult or gambling at all; they are out of the frame
+    too, so **the claim of this run is about CrUX origins that UT1 does not mark
+    adult or gambling, not about the web.** The sample is redrawn with the same
+    seed and shuffle order, so a candidate survives unless E5 removes it.
+  - **No change after the run.** This rule was fixed here, before any page was
+    visited, and is not to be changed in the light of the result.
+  - **CrUX terms.** The CrUX dataset by Google is under CC BY 4.0 (`developer.chrome.com/docs/crux/methodology`,
+    "License"); the `crux-top-lists` repository has no licence file and calls
+    itself "simply a cache of that public data". Attribution: CrUX (Google, CC BY
+    4.0), September 2026 file. No restriction on publishing origin names was
+    found; this is not legal advice. Google Cloud's dataset terms were not read.
 - 2026-11-06, before any visit: a review of the harness found gaps, each
   reproduced on loopback. No held-out page had been visited.
   - **Capture.** Plain Chromium checked URLs only, so a WebSocket reached a refused
@@ -350,3 +400,34 @@ sites were blocked here:
     redirect and the landing address are now asked about too.
   - **Second annotator.** The draw could be made and kept from the pages of a run
     still in progress. It now waits until every stratum is complete or short.
+- 2026-11-07: **correction, and a fresh start of the measurement.** Decided by the
+  project owner on 2026-11-07 ("全部推奨どおり"), after the facts below were put to them.
+  - **A visit did happen.** On 2026-11-04 (from 09:45 UTC) all four strata were visited
+    from commit `7f90f26`, which was never pushed. This branch went on without it and
+    without rule E5. So the entries above dated 2026-11-06 that say "before any visit"
+    and "No held-out page had been visited" are **wrong**. They are left as written and
+    corrected here. Their changes were made after that visit.
+  - **That visit is not used.** It has no labels and has not been scored. Its plan and
+    sample fingerprints are not this plan's, so the scorer refuses it anyway. It stays
+    outside the repository. Nothing from it feeds this plan or sample.
+  - **What was seen of it.** Nothing here records anyone reading WCC's results from that
+    visit before these changes; that is unconfirmed, not shown. On 2026-11-07 its result
+    file was opened only for its field names, its count and its hosts, in order to count
+    sites drawn twice. Two hosts were one site under E4's new wording.
+  - **E5 restored.** The two unpushed commits are merged, so the rule and its list are
+    back, unchanged.
+  - **Unsafe exposure.** The owner accepted the 2026-11-06 narrowing to capabilities
+    WCC would run. Because it was made after the visit above, it is stated here. The
+    threshold stays at 0, and the report still prints every bound capability and risk.
+  - **E4.** The rule read "one site gets one page" but compared hosts. It now uses the
+    pinned Public Suffix List, fetched from its own home (version in `plan.py`). Chosen
+    over a hand list of parents (nobody here should choose them) and the `tldextract`
+    package (its copy changes with the package version). The private section is kept
+    because those are separately owned sites, which is how browsers treat them.
+  - **Numbers.** The owner accepted the limits added during review: `robots.txt` at
+    most 512 KiB within 40 s, and 180 s per candidate. They bound the tool's time and
+    are not in the pass line.
+  - **Sample.** Redrawn with the same seed and shuffle order, so a candidate survives
+    unless E4 or E5 removes it. Many of the sites are therefore the ones visited on
+    2026-11-04. WCC's code has not changed since then in the light of that visit. No
+    threshold changed. The visit is repeated from the commit that holds this entry.

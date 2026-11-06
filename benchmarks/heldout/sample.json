@@ -37,8 +37,18 @@
     }
   ],
   "candidates_per_stratum": 60,
+  "blocklists": [
+    {
+      "name": "ut1-adult-gambling-in-frame",
+      "url": "benchmarks/heldout/blocked_in_frame.txt",
+      "sha256": "2fe6085368e840bf6ecad0e938c666014af79733cd2e961101e268b2a469f3d1"
+    }
+  ],
   "excluded_while_drawing": {
-    "E3": 8
+    "E2": 1,
+    "E3": 10,
+    "E4": 8,
+    "E5": 8
   },
   "candidates": [
     {
@@ -50,355 +60,355 @@
     {
       "stratum": "top-1k",
       "position": 2,
-      "origin": "https://supjav.com",
-      "rank_bucket": 1000
-    },
-    {
-      "stratum": "top-1k",
-      "position": 3,
       "origin": "https://web.whatsapp.com",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 4,
+      "position": 3,
       "origin": "https://myactivity.google.com",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 5,
+      "position": 4,
       "origin": "https://github.com",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 6,
-      "origin": "https://one.google.com",
-      "rank_bucket": 1000
-    },
-    {
-      "stratum": "top-1k",
-      "position": 7,
+      "position": 5,
       "origin": "https://sigizikesga.kemkes.go.id",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 8,
+      "position": 6,
       "origin": "https://passbook.epfindia.gov.in",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 9,
+      "position": 7,
       "origin": "https://liteapks.com",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 10,
+      "position": 8,
       "origin": "https://videeyss.shop",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 11,
+      "position": 9,
       "origin": "https://www.bol.com",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 12,
+      "position": 10,
       "origin": "https://sinoptik.ua",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 13,
+      "position": 11,
       "origin": "https://tabs.ultimate-guitar.com",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 14,
+      "position": 12,
       "origin": "https://m.9ffyu1g9c.com",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 15,
+      "position": 13,
       "origin": "https://www.google.com.hk",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 16,
+      "position": 14,
       "origin": "https://www.walmart.com",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 17,
+      "position": 15,
       "origin": "https://www.aajtak.in",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 18,
+      "position": 16,
       "origin": "https://game.granbluefantasy.jp",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 19,
-      "origin": "https://calendar.google.com",
-      "rank_bucket": 1000
-    },
-    {
-      "stratum": "top-1k",
-      "position": 20,
+      "position": 17,
       "origin": "https://e-okul.meb.gov.tr",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 21,
+      "position": 18,
       "origin": "https://jable.tv",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 22,
+      "position": 19,
       "origin": "https://www.mykamababa.com",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 23,
+      "position": 20,
       "origin": "https://www.aftonbladet.se",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 24,
+      "position": 21,
       "origin": "https://login.classlink.com",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 25,
+      "position": 22,
       "origin": "https://www.spotify.com",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 26,
+      "position": 23,
       "origin": "https://www.cdiscount.com",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 27,
-      "origin": "https://m.beboo.ru",
-      "rank_bucket": 1000
-    },
-    {
-      "stratum": "top-1k",
-      "position": 28,
+      "position": 24,
       "origin": "https://g1.globo.com",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 29,
+      "position": 25,
       "origin": "https://shopee.com.br",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 30,
-      "origin": "https://meet.google.com",
-      "rank_bucket": 1000
-    },
-    {
-      "stratum": "top-1k",
-      "position": 31,
-      "origin": "https://missav123.com",
-      "rank_bucket": 1000
-    },
-    {
-      "stratum": "top-1k",
-      "position": 32,
+      "position": 26,
       "origin": "https://xhspot.com",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 33,
+      "position": 27,
       "origin": "https://tools.usps.com",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 34,
+      "position": 28,
       "origin": "https://new5.hdhub4u.cl",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 35,
+      "position": 29,
       "origin": "https://loteriasdominicanas.com",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 36,
+      "position": 30,
       "origin": "https://hrms.indianrail.gov.in",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 37,
+      "position": 31,
       "origin": "https://www.croxyproxy.com",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 38,
+      "position": 32,
       "origin": "https://az24.vn",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 39,
+      "position": 33,
       "origin": "https://www.3bmeteo.com",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 40,
+      "position": 34,
       "origin": "https://my.konami.net",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 41,
+      "position": 35,
       "origin": "https://socialregistry.wb.gov.in",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 42,
-      "origin": "https://www.mediafire.com",
-      "rank_bucket": 1000
-    },
-    {
-      "stratum": "top-1k",
-      "position": 43,
+      "position": 36,
       "origin": "https://ewaybillgst.gov.in",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 44,
+      "position": 37,
       "origin": "https://www.cronista.com",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 45,
+      "position": 38,
       "origin": "https://mechacomic.jp",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 46,
+      "position": 39,
       "origin": "https://sattamatkajodi.net",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 47,
+      "position": 40,
       "origin": "https://archive.org",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 48,
-      "origin": "https://photos.google.com",
-      "rank_bucket": 1000
-    },
-    {
-      "stratum": "top-1k",
-      "position": 49,
+      "position": 41,
       "origin": "https://www.msn.com",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 50,
-      "origin": "https://es.erome.com",
-      "rank_bucket": 1000
-    },
-    {
-      "stratum": "top-1k",
-      "position": 51,
+      "position": 42,
       "origin": "https://race.sp.netkeiba.com",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 52,
+      "position": 43,
       "origin": "https://shop.app",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 53,
+      "position": 44,
       "origin": "https://www.disneyplus.com",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 54,
-      "origin": "https://news.google.com",
-      "rank_bucket": 1000
-    },
-    {
-      "stratum": "top-1k",
-      "position": 55,
-      "origin": "https://www.wnacg.com",
-      "rank_bucket": 1000
-    },
-    {
-      "stratum": "top-1k",
-      "position": 56,
+      "position": 45,
       "origin": "https://beauty.hotpepper.jp",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 57,
+      "position": 46,
       "origin": "https://corp.sbi.bank.in",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 58,
+      "position": 47,
       "origin": "https://darkero.com",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 59,
+      "position": 48,
       "origin": "https://xnhau.cab",
       "rank_bucket": 1000
     },
     {
       "stratum": "top-1k",
-      "position": 60,
+      "position": 49,
       "origin": "https://accounts.digitallocker.gov.in",
+      "rank_bucket": 1000
+    },
+    {
+      "stratum": "top-1k",
+      "position": 50,
+      "origin": "https://jp.indeed.com",
+      "rank_bucket": 1000
+    },
+    {
+      "stratum": "top-1k",
+      "position": 51,
+      "origin": "https://www.amazon.com.br",
+      "rank_bucket": 1000
+    },
+    {
+      "stratum": "top-1k",
+      "position": 52,
+      "origin": "https://www.flipkart.com",
+      "rank_bucket": 1000
+    },
+    {
+      "stratum": "top-1k",
+      "position": 53,
+      "origin": "https://icp.administracionelectronica.gob.es",
+      "rank_bucket": 1000
+    },
+    {
+      "stratum": "top-1k",
+      "position": 54,
+      "origin": "https://bit.ly",
+      "rank_bucket": 1000
+    },
+    {
+      "stratum": "top-1k",
+      "position": 55,
+      "origin": "https://www.dailymail.com",
+      "rank_bucket": 1000
+    },
+    {
+      "stratum": "top-1k",
+      "position": 56,
+      "origin": "https://ncode.syosetu.com",
+      "rank_bucket": 1000
+    },
+    {
+      "stratum": "top-1k",
+      "position": 57,
+      "origin": "https://www.otomoto.pl",
+      "rank_bucket": 1000
+    },
+    {
+      "stratum": "top-1k",
+      "position": 58,
+      "origin": "https://www.espn.com.ve",
+      "rank_bucket": 1000
+    },
+    {
+      "stratum": "top-1k",
+      "position": 59,
+      "origin": "https://cibnext.icici.bank.in",
+      "rank_bucket": 1000
+    },
+    {
+      "stratum": "top-1k",
+      "position": 60,
+      "origin": "https://services.gst.gov.in",
       "rank_bucket": 1000
     },
     {
@@ -632,134 +642,134 @@
     {
       "stratum": "1k-10k",
       "position": 39,
-      "origin": "https://gshow.globo.com",
-      "rank_bucket": 5000
-    },
-    {
-      "stratum": "1k-10k",
-      "position": 40,
       "origin": "https://ran.joyn.de",
       "rank_bucket": 10000
     },
     {
       "stratum": "1k-10k",
-      "position": 41,
+      "position": 40,
       "origin": "https://www.currys.co.uk",
       "rank_bucket": 5000
     },
     {
       "stratum": "1k-10k",
-      "position": 42,
-      "origin": "https://edu.google.com",
-      "rank_bucket": 10000
-    },
-    {
-      "stratum": "1k-10k",
-      "position": 43,
+      "position": 41,
       "origin": "https://srikandi.arsip.go.id",
       "rank_bucket": 10000
     },
     {
       "stratum": "1k-10k",
-      "position": 44,
+      "position": 42,
       "origin": "https://www.meteolive.it",
       "rank_bucket": 10000
     },
     {
       "stratum": "1k-10k",
-      "position": 45,
+      "position": 43,
       "origin": "https://www.sinarharian.com.my",
       "rank_bucket": 10000
     },
     {
       "stratum": "1k-10k",
-      "position": 46,
+      "position": 44,
       "origin": "https://mx.search.yahoo.com",
       "rank_bucket": 5000
     },
     {
       "stratum": "1k-10k",
-      "position": 47,
+      "position": 45,
       "origin": "https://www.vinted.pl",
       "rank_bucket": 5000
     },
     {
       "stratum": "1k-10k",
-      "position": 48,
+      "position": 46,
       "origin": "https://www.yaplakal.com",
       "rank_bucket": 5000
     },
     {
       "stratum": "1k-10k",
-      "position": 49,
+      "position": 47,
       "origin": "https://lewdgames.to",
       "rank_bucket": 10000
     },
     {
       "stratum": "1k-10k",
-      "position": 50,
+      "position": 48,
       "origin": "https://www.gsuplementos.com.br",
       "rank_bucket": 10000
     },
     {
       "stratum": "1k-10k",
-      "position": 51,
+      "position": 49,
       "origin": "https://www.flashscore.com.ve",
       "rank_bucket": 5000
     },
     {
       "stratum": "1k-10k",
-      "position": 52,
+      "position": 50,
       "origin": "https://www.e1.ru",
       "rank_bucket": 10000
     },
     {
       "stratum": "1k-10k",
-      "position": 53,
+      "position": 51,
       "origin": "https://seks.ws",
       "rank_bucket": 5000
     },
     {
       "stratum": "1k-10k",
-      "position": 54,
+      "position": 52,
       "origin": "https://t.17track.net",
       "rank_bucket": 10000
     },
     {
       "stratum": "1k-10k",
-      "position": 55,
+      "position": 53,
       "origin": "https://www.chunichi.co.jp",
       "rank_bucket": 5000
     },
     {
       "stratum": "1k-10k",
-      "position": 56,
+      "position": 54,
       "origin": "https://play.d1mquqjm.com",
       "rank_bucket": 5000
     },
     {
       "stratum": "1k-10k",
-      "position": 57,
+      "position": 55,
       "origin": "https://www.hudl.com",
       "rank_bucket": 5000
     },
     {
       "stratum": "1k-10k",
-      "position": 58,
+      "position": 56,
       "origin": "https://www.hellowork.com",
       "rank_bucket": 5000
     },
     {
       "stratum": "1k-10k",
-      "position": 59,
+      "position": 57,
       "origin": "https://www.chileatiende.gob.cl",
       "rank_bucket": 5000
     },
     {
       "stratum": "1k-10k",
-      "position": 60,
+      "position": 58,
       "origin": "https://h5.xiaohei.com",
       "rank_bucket": 5000
+    },
+    {
+      "stratum": "1k-10k",
+      "position": 59,
+      "origin": "https://iforgot.apple.com",
+      "rank_bucket": 10000
+    },
+    {
+      "stratum": "1k-10k",
+      "position": 60,
+      "origin": "https://mobile.btolat.com",
+      "rank_bucket": 10000
     },
     {
       "stratum": "10k-100k",
@@ -1052,74 +1062,74 @@
     {
       "stratum": "10k-100k",
       "position": 49,
-      "origin": "https://rti.rajasthan.gov.in",
-      "rank_bucket": 100000
-    },
-    {
-      "stratum": "10k-100k",
-      "position": 50,
       "origin": "https://reddy66.red",
       "rank_bucket": 100000
     },
     {
       "stratum": "10k-100k",
-      "position": 51,
+      "position": 50,
       "origin": "https://reviewer.springernature.com",
       "rank_bucket": 100000
     },
     {
       "stratum": "10k-100k",
-      "position": 52,
+      "position": 51,
       "origin": "https://developer.microsoft.com",
       "rank_bucket": 100000
     },
     {
       "stratum": "10k-100k",
-      "position": 53,
+      "position": 52,
       "origin": "https://drivers.softpedia.com",
       "rank_bucket": 100000
     },
     {
       "stratum": "10k-100k",
-      "position": 54,
+      "position": 53,
       "origin": "https://www.armurerie-loisir.fr",
       "rank_bucket": 100000
     },
     {
       "stratum": "10k-100k",
-      "position": 55,
+      "position": 54,
       "origin": "https://www.reg.ru",
       "rank_bucket": 50000
     },
     {
       "stratum": "10k-100k",
-      "position": 56,
+      "position": 55,
       "origin": "https://ovale2.ffr.fr",
       "rank_bucket": 50000
     },
     {
       "stratum": "10k-100k",
-      "position": 57,
+      "position": 56,
       "origin": "https://auth.burgerking.com.br",
       "rank_bucket": 100000
     },
     {
       "stratum": "10k-100k",
-      "position": 58,
+      "position": 57,
       "origin": "https://app.cigotracker.com",
       "rank_bucket": 100000
     },
     {
       "stratum": "10k-100k",
-      "position": 59,
+      "position": 58,
       "origin": "https://www.bestiesantuyberhadiah.com",
       "rank_bucket": 100000
     },
     {
       "stratum": "10k-100k",
-      "position": 60,
+      "position": 59,
       "origin": "https://cocinachilena.cl",
       "rank_bucket": 100000
+    },
+    {
+      "stratum": "10k-100k",
+      "position": 60,
+      "origin": "https://rutracker.net",
+      "rank_bucket": 50000
     },
     {
       "stratum": "100k-1m",

@@ -108,7 +108,7 @@ def test_the_exclusion_rules_are_the_plans() -> None:
 
 def test_www_and_m_are_the_same_site() -> None:
     assert site_key("www.a.test") == site_key("m.a.test") == site_key("a.test") == "a.test"
-    assert site_key("shop.a.test") == "shop.a.test"
+    assert site_key("shop.a.test") == "a.test"
 
 
 def _rows() -> list[tuple[str, int]]:
@@ -1833,7 +1833,8 @@ def test_the_landing_rules() -> None:
     assert "E2" in (landing_exclusion("https://WWW.Wikipedia.ORG/", {}) or "")
     assert "E4" in (landing_exclusion("https://m.a.test/", {"a.test": "k"}) or "")
     assert "E4" in (landing_exclusion("https://a.test/", {"a.test": "k"}) or "")
-    assert landing_exclusion("https://b.a.test/", {"a.test": "k"}) is None
+    assert "E4" in (landing_exclusion("https://b.a.test/", {"a.test": "k"}) or "")
+        assert landing_exclusion("https://b.test/", {"a.test": "k"}) is None
 
 
 def _landing_on(where: dict[str, str]) -> Any:
@@ -2415,3 +2416,99 @@ def test_the_command_line_takes_a_run_from_visits_to_a_report(
     monkeypatch.setattr(plan, "__file__", str(edited))
     assert main(["score", *arguments]) == 2
     assert "plan_py_sha256" in capsys.readouterr().out
+
+
+# -- E5: adult and gambling sites, from a pinned public list ---------------------
+
+
+def test_a_host_is_blocked_by_itself_or_by_a_parent_domain() -> None:
+    from benchmarks.heldout.sample import blocked
+
+    domains = frozenset({"casino.test", "bad.example.org"})
+    assert blocked("casino.test", domains)
+    assert blocked("www.casino.test", domains)
+    assert blocked("a.b.casino.test", domains)
+    assert blocked("bad.example.org", domains)
+    assert not blocked("example.org", domains)
+    assert not blocked("notcasino.test", domains)
+    assert not blocked("test", frozenset({"test"})), "a bare top-level name is never matched"
+
+
+def test_the_blocklist_rule_is_e5_and_comes_after_the_plans_other_rules() -> None:
+    blocklist = frozenset({"casino.test"})
+    assert exclusion("https://www.casino.test", blocklist) == "E5"
+    assert exclusion("http://casino.test", blocklist) == "E1"
+    assert exclusion("https://news.test", blocklist) is None
+
+
+def test_a_blocklist_file_with_the_wrong_hash_is_refused(tmp_path: Path) -> None:
+    from benchmarks.heldout.sample import BlocklistMismatch, read_blocklist
+
+    path = tmp_path / "list.txt"
+    path.write_text("casino.test\n# comment\n\n0.0.0.0 hosts.test\n")
+    with pytest.raises(BlocklistMismatch):
+        read_blocklist(path, "0" * 64)
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    assert read_blocklist(path, digest) == {"casino.test", "hosts.test"}
+
+
+def test_the_committed_blocklist_is_the_one_the_plan_names() -> None:
+    from benchmarks.heldout import plan
+    from benchmarks.heldout.sample import BLOCKLIST_PATH
+
+    assert hashlib.sha256(BLOCKLIST_PATH.read_bytes()).hexdigest() == plan.BLOCKLISTS[0].sha256
+
+
+def test_the_committed_sample_contains_no_host_on_the_committed_blocklist() -> None:
+    from benchmarks.heldout import plan
+    from benchmarks.heldout.sample import BLOCKLIST_PATH, blocked, load_sample, read_blocklist
+
+    domains = read_blocklist(BLOCKLIST_PATH, plan.BLOCKLISTS[0].sha256)
+    assert not [c.origin for c in load_sample() if blocked(c.host, domains)]
+
+
+# -- E4: one site, by the pinned Public Suffix List ------------------------------
+
+
+@pytest.mark.parametrize(
+    ("host", "site"),
+    [
+        ("www.example.com", "example.com"),
+        ("one.google.com", "google.com"),
+        ("myactivity.google.com", "google.com"),
+        ("a.b.example.co.uk", "example.co.uk"),
+        ("alice.github.io", "alice.github.io"),
+        ("b.c.kobe.jp", "b.c.kobe.jp"),
+        ("a.b.c.kobe.jp", "b.c.kobe.jp"),
+        ("www.city.kobe.jp", "city.kobe.jp"),
+        ("com", "com"),
+        ("github.io", "github.io"),
+        ("192.0.2.1", "192.0.2.1"),
+        ("WWW.Example.COM.", "example.com"),
+    ],
+)
+def test_the_site_of_a_host_follows_the_pinned_list(host: str, site: str) -> None:
+    assert site_key(host) == site
+
+
+def test_a_changed_suffix_list_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from benchmarks.heldout import sample
+
+    edited = tmp_path / "public_suffix_list.dat"
+    edited.write_text("com\n", encoding="utf-8")
+    monkeypatch.setattr(sample, "SUFFIX_LIST_PATH", edited)
+    sample.suffix_rules.cache_clear()
+    try:
+        with pytest.raises(sample.SuffixListMismatch):
+            sample.suffix_rules()
+    finally:
+        sample.suffix_rules.cache_clear()
+
+
+def test_the_committed_sample_has_one_page_for_each_site() -> None:
+    from benchmarks.heldout.sample import load_sample
+
+    keys = [site_key(c.host) for c in load_sample()]
+    assert len(keys) == len(set(keys))

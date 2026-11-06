@@ -2773,3 +2773,10 @@ Second round on the review findings (11/4), each written as a failing test first
 Public pages through the proxy (`benchmarks/results/coverage-20261104-egress-proxy.json`, run 2026-11-04 with the benchmark's `robots.txt` handling and pauses): 22 visited, 5 skipped by `robots.txt` or unreachable `robots.txt` (as on 2026-10-23), 0 failed, 17 observed, 13 with a capability (76%), 21 refusals. The same numbers as `coverage-20261023.json`, so the proxy changes nothing the compiler sees on real sites, including HTTPS, redirects and subresources.
 
 `COMPILER_REVISION` is 2 from the result-list margin on: stored page classes compiled under revision 1 are compiled again on their next inspection, so the margin reaches pages already in the store.
+
+## 2026-11-07 held-out evaluation: fresh start
+
+The 2026-11-04 visit (commit `7f90f26`, never pushed) is not used; `benchmarks/heldout/PLAN.md`
+says why in its change log. Owner's decisions on 2026-11-07: keep the narrowed unsafe exposure,
+make E4 one registrable domain by a pinned Public Suffix List, keep the tool's limits. Rule E5 is
+back. The sample is redrawn. Next: visit from the commit holding that entry, a person labels, then score.
