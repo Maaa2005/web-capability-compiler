@@ -897,7 +897,15 @@ def test_a_run_resumes_under_the_conditions_it_started_with(
 
 
 @pytest.mark.parametrize(
-    "key", ["commit", "code_sha256", "plan_sha256", "plan_py_sha256", "sample_sha256"]
+    "key",
+    [
+        "commit",
+        "code_sha256",
+        "plan_sha256",
+        "plan_py_sha256",
+        "sample_sha256",
+        "suffix_list_sha256",
+    ],
 )
 @pytest.mark.parametrize("change", ["differs", "missing"])
 def test_a_run_stops_when_a_fingerprint_does_not_match(
@@ -1352,7 +1360,15 @@ def test_a_lowered_threshold_stops_the_score(
 
 
 @pytest.mark.parametrize(
-    "key", ["code_sha256", "plan_sha256", "plan_py_sha256", "sample_sha256", "commit"]
+    "key",
+    [
+        "code_sha256",
+        "plan_sha256",
+        "plan_py_sha256",
+        "sample_sha256",
+        "suffix_list_sha256",
+        "commit",
+    ],
 )
 def test_a_fingerprint_that_differs_stops_the_score(
     run_of_record: RunFiles, capsys: pytest.CaptureFixture[str], key: str
@@ -2510,3 +2526,37 @@ def test_the_committed_sample_has_one_page_for_each_site() -> None:
 
     keys = [site_key(c.host) for c in load_sample()]
     assert len(keys) == len(set(keys))
+
+
+def test_a_changed_suffix_list_stops_a_visit_before_it_starts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from benchmarks.heldout import sample
+
+    edited = tmp_path / "public_suffix_list.dat"
+    edited.write_text("com", encoding="utf-8")
+    monkeypatch.setattr(sample, "SUFFIX_LIST_PATH", edited)
+    sample.suffix_rules.cache_clear()
+    try:
+        assert run_module.run_all(tmp_path / "run") == 2
+    finally:
+        sample.suffix_rules.cache_clear()
+    assert "not started" in capsys.readouterr().out
+    assert not (tmp_path / "run").exists()
+
+
+def test_the_code_fingerprint_does_not_depend_on_line_endings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "benchmarks").mkdir()
+    source = tmp_path / "src" / "a.py"
+    (tmp_path / "benchmarks" / "measure_coverage.py").write_bytes(b"x = 1\n")
+    monkeypatch.setattr(run_module, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(run_module, "__file__", str(tmp_path / "benchmarks" / "run.py"))
+    source.write_bytes(b"x = 1\ny = 2\n")
+    with_lf = run_module.code_sha256()
+    source.write_bytes(b"x = 1\r\ny = 2\r\n")
+    assert run_module.code_sha256() == with_lf
+    source.write_bytes(b"x = 1\ny = 3\n")
+    assert run_module.code_sha256() != with_lf

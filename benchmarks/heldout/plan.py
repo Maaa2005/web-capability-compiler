@@ -126,7 +126,7 @@ BLOCKLISTS: tuple[Blocklist, ...] = (
     Blocklist(
         "ut1-adult-gambling-in-frame",
         "benchmarks/heldout/blocked_in_frame.txt",
-        "2fe6085368e840bf6ecad0e938c666014af79733cd2e961101e268b2a469f3d1",
+        "8cbe22b5b5410602b8d6707fbf57194b61b242929a6109d3d8d10f7480ade636",
     ),
 )
 

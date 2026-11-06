@@ -55,10 +55,13 @@ from playwright.async_api import Response
 from benchmarks.heldout import plan
 from benchmarks.heldout.sample import (
     SAMPLE_PATH,
+    SUFFIX_LIST_PATH,
     Candidate,
+    SuffixListMismatch,
     landing_exclusion,
     load_sample,
     site_key,
+    suffix_rules,
 )
 from benchmarks.measure_coverage import PAUSE_SECONDS, ROBOTS_TIMEOUT_SECONDS, USER_AGENT
 from wcc.compiler.navigation import find_result_links
@@ -604,6 +607,8 @@ def code_sha256() -> str:
     """One digest of the code a visit runs, including what is not committed yet.
 
     The commit alone cannot say this: an edit to ``src`` leaves ``HEAD`` where it was.
+    Line endings are evened out first, so that one commit has one digest on every
+    checkout, whatever git did to the line endings of the source files.
     """
     paths = [
         *(REPO_ROOT / "src").rglob("*.py"),
@@ -613,7 +618,8 @@ def code_sha256() -> str:
     digest = hashlib.sha256()
     for path in sorted(paths):
         digest.update(path.relative_to(REPO_ROOT).as_posix().encode("utf-8"))
-        digest.update(hashlib.sha256(path.read_bytes()).digest())
+        source = path.read_bytes().replace(b"\r\n", b"\n")
+        digest.update(hashlib.sha256(source).digest())
     return digest.hexdigest()
 
 
@@ -630,6 +636,7 @@ def run_metadata() -> dict[str, Any]:
         "plan_sha256": _sha256(Path(__file__).with_name("PLAN.md")),
         "plan_py_sha256": _sha256(Path(plan.__file__)),
         "sample_sha256": _sha256(SAMPLE_PATH),
+        "suffix_list_sha256": _sha256(SUFFIX_LIST_PATH),
     }
 
 
@@ -661,7 +668,13 @@ def resume_mismatches(recorded: dict[str, Any], now: dict[str, Any], out: Path) 
     """What differs from when the run started. A missing fingerprint counts as different."""
     problems = [
         f"{key}: the run started with {recorded.get(key)}, and this is {now[key]}"
-        for key in ("code_sha256", "plan_sha256", "plan_py_sha256", "sample_sha256")
+        for key in (
+            "code_sha256",
+            "plan_sha256",
+            "plan_py_sha256",
+            "sample_sha256",
+            "suffix_list_sha256",
+        )
         if recorded.get(key) != now[key]
     ]
     commit = _commit_mismatch(str(recorded.get("commit") or ""), now["commit"], out)
@@ -765,6 +778,8 @@ async def _visit_one(
             if outcome.complete:
                 phase = "robots.txt of where WCC landed"
                 refused_where_wcc_landed = await robots_on_the_way(outcome.final_url)
+    except SuffixListMismatch:
+        raise
     except Exception as failed:
         cut_off = limit.expired()
         reason = (
@@ -876,6 +891,11 @@ async def visit_candidates(
 
 def run_all(out: Path, *, only_stratum: str = "") -> int:
     files = RunFiles(out)
+    try:
+        suffix_rules()
+    except SuffixListMismatch as failed:
+        print(f"not started: {failed}")
+        return 2
     not_committed = plan_not_committed()
     if not_committed:
         print("not started: the plan and the sample are committed before any visit.")

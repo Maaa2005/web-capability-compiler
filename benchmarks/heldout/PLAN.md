@@ -414,8 +414,10 @@ sites were blocked here:
     visit before these changes; that is unconfirmed, not shown. On 2026-11-07 its result
     file was opened only for its field names, its count and its hosts, in order to count
     sites drawn twice. Two hosts were one site under E4's new wording.
-  - **E5 restored.** The two unpushed commits are merged, so the rule and its list are
-    back, unchanged.
+  - **E5 restored.** The two unpushed commits are merged, so the rule and the hosts on
+    its list are back, unchanged. The file's old pin was of a Windows copy with CRLF line
+    endings, so nobody could rebuild it to that value. It is now pinned with LF endings
+    (`plan.py`), which is what the `blocklist` step writes. The hosts are the same.
   - **Unsafe exposure.** The owner accepted the 2026-11-06 narrowing to capabilities
     WCC would run. Because it was made after the visit above, it is stated here. The
     threshold stays at 0, and the report still prints every bound capability and risk.
