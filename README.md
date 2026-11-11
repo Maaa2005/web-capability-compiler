@@ -268,6 +268,29 @@ survives navigation.
 
 ---
 
+## How it asks for pages
+
+The server reads each site's `robots.txt` before it opens a page there, and
+paces its requests. It applies to `open_session` and to every page a capability
+navigates to, redirects included.
+
+- **`robots.txt`** is matched for the token `wcc`, falling back to the `*` group.
+  A disallowed page is refused with `robots_disallowed`. A file that cannot be
+  read (a server error, a 429, no answer within 5 s) refuses too, as RFC 9309
+  says; a missing file (404) restricts nothing. Each file is cached for a day.
+- **Pacing.** Requests to one host start at least 1 s apart, further apart if
+  the site sets `Crawl-delay`, and not before a 429 or 503's `Retry-After`. A
+  wait of up to 2 s is waited out; a longer one is refused with `rate_limited`
+  and the seconds to wait.
+- **It says who it is.** The browser's User-Agent ends in
+  `wcc/<version> (+https://github.com/Maaa2005/web-capability-compiler)`.
+
+There is no switch to turn either off. Why these rules, and which ones other
+tools use, is in [`docs/progress.md`](docs/progress.md) ("The runtime asks
+before it fetches").
+
+---
+
 ## Configuration
 
 Set by whoever launches the server, never by an agent over the wire.

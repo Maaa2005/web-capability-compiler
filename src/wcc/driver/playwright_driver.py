@@ -4,9 +4,11 @@ This module is the only place in the runtime allowed to import Playwright
 (specification 4.1, ``AGENTS.md`` rule 10); ``tests/test_driver_isolation.py``
 enforces that with an AST walk.
 
-Navigation is validated *before* it is committed. Playwright's routing layer sees
-every document request, including each redirect hop, so the guard runs on the hop
-itself and a refused hop is aborted rather than loaded and regretted. Downloads,
+Navigation is validated *before* it is committed. Playwright's routing layer calls
+its handler only for the first URL of a request and never for the hops of a redirect,
+so hops are paused through a CDP session of the driver's own
+(:meth:`PlaywrightDriver._arm_redirect_hops`). The guard and the admission run on the
+hop itself, and a refused hop is aborted rather than loaded and regretted. Downloads,
 popups, and newly opened pages are recorded as :class:`NavigationEvent` values and
 left for the runtime policy layer to judge; the driver never decides policy
 (specification 4.2).
@@ -15,6 +17,7 @@ left for the runtime policy layer to judge; the driver never decides policy
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 from collections.abc import Coroutine
 from dataclasses import dataclass, field
@@ -25,6 +28,7 @@ from urllib.parse import urlsplit
 from playwright.async_api import (
     Browser,
     BrowserContext,
+    CDPSession,
     Download,
     ElementHandle,
     FileChooser,
@@ -49,6 +53,7 @@ from wcc.compiler.collections import build_collection, parse_structured_data
 from wcc.compiler.fingerprints import page_signature, structural_hash
 from wcc.compiler.route import normalize_route_pattern, origin_of
 from wcc.driver.base import (
+    DocumentAdmission,
     DocumentIdentity,
     DriverError,
     DriverNotReadyError,
@@ -96,6 +101,12 @@ _NO_LOCAL_DNS = ["--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE 127.0.0.1"]
 _DOCUMENT_TOKEN = "__wccDocumentToken"
 _MUTATION_CLOCK = "__wccLastMutation"
 _IDENTITY_READ_ATTEMPTS = 3
+
+#: Redirect chains remembered per session. A chain's entry is replaced at each hop and
+#: nothing announces that a chain has ended, so the oldest are dropped past this. A
+#: page would need this many documents loading at once to lose track of one, and the
+#: chain it lost would then be counted from zero and paced as a first request.
+_MAX_TRACKED_CHAINS = 64
 
 #: How often the settle loop asks the page whether it has gone quiet. Short enough
 #: that the quiet period is measured rather than rounded up to it.
@@ -176,19 +187,19 @@ _SETTLE_PROBE = f"""
 """
 
 
-def _redirect_depth(request: Request) -> int:
-    """Count the hops that led to ``request``.
+def _is_top_document(session: _Session, request: Request) -> bool:
+    """Whether ``request`` would replace the page's own document.
 
-    Walked from the request rather than counted per session: two navigations in one
-    session are two chains, and a counter that did not reset would refuse the
-    second for the sins of the first.
+    Only these go through the admission. A frame's document, like an image, is
+    part of rendering a page that was already admitted.
     """
-    depth = 0
-    hop = request.redirected_from
-    while hop is not None:
-        depth += 1
-        hop = hop.redirected_from
-    return depth
+    if request.resource_type != "document":
+        return False
+    try:
+        return request.frame == session.page.main_frame
+    except PlaywrightError:
+        # A request with no frame (a service worker's) is not the page's document.
+        return False
 
 
 _WEBSOCKET_SCHEMES = {"ws": "http", "wss": "https"}
@@ -208,10 +219,8 @@ def _http_equivalent(url: str) -> str:
 
 
 def _event_kind(request: Request) -> str:
-    """Name a refused request so the runtime can tell a hop from a subresource."""
-    if request.resource_type != "document":
-        return "subresource"
-    return "redirect" if request.redirected_from else "navigation"
+    """Name a refused first request. A refused hop is named where hops are judged."""
+    return "navigation" if request.resource_type == "document" else "subresource"
 
 
 @dataclass
@@ -252,6 +261,23 @@ class _Session:
     current_document_id: str | None = None
     current_snapshot_id: str | None = None
 
+    admission_refusal: NavigationBlockedError | None = None
+    """The most recent document the admission refused, kept typed.
+
+    A refused route reaches ``goto`` and ``click`` as a bare network error, and the
+    event log keeps only prose. Holding the exception is what lets an agent get
+    ``robots_disallowed`` or ``rate_limited`` as a code rather than as a sentence.
+    """
+
+    main_frame_id: str | None = None
+    """The CDP name of the page's main frame, to tell its hops from a frame's."""
+
+    redirect_chains: dict[str, tuple[str, int]] = field(default_factory=dict)
+    """For each document request paused last, its URL and how many hops led to it.
+
+    Keyed by the CDP request ID, which is what the next hop names as its origin.
+    """
+
 
 class PlaywrightDriver:
     """Drive Chromium through Playwright's async API.
@@ -259,14 +285,21 @@ class PlaywrightDriver:
     The navigation guard is a constructor requirement rather than an optional
     extra: a driver with no guard would silently navigate anywhere, and
     specification 4.2 keeps policy decisions out of the driver entirely.
+
+    The admission is optional. Without one the driver asks no site's
+    ``robots.txt`` and paces nothing, which is what the benchmarks and the
+    fixture tests want and what they did before; the runtime always passes one
+    (:func:`wcc.mcp.server.build_service`, held by a test).
     """
 
     def __init__(
         self,
         navigation_guard: NavigationGuard,
         settings: DriverSettings | None = None,
+        admission: DocumentAdmission | None = None,
     ) -> None:
         self._guard = navigation_guard
+        self._admission = admission
         self._settings = settings or DriverSettings()
         self._limits = self._settings.limits
         self._playwright: Playwright | None = None
@@ -275,6 +308,12 @@ class PlaywrightDriver:
         self._reserved: set[str] = set()
         self._lock = asyncio.Lock()
         self._cleanups: set[asyncio.Task[Any]] = set()
+        self._hop_answers: set[asyncio.Task[None]] = set()
+        self._user_agents: dict[bool, str] = {}
+
+    @property
+    def admission(self) -> DocumentAdmission | None:
+        return self._admission
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -311,6 +350,7 @@ class PlaywrightDriver:
                 locale=request.locale,
                 accept_downloads=False,
                 service_workers="block",
+                user_agent=await self._user_agent(browser, headless=request.headless),
                 proxy=proxy,
             )
             page = await context.new_page()
@@ -346,6 +386,8 @@ class PlaywrightDriver:
                     f"loading {request.url} exceeded {self._limits.page_load_timeout_ms} ms"
                 ) from exc
             except PlaywrightError as exc:
+                if session.admission_refusal is not None:
+                    raise session.admission_refusal from exc
                 blocked = next((e for e in session.events if e.blocked), None)
                 if blocked is not None:
                     raise NavigationBlockedError(
@@ -497,6 +539,12 @@ class PlaywrightDriver:
         """Close every session and release the browser processes."""
         if not await self.drain_cleanups():
             self._abandon_cleanups()
+        # A hop still waiting on the admission is refused, not left for a closing
+        # browser to answer.
+        for answer in list(self._hop_answers):
+            answer.cancel()
+        if self._hop_answers:
+            await asyncio.wait(list(self._hop_answers), timeout=1)
         failures: list[BaseException] = []
         for session_id in list(self._sessions):
             try:
@@ -977,6 +1025,7 @@ class PlaywrightDriver:
         succeeded = True
         error_code: str | None = None
         error_message: str | None = None
+        session.admission_refusal = None
         try:
             await self._perform(element, action, timeout)
         except PlaywrightTimeoutError as exc:
@@ -985,6 +1034,13 @@ class PlaywrightDriver:
             succeeded, error_code, error_message = False, "action_failed", str(exc)
 
         identity = await self.identify(session_id)
+        settled = await self._settled_quietly(session)
+        refusal = session.admission_refusal
+        if refusal is not None and succeeded:
+            # The click itself worked; the navigation it started was refused before
+            # it was sent. That is the step failing, with the refusal's own code,
+            # rather than a success whose effect then quietly never appears.
+            succeeded, error_code, error_message = False, refusal.code, refusal.message
         return ActionObservation(
             action=action,
             succeeded=succeeded,
@@ -992,7 +1048,7 @@ class PlaywrightDriver:
             document_id=identity.document_id,
             snapshot_id=identity.snapshot_id,
             document_changed=before is not None and identity.document_id != before,
-            settled=await self._settled_quietly(session),
+            settled=settled,
             navigation_events=list(session.events),
             error_code=error_code,
             error_message=error_message,
@@ -1131,6 +1187,177 @@ class PlaywrightDriver:
                 self._browsers[headless] = browser
             return browser
 
+    async def _user_agent(self, browser: Browser, *, headless: bool) -> str | None:
+        """The browser's own User-Agent with the configured suffix, or ``None``.
+
+        Playwright can replace a User-Agent but not extend one, so the browser's is
+        read once from a blank page. Replacing it with a made-up string instead
+        would tell sites this is a different browser from the one they are
+        talking to, which is the opposite of what the suffix is for.
+        """
+        suffix = self._settings.user_agent_suffix.strip()
+        if not suffix:
+            return None
+        known = self._user_agents.get(headless)
+        if known is None:
+            probe = await browser.new_context()
+            try:
+                page = await probe.new_page()
+                known = str(await page.evaluate("navigator.userAgent"))
+            finally:
+                await probe.close()
+            self._user_agents[headless] = known
+        return f"{known} {suffix}"
+
+    def _guard_refuses(self, session: _Session, url: str, kind: str) -> bool:
+        """Ask the URL policy about ``url``, recording a refusal."""
+        try:
+            self._guard.check(url, allow_private_network=session.allow_private_network)
+        except NavigationBlockedError as blocked:
+            session.events.append(
+                NavigationEvent(kind=kind, url=url, blocked=True, reason=blocked.message)
+            )
+            return True
+        return False
+
+    async def _admission_refuses(
+        self, session: _Session, url: str, kind: str, *, redirected_from: str | None
+    ) -> bool:
+        """Ask the admission about a top-level document, recording a refusal."""
+        if self._admission is None:
+            return False
+        try:
+            try:
+                await self._admission.admit(
+                    url,
+                    allow_private_network=session.allow_private_network,
+                    redirected_from=redirected_from,
+                )
+            except NavigationBlockedError:
+                raise
+            except Exception as broke:
+                # An admission that cannot decide has not admitted. Raised out of a
+                # route handler, the error would leave the request pending until the
+                # page-load limit instead.
+                raise NavigationBlockedError(
+                    f"could not decide whether {url} may be requested: {broke}"
+                ) from broke
+        except NavigationBlockedError as refused:
+            session.admission_refusal = refused
+            session.events.append(
+                NavigationEvent(
+                    kind=kind, url=url, blocked=True, reason=f"{refused.code}: {refused.message}"
+                )
+            )
+            return True
+        return False
+
+    async def _arm_redirect_hops(self, session: _Session) -> None:
+        """Judge every redirect hop of the page's requests before it is sent.
+
+        ``context.route`` cannot do this. Playwright calls a route handler only for
+        the first URL of a request and continues the hops by itself, and watching
+        responses is too late, because Chromium has already sent the next request
+        when the event arrives. The ``Fetch`` domain of a second CDP session pauses
+        each hop independently of the one Playwright uses, and the hop goes nowhere
+        until this answers.
+
+        Every request of the page pauses here, because a pattern cannot say "only
+        hops". First requests are released straight away for ``on_route`` to judge.
+
+        Scope: a CDP session sees the target it is attached to. Hops in a cross-site
+        frame or a Worker run in targets of their own and do not pass through here;
+        those are not top-level documents, so only the URL policy is at stake, and
+        that is what the egress proxy holds on every connection.
+        """
+        cdp = await session.context.new_cdp_session(session.page)
+
+        def on_paused(event: dict[str, Any]) -> None:
+            task = asyncio.ensure_future(self._answer_paused(session, cdp, event))
+            self._hop_answers.add(task)
+            task.add_done_callback(self._hop_answers.discard)
+
+        def on_frame_navigated(event: dict[str, Any]) -> None:
+            frame = event["frame"]
+            if not frame.get("parentId"):
+                session.main_frame_id = frame["id"]
+
+        # Read once now and followed by event, not asked for while judging a hop:
+        # Chromium holds such a question back until the navigation has finished, and
+        # the navigation is waiting for the answer to the hop.
+        cdp.on("Page.frameNavigated", on_frame_navigated)
+        await cdp.send("Page.enable")
+        tree = await cdp.send("Page.getFrameTree")
+        session.main_frame_id = tree["frameTree"]["frame"]["id"]
+        cdp.on("Fetch.requestPaused", on_paused)
+        await cdp.send("Fetch.enable", {"patterns": [{"urlPattern": "*"}]})
+
+    async def _answer_paused(
+        self, session: _Session, cdp: CDPSession, event: dict[str, Any]
+    ) -> None:
+        """Release or fail one paused request. It never stays paused.
+
+        A paused request nobody answers hangs until the page-load limit, so anything
+        going wrong while judging it counts as a refusal.
+        """
+        request_id = event["requestId"]
+        refusal: str | None = "Failed"
+        try:
+            refusal = await self._hop_refusal(session, event)
+        except Exception as broke:
+            session.events.append(
+                NavigationEvent(
+                    kind="redirect",
+                    url=event["request"]["url"],
+                    blocked=True,
+                    reason=f"this request could not be judged: {broke}",
+                )
+            )
+        finally:
+            # A session being closed has no one left to answer.
+            with contextlib.suppress(PlaywrightError):
+                if refusal is None:
+                    await cdp.send("Fetch.continueRequest", {"requestId": request_id})
+                else:
+                    await cdp.send(
+                        "Fetch.failRequest", {"requestId": request_id, "errorReason": refusal}
+                    )
+
+    async def _hop_refusal(self, session: _Session, event: dict[str, Any]) -> str | None:
+        """The CDP error to fail this paused request with, or ``None`` to release it."""
+        url: str = event["request"]["url"]
+        is_document = event.get("resourceType") == "Document"
+        previous_id: str | None = event.get("redirectedRequestId")
+        previous, depth = (None, 0)
+        if previous_id is not None:
+            previous, hops = session.redirect_chains.pop(previous_id, (None, 0))
+            depth = hops + 1
+        if is_document:
+            session.redirect_chains[event["requestId"]] = (url, depth)
+            while len(session.redirect_chains) > _MAX_TRACKED_CHAINS:
+                del session.redirect_chains[next(iter(session.redirect_chains))]
+        if previous_id is None:
+            return None
+
+        if is_document:
+            session.events.append(NavigationEvent(kind="redirect", url=url))
+        # "BlockedByClient", as ``on_route`` uses for the same refusal.
+        if self._guard_refuses(session, url, "redirect" if is_document else "subresource"):
+            return "BlockedByClient"
+        if not is_document:
+            return None
+        if depth > self._limits.max_redirects_per_navigation:
+            reason = f"the redirect chain exceeded {self._limits.max_redirects_per_navigation} hops"
+            session.events.append(
+                NavigationEvent(kind="redirect", url=url, blocked=True, reason=reason)
+            )
+            return "BlockedByClient"
+        if event.get("frameId") != session.main_frame_id:
+            return None
+        # "Aborted" for the reason ``on_route`` gives.
+        refused = await self._admission_refuses(session, url, "redirect", redirected_from=previous)
+        return "Aborted" if refused else None
+
     async def _arm_observers(self, session: _Session) -> None:
         """Stamp document identity, route requests through the guard, record effects."""
         await session.context.add_init_script(_DOCUMENT_TOKEN_SCRIPT)
@@ -1180,6 +1407,10 @@ class PlaywrightDriver:
             over that connection becomes evidence.
             """
             self._spawn(self._audit_peer(session, response))
+            if self._admission is not None and _is_top_document(session, response.request):
+                self._admission.observe(
+                    response.url, response.status, response.headers.get("retry-after")
+                )
 
         session.page.on("response", on_response)
 
@@ -1218,39 +1449,24 @@ class PlaywrightDriver:
             secures the address bar and leaves the browser context open.
             """
             request = route.request
-            try:
-                self._guard.check(
-                    request.url,
-                    allow_private_network=session.allow_private_network,
-                )
-            except NavigationBlockedError as blocked:
-                session.events.append(
-                    NavigationEvent(
-                        kind=_event_kind(request),
-                        url=request.url,
-                        blocked=True,
-                        reason=blocked.message,
-                    )
-                )
+            if self._guard_refuses(session, request.url, _event_kind(request)):
                 await route.abort("blockedbyclient")
                 return
-            if request.resource_type == "document" and request.redirected_from is not None:
-                session.events.append(NavigationEvent(kind="redirect", url=request.url))
-                if _redirect_depth(request) > self._limits.max_redirects_per_navigation:
-                    reason = (
-                        f"the redirect chain exceeded "
-                        f"{self._limits.max_redirects_per_navigation} hops"
-                    )
-                    session.events.append(
-                        NavigationEvent(
-                            kind="redirect", url=request.url, blocked=True, reason=reason
-                        )
-                    )
-                    await route.abort("blockedbyclient")
-                    return
+            if _is_top_document(session, request) and await self._admission_refuses(
+                session, request.url, _event_kind(request), redirected_from=None
+            ):
+                # "aborted" rather than "blockedbyclient": Chromium answers a
+                # blocked top-level navigation by committing its own error page,
+                # which the frame-commit check rightly reads as a document the
+                # boundary never saw, and the session would be failed for a
+                # site's robots.txt. An aborted navigation commits nothing, so
+                # the page the agent was on stays where it was.
+                await route.abort("aborted")
+                return
             await route.continue_()
 
         await session.context.route("**/*", on_route)
+        await self._arm_redirect_hops(session)
 
         async def on_web_socket(ws: WebSocketRoute) -> None:
             """Judge a WebSocket the way ``on_route`` judges a request.

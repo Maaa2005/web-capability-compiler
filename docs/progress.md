@@ -2427,6 +2427,165 @@ the API check from the start.
 
 The run of record in `README.md` and `docs/comparison.md` is now this file.
 
+## The runtime asks before it fetches (2026-11-04)
+
+A review on 2026-11-02 found that the benchmark read `robots.txt` and paused
+between sites, but the MCP server, the thing people run, did neither. It now
+does both. The project owner asked for this explicitly; the specification does
+not mention either.
+
+### What was built
+
+- `src/wcc/policy/robots.py`: a `robots.txt` parser and matcher for the product
+  token `wcc`.
+- `src/wcc/policy/politeness.py`: `PoliteAccess` fetches each origin's file,
+  caches it, decides, and paces requests per host.
+- `src/wcc/driver/base.py`: a `DocumentAdmission` protocol beside
+  `NavigationGuard`, and two refusals with their own codes,
+  `RobotsDisallowedError` (`robots_disallowed`) and `RateLimitedError`
+  (`rate_limited`, with the seconds to wait).
+- `src/wcc/driver/playwright_driver.py`: the route handler asks the admission
+  about every top-level document request, redirect hops included. Responses to
+  those requests are reported back, so a 429 or 503 slows the host. The browser
+  appends `wcc/<version> (+repository URL)` to its own User-Agent.
+- `src/wcc/mcp/server.py`: `build_service` always builds the driver with
+  `PoliteAccess`. The benchmarks and the fixture tests build drivers without an
+  admission and behave exactly as before; a test holds both facts.
+
+### Decisions and their sources
+
+The sources were read on 2026-11-04. The rule each decision rests on is in a
+docstring next to the code.
+
+**Check `robots.txt` for every page the agent opens.** The reference MCP
+`fetch` server (`modelcontextprotocol/servers`, `src/fetch`, release 2026.10.28)
+checks it for fetches the model asks for, including every redirect hop. It skips
+the check only for a page a person asked for through an MCP prompt. WCC has no
+such path: every navigation is the model's request. Not adopted: Playwright MCP
+and browser-use, which check nothing; and Crawl4AI, Crawlee 3.18 and Scrapy,
+where checking is off by default.
+
+**An unreadable file refuses.** 5xx, 429, a network error, a timeout (5 s) and a
+redirect hop the URL policy refuses all disallow everything (RFC 9309
+2.3.1.4). The MCP `fetch` server and Crawlee's unreleased v4 do the same. A copy
+cached from an earlier success stands in while the file stays unreachable
+(2.4). A failure is remembered for five minutes, so a host that never answers
+costs one timeout rather than one per navigation. Not adopted: allowing the
+request when the fetch fails, which Crawl4AI, Scrapy, Firecrawl and Crawlee 3.18
+all do. The benchmark did the same until 2026-10-23.
+
+**401 and 403 refuse; other 4xx allow.** As far as could be checked here, RFC
+9309 2.3.1.3 counts every 4xx as "unavailable", meaning no restrictions apply.
+Google's documentation says the same. This follows the MCP `fetch` server, Python's
+`urllib.robotparser`, and this repository's own benchmark instead: a site that
+refuses to show its rules is read as refusing. This is the one place the runtime
+is stricter than the RFC, and it is a judgement the owner may want to reverse.
+
+**A parser written here.** The other options were checked first:
+
+- Python's `urllib.robotparser` answers differently by version. On 3.12 the
+  first rule in file order wins and `*` and `$` are literal characters. 3.13.14
+  and 3.14.5 added RFC 9309 (gh-138907), but score a wildcard rule by how much
+  of the URL it matched, not by the length of the rule. Four small cases were
+  run here on 3.12.3 and on 3.13.18: a longer `Allow` under a `Disallow`, a `$`
+  pattern, `/robots.txt` under `Disallow: /`, and a long `Allow` against a short
+  wildcard `Disallow`. The two versions answered all four differently.
+  `benchmarks/measure_coverage.py` still uses this reader; moving it is left for
+  its own change.
+- Protego 0.7.0 (BSD-3, pure Python) implements longest match. It also adds
+  Google-specific behaviour: `Allow: …/index.html` allows the directory too, and
+  it reads `Host` and `Visit-time`. It had a ReDoS fixed in 0.6.2
+  (CVE-2026-55520).
+
+  The parser here matches without regular expressions and scores by pattern
+  length, as Google's C++ library does (`robots.cc`, `MatchAllow` returns
+  `pattern.length()`).
+
+**Pacing: 1 s per host, `Crawl-delay` honoured, `Retry-After` honoured.**
+
+- The 1 s and one-at-a-time per host are Scrapy's project template
+  (`DOWNLOAD_DELAY = 1`, `CONCURRENT_REQUESTS_PER_DOMAIN = 1`).
+- `Crawl-delay` only ever lengthens the interval. Only Crawlee's unreleased v4
+  acts on it; Scrapy's documentation says it does not.
+- `Retry-After` is read in both forms of RFC 9110 10.2.3. A 429 or 503 without
+  it holds the host back 30 s. Crawlee v4 does the same with a 2 s doubling
+  backoff; Crawl4AI backs off on 429 and 503 without reading the header.
+- A redirect to the same host was not paced again; a hop to another host was. Reversed
+  on 2026-11-06 ("Review findings on the politeness branch", at the end of this file):
+  every hop is paced.
+- A wait longer than 2 s is refused, not slept. A navigation parked inside a
+  tool call looks like a hang. Worse, an action's settle budget is 5 s, so a
+  click whose navigation was still waiting would be reported as an effect that
+  did not happen.
+
+**Top-level documents only.** Images, scripts and frames are part of rendering
+a page that was already admitted. The MCP `fetch` server and Crawl4AI also check
+only the URL asked for.
+
+**No switch to turn it off.** Every tool surveyed that has an override makes it
+an operator setting: the MCP `fetch` server's `--ignore-robots-txt`, a Scrapy
+setting, Firecrawl's Enterprise-only `ignoreRobotsTxt`. None lets the model turn
+it off. None is added here, because nothing has needed one. If one is added, it
+belongs in `wcc.config`, read from the launcher's environment.
+
+**The User-Agent names the token.** RFC 9309 2.2.1 asks that the product token
+be part of the User-Agent sent; the MCP `fetch` server and Firecrawl both do
+this. Playwright can replace a User-Agent but not extend one, so the browser's
+own string is read once and `wcc/…` is appended to it.
+
+### What could not be checked
+
+`www.rfc-editor.org`, `datatracker.ietf.org`, `developers.google.com` and
+`docs.python.org` are refused by this environment's network policy. The RFC 9309
+section numbers and rules above come from two places, not from the RFC's own
+text:
+
+- memory of the RFC;
+- secondary sources that cite it: CPython's `robotparser.py` comments, the MCP
+  `fetch` server's comments, and Crawlee's comments.
+
+The 401/403 reading is the one that matters most and is the least certain.
+
+### Found on the way, and left alone
+
+- **A refused click used to cost the session.** When the route handler aborted
+  a top-level navigation with `blockedbyclient`, Chromium committed its own
+  error page (`chrome-error://chromewebdata/`). The frame-commit check failed
+  the session for it. Refusals from the admission now abort with `aborted`,
+  which commits nothing, so the agent stays on the page it was on. A test opens
+  a link into a disallowed path and then snapshots the original page. Refusals
+  from the URL policy still use `blockedbyclient` and still fail the session.
+  That is a security boundary and was left as it was; whether it should also
+  leave the session alive is its own question.
+- **The benchmark did not send the name it checked `robots.txt` under.**
+  `measure_coverage.py` matches `robots.txt` as `wcc-benchmark`, and its
+  docstring says a tool that reads under one name and requests under another is
+  not honouring it. Its driver sets no User-Agent, though, so every page
+  request carried headless Chromium's own string. Not changed here.
+
+### Verification
+
+- `scripts/test.sh`: ruff format, ruff lint, pyright 0 errors, **703 passed**
+  (647 before; 56 new in `test_robots.py`, `test_politeness.py` and
+  `test_politeness_driver.py`).
+- A real `wcc serve` over stdio, against a loopback site whose `robots.txt` says
+  `User-agent: wcc`, `Disallow: /private`, `Crawl-delay: 1.5`:
+  - `open_session` on `/private/a.html` returned `robots_disallowed`.
+  - Three opens of `/b.html` in a row reached the site 1.50, 1.50 and 1.51 s
+    apart.
+  - Every request, `robots.txt` included, carried
+    `wcc/0.1.0.dev0 (+https://github.com/Maaa2005/web-capability-compiler)`.
+- Not run against a public site: this environment's network policy refuses
+  them.
+
+### Next
+
+- Move `benchmarks/measure_coverage.py` onto `wcc.policy.robots`. It reads with
+  the standard library today, so its answers depend on the Python version.
+- Decide whether 401/403 should keep refusing, once the RFC text has been read.
+- Decide whether a refusal from the URL policy should also leave the session
+  alive.
+
 ### Review findings fixed: MCP error text, WebSocket SSRF, prompt-injection notice, docs (2026-11-02)
 
 A review of `fix/mcp-errors-ws-ssrf` found five things, each checked against the
@@ -2621,3 +2780,18 @@ Second round on the review findings (11/4), each written as a failing test first
 Public pages through the proxy (`benchmarks/results/coverage-20261104-egress-proxy.json`, run 2026-11-04 with the benchmark's `robots.txt` handling and pauses): 22 visited, 5 skipped by `robots.txt` or unreachable `robots.txt` (as on 2026-10-23), 0 failed, 17 observed, 13 with a capability (76%), 21 refusals. The same numbers as `coverage-20261023.json`, so the proxy changes nothing the compiler sees on real sites, including HTTPS, redirects and subresources.
 
 `COMPILER_REVISION` is 2 from the result-list margin on: stored page classes compiled under revision 1 are compiled again on their next inspection, so the margin reaches pages already in the store.
+
+### Review findings on the politeness branch (2026-11-06)
+
+A review of PR #6 found five things. Each was written as a failing test first, against loopback servers and fake clocks only; no public site was contacted.
+
+- **A `robots.txt` cut off before its `Content-Length` counted as the whole file (P1).** `read1` reports the missing bytes only as an empty read, so a file that lost its `Disallow` lines in transit allowed the page and was cached for a day. It now raises `IncompleteRead`, which makes the file unreachable: the page is refused, or the last good copy stands in. Chunked bodies already raised, and now have a test. A body declaring no length ends where the connection ends, so a cut there cannot be told from the end.
+- **A redirect on the same host skipped the interval and `Crawl-delay` (P1).** The exemption argued that a hop was the server's own answer to a request already paced. The site still receives it as a request, and its `Crawl-delay` makes no exception. The exemption is gone, for page hops and for hops of the `robots.txt` fetch. `test_a_redirect_on_the_same_host_is_not_paced_again` held the wrong behaviour as its right answer and was rewritten. Three consequences:
+  - Each same-host hop now costs at least 1 s. A click whose chain takes longer than the 5 s settle budget would be reported as an effect that did not happen; a chain of five, or three under `Crawl-delay: 2`, gets there. Not addressed here.
+  - A hop whose wait is over 2 s is refused, and asking for the first URL again would never succeed: it spends the slot and is redirected into the same refusal. The refusal therefore names the hop's address, which an agent can ask for directly. It is still an agent having to read that sentence, on any site with a redirect and a `Crawl-delay` over 2 s.
+  - Five same-host hops of the `robots.txt` fetch are five seconds of waiting, which used up the fetch's five-second deadline and read as unreachable. The waits for a hop's slot no longer count against that deadline: they are this runtime's pacing and not the site being slow. RFC 9309 2.3.1.2's five redirects still fit, and `test_more_than_five_redirects_count_as_no_file` still passes unchanged. The worst-case hold grows from about 5 s to 5 s plus 2 s per hop, 17 s in all. Not chosen: leaving the waits in the deadline and refusing such a file, which keeps the shorter bound and gives up the five redirects.
+- **A `Retry-After` arriving during a wait was ignored (P1).** The sleep now ends by looking again. If the site's time reaches past the reserved slot the request goes back to the queue, one interval behind that slot, or is refused if the whole stay would pass `max_wait_seconds`. The earlier concurrency test could not see this, because its fake sleep never let anything else run; `ParkedClock` in `test_politeness.py` really suspends, and one test does it on the real clock.
+- **`%24` and `%2A` in a rule did not match `$` and `*` in a URL (P2).** RFC 9309 2.2.3's two examples. Those two characters are now compared encoded wherever they are not special: throughout the URL, and for a `$` in the middle of a rule. A rule's length is measured after that, so `/a$b` and `/a%24b` are the same rule and an `Allow` of one beats a `Disallow` of the other.
+- **A `Retry-After` over 24 hours was shortened to 24 hours (P2).** The cap and its `max_backoff_seconds` setting are gone. Nothing sleeps through a long one, since anything over 2 s is refused with the time to retry. A value is only limited at 100 years, because `float` reads four hundred digits as infinity and the wait is shown to the agent. The state is in memory, so a restart still forgets it.
+
+Not checked: the RFC's text, which was not fetched for this; the two examples are as the review cites them. `scripts/test.sh` was run as its parts, and `test_hostile_dom`'s deeply nested case fails on Windows as it did before.
